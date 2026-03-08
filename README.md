@@ -45,8 +45,9 @@ This application is the next version of [ZeroTsu](https://github.com/apiks/ZeroT
 * **Environment:** Set `ZeroTsuToken` to your Discord bot token.
 
 * **Config:** Copy `config.json.example` to `config.json`. The file must be in the **current working directory** when you run the bot.
-
-  Set at least `mongo_uri`, `owner_id`, `prefixes` (used for optional DM prefix commands, e.g. `["."]`), and `user_agent` (required for AnimeSchedule and Reddit requests). Other options: `mongo_db_timeout`, `playing_msg`, `anime_schedule_api_key`, `top_gg_token`, `new_guild_log_channel_id`, `log_level`, `log_format`. See the example file for all keys. Anime features (subs, schedule, autopost) require `anime_schedule_api_key` in config (get it from [AnimeSchedule.net](https://animeschedule.net) or leave empty to disable).
+  - **Required:** `mongo_uri`, `owner_id`, `prefixes` (e.g. `["."]` for optional DM prefix commands), `user_agent` (for AnimeSchedule and Reddit requests).
+  - **Optional:** `mongo_db_timeout`, `playing_msg`, `anime_schedule_api_key`, `top_gg_token`, `new_guild_log_channel_id`, `log_level`, `log_format`. See the example file for all keys.
+  - Anime features (subs, schedule, autopost) need `anime_schedule_api_key` — get it from [AnimeSchedule.net](https://animeschedule.net) or leave empty to disable.
 
 * **Build:** `go build` (e.g. `go build -o zerotsu.exe`).
 
