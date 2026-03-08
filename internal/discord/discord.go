@@ -118,3 +118,5 @@ const (
 )
 
 const SupportServerURL = "https://discord.gg/BDT8Twv"
+
+const RepoURL = "https://github.com/apiks/ReZeroTsu"
