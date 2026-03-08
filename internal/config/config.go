@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// UserAgent returns the User-Agent from config (required in config.json).
+// UserAgent returns the User-Agent from config.
 func UserAgent(cfg *Config) string {
 	return cfg.UserAgent
 }
