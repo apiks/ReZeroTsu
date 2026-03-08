@@ -5,6 +5,8 @@ config.json
 # Binary
 /ReZeroTsu
 ReZeroTsu.exe
+/ZeroTsu
+ZeroTsu.exe
 
 # IDE
 .idea/
@@ -16,3 +18,5 @@ ReZeroTsu.exe
 # Local Go cache
 .cache/
 gomodcache/
+/ReZeroTsu
+/ZeroTsu
