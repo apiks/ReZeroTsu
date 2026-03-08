@@ -25,7 +25,7 @@ import (
 
 const (
 	feedRunInterval        = 15 * time.Second
-	feedSubredditDelay     = 4 * time.Second
+	feedSubredditDelay     = 5 * time.Second
 	feedCheckLimit         = 1000
 	feedCleanupEveryRuns   = 10
 	feedCheckLifespanDays  = 180
