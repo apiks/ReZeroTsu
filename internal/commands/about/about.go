@@ -50,7 +50,7 @@ func aboutEmbed(s *discordgo.Session) *discordgo.MessageEmbed {
 
 	emb := &discordgo.MessageEmbed{
 		Title:       user.Username,
-		Description: "Written in **Go** by _apiks_. Source: [ReZeroTsu](" + discord.RepoURL + "). For questions or help please **join** the [support server](" + discord.SupportServerURL + ").",
+		Description: "Written in **Go** by _apiks_. GitHub: [ReZeroTsu](" + discord.RepoURL + "). For questions or help please **join** the [support server](" + discord.SupportServerURL + ").",
 		Color:       discord.EmbedColor,
 		Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: user.AvatarURL("256")},
 		Fields: []*discordgo.MessageEmbedField{{
