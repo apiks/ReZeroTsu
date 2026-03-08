@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"ReZeroTsu/internal/config"
 )
 
 const defaultTimeout = 30 * time.Second
@@ -20,12 +18,8 @@ var (
 
 func GetUserAgent() string {
 	userAgentMu.RLock()
-	ua := userAgent
-	userAgentMu.RUnlock()
-	if ua != "" {
-		return ua
-	}
-	return config.DefaultUserAgent
+	defer userAgentMu.RUnlock()
+	return userAgent
 }
 
 // Default returns a shared HTTP client (30s timeout). Set User-Agent on the request.

@@ -9,14 +9,9 @@ import (
 	"time"
 )
 
-const DefaultUserAgent = "script:github.com/apiks/zerotsu:v4.1 (by /u/thechosenapiks)"
-
-// UserAgent returns cfg.UserAgent or DefaultUserAgent; use for animeschedule and feeds so both share identity.
+// UserAgent returns the User-Agent from config (required in config.json).
 func UserAgent(cfg *Config) string {
-	if cfg.UserAgent != "" {
-		return cfg.UserAgent
-	}
-	return DefaultUserAgent
+	return cfg.UserAgent
 }
 
 // Config holds bot and database settings (token from env, rest from config.json).
@@ -68,6 +63,9 @@ func Load() (*Config, error) {
 
 	if fc.MongoURI == "" {
 		return nil, errors.New("config.json: mongo_uri is required and must be non-empty")
+	}
+	if strings.TrimSpace(fc.UserAgent) == "" {
+		return nil, errors.New("config.json: user_agent is required and must be non-empty")
 	}
 
 	timeout := 10 * time.Second
