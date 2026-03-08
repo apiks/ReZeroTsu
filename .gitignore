@@ -1,0 +1,18 @@
+# Environment
+.env
+config.json
+
+# Binary
+/ReZeroTsu
+ReZeroTsu.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local Go cache
+.cache/
+gomodcache/

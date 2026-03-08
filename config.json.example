@@ -1,0 +1,13 @@
+{
+  "mongo_uri": "mongodb://localhost:27017",
+  "mongo_db_timeout": "10s",
+  "owner_id": "128312718779219968",
+  "prefixes": ["."],
+  "playing_msg": ["patreon.com/animeschedule", "AnimeSchedule.net"],
+  "anime_schedule_api_key": "",
+  "user_agent": "",
+  "top_gg_token": "",
+  "new_guild_log_channel_id": "",
+  "log_level": "info",
+  "log_format": "text"
+}
