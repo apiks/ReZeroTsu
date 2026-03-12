@@ -11,9 +11,10 @@ import (
 )
 
 type ShowSub struct {
-	Show     string `bson:"show"`
-	Notified bool   `bson:"notified"`
-	Guild    bool   `bson:"guild"`
+	Show                string `bson:"show"`
+	Notified            bool   `bson:"notified"`
+	Guild               bool   `bson:"guild"`
+	LastNotifiedAirUnix int64  `bson:"last_notified_air_unix,omitempty"`
 }
 
 // AnimeSubs is an anime_subs document; key field is id (not _id).

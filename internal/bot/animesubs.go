@@ -19,6 +19,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+var backfillLastNotifiedOnce sync.Once
+
 const (
 	animeSubRunInterval             = 15 * time.Second
 	animeSubThrottlePerUser         = 100 * time.Millisecond
@@ -27,8 +29,6 @@ const (
 )
 
 var (
-	lastAnimeSubWeekday         int = -1
-	lastAnimeSubWeekdayMu       sync.Mutex
 	lastGuildSeedWeekdayByShard = make(map[int]int)
 	lastGuildSeedWeekdayMu      sync.RWMutex
 	animeSubRoundRobin          ShardRoundRobin
@@ -111,6 +111,76 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 	}
 }
 
+func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now time.Time) error {
+	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
+		logger.For("animesubs").Debug("backfill skipped: no schedule data")
+		return nil
+	}
+	shows := make(map[string]int64)
+	nowUnix := now.Unix()
+	for day := 0; day <= 6; day++ {
+		for _, show := range animeschedule.GetDayShows(day, true) {
+			if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(show.Name))
+			if key == "" {
+				continue
+			}
+			if show.AirTimeUnix > shows[key] {
+				shows[key] = show.AirTimeUnix
+			}
+		}
+	}
+	var updatedUsers int
+	err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if doc == nil || len(doc.Shows) == 0 {
+			return nil
+		}
+		updated := false
+		for _, sub := range doc.Shows {
+			if sub == nil || sub.Guild {
+				continue
+			}
+			if sub.LastNotifiedAirUnix != 0 {
+				continue
+			}
+			if !sub.Notified {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(sub.Show))
+			if key == "" {
+				continue
+			}
+			if t, ok := shows[key]; ok && t > 0 {
+				sub.LastNotifiedAirUnix = t
+				updated = true
+			}
+		}
+		if !updated {
+			return nil
+		}
+		if err := db.AnimeSubs().Set(ctx, doc.ID, false, doc.Shows); err != nil {
+			logger.For("animesubs").Error("backfill LastNotifiedAirUnix Set failed", "user_id", doc.ID, "err", err)
+			return nil
+		}
+		updatedUsers++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if updatedUsers > 0 {
+		logger.For("animesubs").Debug("backfill LastNotifiedAirUnix", "count", updatedUsers)
+	}
+	return nil
+}
+
 func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	desc := fmt.Sprintf("**%s** raw is out!", show.Episode)
 	if show.AirType == "sub" {
@@ -167,30 +237,6 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		return
 	}
 
-	// Daily reset: when weekday changes, set Notified = false for all user subs.
-	lastAnimeSubWeekdayMu.Lock()
-	if lastAnimeSubWeekday >= 0 && lastAnimeSubWeekday != weekday {
-		if s.ShardID == 0 {
-			if err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-				if len(doc.Shows) == 0 {
-					return nil
-				}
-				for _, sub := range doc.Shows {
-					if sub != nil {
-						sub.Notified = false
-					}
-				}
-				return db.AnimeSubs().Set(ctx, doc.ID, false, doc.Shows)
-			}); err != nil {
-				logger.For("animesubs").Error("IterateUserSubs reset failed", "err", err)
-				lastAnimeSubWeekdayMu.Unlock()
-				return
-			}
-		}
-	}
-	lastAnimeSubWeekday = weekday
-	lastAnimeSubWeekdayMu.Unlock()
-
 	// Per-shard guild seed for current weekday (once per day); missing shard entry = not yet seeded.
 	lastGuildSeedWeekdayMu.RLock()
 	lastSeen, seeded := lastGuildSeedWeekdayByShard[s.ShardID]
@@ -203,6 +249,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		lastGuildSeedWeekdayMu.Unlock()
 	}
 
+	// User DM delivery runs only on shard 0; ensure only one instance processes user subs per DB.
 	if s.ShardID == 0 {
 		userCh := make(chan *anime_subs.AnimeSubs)
 		workerCount := max(runtime.NumCPU()*2, 1)
@@ -323,11 +370,13 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 			continue
 		}
 		sub, ok := subByShow[strings.ToLower(show.Name)]
-		if !ok || sub.Notified {
+		if !ok {
+			continue
+		}
+		if show.AirTimeUnix <= sub.LastNotifiedAirUnix {
 			continue
 		}
 
-		// Lazily create the DM channel once per user.
 		if dm == nil {
 			dm, err = s.UserChannelCreate(userID)
 			if err != nil {
@@ -358,8 +407,15 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 			}
 			continue
 		}
-		logger.For("animesubs").Debug("episode notification sent", "user_id", userID, "title", show.Name)
+		sub.LastNotifiedAirUnix = show.AirTimeUnix
 		sub.Notified = true
+		logger.For("animesubs").Debug(
+			"episode notification sent",
+			"user_id", userID,
+			"title", show.Name,
+			"air_time_unix", show.AirTimeUnix,
+			"last_notified_air_unix", sub.LastNotifiedAirUnix,
+		)
 		updated = true
 
 		if !throttleTimer.Stop() {

@@ -250,6 +250,9 @@ func subCore(ctx context.Context, db *database.Client, uid, animeInput string) (
 	}
 
 	newSub := &anime_subs.ShowSub{Show: showName, Notified: hasAiredToday, Guild: false}
+	if hasAiredToday {
+		newSub.LastNotifiedAirUnix = show.AirTimeUnix
+	}
 	doc.Shows = append(doc.Shows, newSub)
 	if err := db.AnimeSubs().Set(ctx, uid, false, doc.Shows); err != nil {
 		return "Could not save subscription.", err

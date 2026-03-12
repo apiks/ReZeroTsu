@@ -162,6 +162,13 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		startRemindersOnce.Do(func() {
 			go RunReminderLoop(ctx, db, s, 15*time.Second)
 		})
+		backfillLastNotifiedOnce.Do(func() {
+			go func() {
+				if err := backfillLastNotifiedAirUnix(ctx, db, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+					logger.For("animesubs").Error("backfillLastNotifiedAirUnix failed", "err", err)
+				}
+			}()
+		})
 		httpclient.SetUserAgent(config.UserAgent(cfg))
 		getShardCount := func() int { return mgr.ShardCount }
 		onceVal, _ := shardLoopsOnce.LoadOrStore(s.ShardID, &sync.Once{})
