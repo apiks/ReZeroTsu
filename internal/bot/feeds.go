@@ -114,7 +114,7 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 					}
 					continue
 				}
-				logger.For("feeds").Error("fetchRedditRSS failed", "shard_id", s.ShardID, "key", key.subreddit+"/"+key.postType, "user_agent", httpclient.GetUserAgent(), "err", err)
+				logger.For("feeds").Warn("fetchRedditRSS failed", "shard_id", s.ShardID, "key", key.subreddit+"/"+key.postType, "user_agent", httpclient.GetUserAgent(), "err", err)
 				if reddit.IsPermanent(err) {
 					removeFeedsForSubredditAndPostType(ctx, db, g.ID, key.subreddit, key.postType)
 				}
@@ -398,7 +398,7 @@ func flushChannel(ctx context.Context, db *database.Client, s *discordgo.Session
 					removeFeedsForChannel(ctx, db, guildID, channelID, "channel inaccessible (missing access)")
 					return
 				}
-				logger.For("feeds").Error("ChannelMessageSendComplex failed", "shard_id", s.ShardID, "channel_id", channelID, "err", err)
+				logger.For("feeds").Warn("ChannelMessageSendComplex failed", "shard_id", s.ShardID, "channel_id", channelID, "err", err)
 				return
 			}
 			persistFeedChunk(ctx, db, s, guildID, items[i:end], seen, seenMu)
@@ -432,7 +432,7 @@ func sendOneAndPin(ctx context.Context, db *database.Client, s *discordgo.Sessio
 			removeFeedsForChannel(ctx, db, guildID, feed.ChannelID, "channel inaccessible (missing access)")
 			return
 		}
-		logger.For("feeds").Error("ChannelMessageSendComplex pin failed", "shard_id", s.ShardID, "channel_id", feed.ChannelID, "err", err)
+		logger.For("feeds").Warn("ChannelMessageSendComplex pin failed", "shard_id", s.ShardID, "channel_id", feed.ChannelID, "err", err)
 		return
 	}
 	handleFeedPinning(s, feed.ChannelID, msg.ID, feed.Subreddit)
