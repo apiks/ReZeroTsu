@@ -249,7 +249,6 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		lastGuildSeedWeekdayMu.Unlock()
 	}
 
-	// User DM delivery runs only on shard 0; ensure only one instance processes user subs per DB.
 	if s.ShardID == 0 {
 		userCh := make(chan *anime_subs.AnimeSubs)
 		workerCount := max(runtime.NumCPU()*2, 1)
