@@ -267,10 +267,14 @@ func handleAddRedditFeed(ctx context.Context, db *database.Client, s *discordgo.
 	if opt := commands.ParseOption(data.Options, "pin"); opt != nil {
 		pin = opt.BoolValue()
 	}
-	_, err := reddit.Fetch(ctx, subreddit, postType)
+	_, err := reddit.FetchWithRetry(ctx, subreddit, postType)
 	if err != nil {
 		if reddit.IsPermanent(err) {
 			commands.RespondEmbed(s, i, embedTitleReddit, "That subreddit or feed is unavailable (private, removed, or not found).")
+			return
+		}
+		if reddit.IsGlobalCooldown(err) {
+			commands.RespondEmbed(s, i, embedTitleReddit, "Reddit is rate-limited right now. Please try again in about a minute.")
 			return
 		}
 		commands.RespondEmbed(s, i, embedTitleReddit, "Could not verify the feed. Please try again.")

@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +25,7 @@ import (
 )
 
 const (
-	feedRunInterval        = 15 * time.Second
-	feedSubredditDelay     = 6 * time.Second
+	feedRunInterval        = 30 * time.Second
 	feedCheckLimit         = 1000
 	feedCleanupEveryRuns   = 10
 	feedCheckLifespanDays  = 180
@@ -34,10 +34,79 @@ const (
 	feedEmbedAuthorIconURL = "https://images-eu.ssl-images-amazon.com/images/I/418PuxYS63L.png"
 )
 
-var feedRoundRobin ShardRoundRobin
+const redditFetchIdlePoll = 5 * time.Second
 
-// RunFeedLoop runs the feed poll loop for this shard (round-robin). Exits when ctx is cancelled.
-func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration, getShardCount func() int) {
+var (
+	processFeedKeysMu sync.Mutex
+	shardFeedCounts   = make(map[int]map[feedKey]int)
+	processFeedCounts = make(map[feedKey]int)
+	feedCycleOrder    []feedKey
+	feedCycleIndex    int
+)
+
+func registerShardFeedCounts(shardID int, counts map[feedKey]int) {
+	processFeedKeysMu.Lock()
+	shardFeedCounts[shardID] = counts
+	processFeedCounts = make(map[feedKey]int)
+	for _, shardCounts := range shardFeedCounts {
+		for k, n := range shardCounts {
+			processFeedCounts[k] += n
+		}
+	}
+	rebuildFeedCycleOrderLocked()
+	processFeedKeysMu.Unlock()
+}
+
+func rebuildFeedCycleOrderLocked() {
+	var cursorKey feedKey
+	if feedCycleIndex < len(feedCycleOrder) {
+		cursorKey = feedCycleOrder[feedCycleIndex]
+	}
+	keys := make([]feedKey, 0, len(processFeedCounts))
+	for k := range processFeedCounts {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b feedKey) int {
+		if na, nb := processFeedCounts[a], processFeedCounts[b]; na != nb {
+			return nb - na
+		}
+		if c := strings.Compare(a.subreddit, b.subreddit); c != 0 {
+			return c
+		}
+		return strings.Compare(a.postType, b.postType)
+	})
+	feedCycleOrder = keys
+	feedCycleIndex = 0
+	for i, k := range feedCycleOrder {
+		if k == cursorKey {
+			feedCycleIndex = i
+			break
+		}
+	}
+}
+
+// advanceFeedCycleKey returns the next sub in popularity order (high → low), wrapping after the last.
+func advanceFeedCycleKey() (feedKey, bool) {
+	processFeedKeysMu.Lock()
+	defer processFeedKeysMu.Unlock()
+	if len(feedCycleOrder) == 0 {
+		return feedKey{}, false
+	}
+	for range feedCycleOrder {
+		key := feedCycleOrder[feedCycleIndex]
+		feedCycleIndex++
+		if feedCycleIndex >= len(feedCycleOrder) {
+			feedCycleIndex = 0
+		}
+		if processFeedCounts[key] > 0 {
+			return key, true
+		}
+	}
+	return feedKey{}, false
+}
+
+// RunFeedLoop runs delivery for this shard's guilds on each tick.
+func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
 	if interval <= 0 {
 		interval = feedRunInterval
 	}
@@ -49,10 +118,54 @@ func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Se
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if feedRoundRobin.RunWithTurn(session, getShardCount, func() { runFeedCheck(ctx, db, session, runCount%feedCleanupEveryRuns == 0) }) {
-				runCount++
+			runFeedCheck(ctx, db, session, runCount%feedCleanupEveryRuns == 0)
+			runCount++
+		}
+	}
+}
+
+// RunRedditFetchLoop fetches one subreddit feed whenever Reddit's rate limit allows.
+func RunRedditFetchLoop(ctx context.Context) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if until := reddit.CooldownUntil(); !until.IsZero() && time.Now().Before(until) {
+			if !waitFeedCtx(ctx, time.Until(until)) {
+				return
+			}
+			continue
+		}
+		keys, ok := advanceFeedCycleKey()
+		if !ok {
+			if !waitFeedCtx(ctx, redditFetchIdlePoll) {
+				return
+			}
+			continue
+		}
+		feedKeyStr := keys.subreddit + "/" + keys.postType
+		_, err := reddit.FetchFresh(ctx, keys.subreddit, keys.postType)
+		if err != nil {
+			if reddit.IsPermanent(err) {
+				logger.For("feeds").Warn("fetchRedditRSS permanent failure", "key", feedKeyStr, "user_agent", httpclient.GetUserAgent(), "err", err)
+			} else if !reddit.IsGlobalCooldown(err) {
+				logger.For("feeds").Warn("fetchRedditRSS failed", "key", feedKeyStr, "user_agent", httpclient.GetUserAgent(), "err", err)
 			}
 		}
+	}
+}
+
+func waitFeedCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -70,7 +183,10 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 	}
 
 	seen := make(map[string]struct{})
-	loggedGlobalCooldown := false
+
+	var guildWork []guildFeeds
+	localCounts := make(map[feedKey]int)
+
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
 			continue
@@ -85,6 +201,25 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 		if len(feeds) == 0 {
 			continue
 		}
+		guildWork = append(guildWork, guildFeeds{guild: g, feeds: feeds})
+		for _, f := range feeds {
+			localCounts[feedKey{f.Subreddit, f.PostType}]++
+		}
+	}
+
+	registerShardFeedCounts(s.ShardID, localCounts)
+
+	parsed := make(map[string]*gofeed.Feed)
+	for key := range localCounts {
+		feedKeyStr := key.subreddit + "/" + key.postType
+		if feed, ok := reddit.CachedFeed(key.subreddit, key.postType); ok {
+			parsed[feedKeyStr] = feed
+		}
+	}
+
+	for _, gw := range guildWork {
+		g := gw.guild
+		feeds := gw.feeds
 
 		guids, err := db.FeedChecks().ListGUIDsByGuildID(ctx, g.ID, feedCheckLimit)
 		if err != nil {
@@ -95,37 +230,6 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 		}
 		for _, id := range guids {
 			seen[id] = struct{}{}
-		}
-
-		keys := uniqueFeedKeys(feeds)
-		parsed := make(map[string]*gofeed.Feed)
-		for _, key := range keys {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			feed, err := reddit.FetchWithRetry(ctx, key.subreddit, key.postType)
-			if err != nil {
-				if reddit.IsGlobalCooldown(err) {
-					if !loggedGlobalCooldown {
-						logger.For("feeds").Warn("reddit globally rate-limited; skipping feeds for this run", "shard_id", s.ShardID, "user_agent", httpclient.GetUserAgent(), "err", err)
-						loggedGlobalCooldown = true
-					}
-					continue
-				}
-				logger.For("feeds").Warn("fetchRedditRSS failed", "shard_id", s.ShardID, "key", key.subreddit+"/"+key.postType, "user_agent", httpclient.GetUserAgent(), "err", err)
-				if reddit.IsPermanent(err) {
-					removeFeedsForSubredditAndPostType(ctx, db, g.ID, key.subreddit, key.postType)
-				}
-			} else {
-				parsed[key.subreddit+"/"+key.postType] = feed
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(feedSubredditDelay):
-			}
 		}
 
 		channelBatches := make(map[string][]sendItem)
@@ -176,16 +280,9 @@ type feedKey struct {
 	subreddit, postType string
 }
 
-func uniqueFeedKeys(feeds []guilds.FeedEntry) []feedKey {
-	m := make(map[feedKey]struct{})
-	for _, f := range feeds {
-		m[feedKey{f.Subreddit, f.PostType}] = struct{}{}
-	}
-	out := make([]feedKey, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
+type guildFeeds struct {
+	guild *discordgo.Guild
+	feeds []guilds.FeedEntry
 }
 
 type sendItem struct {

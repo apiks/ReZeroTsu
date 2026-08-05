@@ -125,6 +125,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 	var startRemindersOnce sync.Once
 	var startScheduleLoopOnce sync.Once
 	var startAnimeSubCleanupOnce sync.Once
+	var startRedditFetchLoopOnce sync.Once
 	var startTopGGOnce sync.Once
 	var registerSlashCommandsOnce sync.Once
 	var readyCount int32
@@ -171,9 +172,12 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		httpclient.SetUserAgent(config.UserAgent(cfg))
 		getShardCount := func() int { return mgr.ShardCount }
+		startRedditFetchLoopOnce.Do(func() {
+			go RunRedditFetchLoop(ctx)
+		})
 		onceVal, _ := shardLoopsOnce.LoadOrStore(s.ShardID, &sync.Once{})
 		onceVal.(*sync.Once).Do(func() {
-			go RunFeedLoop(ctx, db, s, 15*time.Second, getShardCount)
+			go RunFeedLoop(ctx, db, s, 0)
 			if cfg.AnimeScheduleAPIKey != "" {
 				animeschedule.SetAPIKey(cfg.AnimeScheduleAPIKey)
 				animeschedule.UpdateAnimeSchedule(ctx, cfg.AnimeScheduleAPIKey)
