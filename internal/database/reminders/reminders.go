@@ -115,6 +115,39 @@ func (r *Repo) RemoveByRemindIDs(ctx context.Context, id string, remindIDs []int
 	return nil
 }
 
+// RemindRef identifies one reminder by its ID and due time. remind_id alone is not enough: IDs are max+1 and are
+// reused after a deletion, so the due time tells the listed reminder apart from a newer one that took its ID.
+type RemindRef struct {
+	RemindID int
+	Date     time.Time
+}
+
+// pullRefsCondition is the $pull condition matching only reminders whose remind_id and date both equal a ref's.
+func pullRefsCondition(refs []RemindRef) bson.M {
+	conds := make([]bson.M, 0, len(refs))
+	for _, ref := range refs {
+		conds = append(conds, bson.M{"remind_id": ref.RemindID, "date": ref.Date})
+	}
+	return bson.M{"$or": conds}
+}
+
+// RemoveByRefs atomically pulls the reminders matching both remind_id and date of the given refs from the user's
+// document, then deletes the document if it has no reminders left. A newer reminder that re-used a removed ID
+// (different date) and all other reminders are left untouched.
+func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	pull := bson.M{"$pull": bson.M{"reminders": pullRefsCondition(refs)}}
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, pull); err != nil {
+		return fmt.Errorf("RemoveByRefs: %w", err)
+	}
+	if _, err := r.coll.DeleteOne(ctx, bson.M{"id": id, "reminders": bson.M{"$size": 0}}); err != nil {
+		return fmt.Errorf("RemoveByRefs: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) EnsureIndexes(ctx context.Context) error {
 	indexModels := []mongo.IndexModel{
 		{Keys: bson.M{"id": 1}, Options: options.Index().SetUnique(true)},

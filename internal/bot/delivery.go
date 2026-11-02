@@ -93,9 +93,10 @@ type SentState interface {
 
 	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
 	ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error)
-	// RemoveReminders atomically removes the reminders with the given IDs from the user's document and
-	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
-	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
+	// RemoveReminders atomically removes the reminders matching both the ID and the due time of the given refs
+	// from the user's document and deletes the document once it is empty. Other reminders (including ones added
+	// meanwhile, even with a re-used ID) are untouched.
+	RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error
 
 	// --- ticket #9 (daily schedule) ---
 
@@ -263,8 +264,8 @@ func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) (
 	return m.db.Reminders().ListDue(ctx, asOf)
 }
 
-func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
-	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
+func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error {
+	return m.db.Reminders().RemoveByRefs(ctx, id, refs)
 }
 
 func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {

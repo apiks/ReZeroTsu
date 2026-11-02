@@ -99,11 +99,12 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 
 	userID := slice.ID
 	// remove deletes delivered or undeliverable reminders by ID, on a context detached from shutdown.
-	remove := func(ids ...int) {
+	// Reminders are matched on ID and due time, so an ID re-used by a newer reminder is never removed.
+	remove := func(refs ...reminders.RemindRef) {
 		if err := detachedWrite(ctx, func(wctx context.Context) error {
-			return st.RemoveReminders(wctx, userID, ids)
+			return st.RemoveReminders(wctx, userID, refs)
 		}); err != nil {
-			logger.For("reminders").Error("RemoveReminders failed", "user_id", userID, "remind_ids", ids, "err", err)
+			logger.For("reminders").Error("RemoveReminders failed", "user_id", userID, "reminders", refs, "err", err)
 		}
 	}
 	dmID, err := d.OpenDM(ctx, userID)
@@ -111,15 +112,19 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
-		if discord.ClassifySend(err) == discord.Rejected {
-			// Discord refused to open a DM channel: none of this user's due reminders can ever be delivered.
-			ids := make([]int, 0, len(due))
+		if discord.IsUserUndeliverable(err) {
+			// The user can never be DMed (closed DMs, deleted account): none of the due reminders can be delivered.
+			refs := make([]reminders.RemindRef, 0, len(due))
 			for _, r := range due {
-				ids = append(ids, r.RemindID)
+				refs = append(refs, reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 			}
 			logger.For("reminders").Warn("UserChannelCreate rejected, dropping due reminders",
-				append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(ids), "err", err)...)
-			remove(ids...)
+				append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(refs), "err", err)...)
+			remove(refs...)
+		} else if discord.ClassifySend(err) == discord.Rejected {
+			// Any other rejection (401, missing access, Cloudflare ban, ...) may be an outage: keep and retry.
+			logger.For("reminders").Warn("UserChannelCreate rejected, will retry",
+				append(discord.RESTAttrs(err), "user_id", userID, "err", err)...)
 		} else {
 			logger.For("reminders").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 		}
@@ -162,18 +167,19 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch {
 		case res.Delivered:
-			remove(r.RemindID)
+			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 			logger.For("reminders").Debug("reminder sent", "user_id", userID, "remind_id", r.RemindID, "presumed", res.Presumed)
 		case ctx.Err() != nil:
 			return ctx.Err()
-		case discord.ClassifySend(res.Err) == discord.Rejected:
-			// Rejected (closed DMs, ...): drop after this one attempt instead of retrying every run.
+		case discord.IsUserUndeliverable(res.Err):
+			// The user can never be DMed (closed DMs, deleted account): drop after this one attempt.
 			logger.For("reminders").Warn("reminder rejected, dropping",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
-			remove(r.RemindID)
+			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 		default:
-			// Unknown outcome verified as not delivered: keep it for the next run.
-			logger.For("reminders").Warn("reminder send failed, will retry", "user_id", userID, "remind_id", r.RemindID, "err", res.Err)
+			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
+			logger.For("reminders").Warn("reminder send failed, will retry",
+				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 			continue
 		}
 		// Throttle per channel so we don't hit Discord's per-channel send limit
