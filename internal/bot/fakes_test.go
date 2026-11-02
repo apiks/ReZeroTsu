@@ -239,6 +239,24 @@ func (f *fakeSentState) SetAnimeSubs(_ context.Context, id string, isGuild bool,
 	return nil
 }
 
+func (f *fakeSentState) SeedAnimeSubs(_ context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.AnimeSubs[id] = &anime_subs.AnimeSubs{ID: id, IsGuild: isGuild, Shows: copyShows(shows), LastSeedDate: seedDate}
+	return nil
+}
+
+func (f *fakeSentState) AppendAnimeSubShows(_ context.Context, id string, shows []*anime_subs.ShowSub) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.AnimeSubs[id]
+	if !ok {
+		return nil
+	}
+	d.Shows = append(d.Shows, copyShows(shows)...)
+	return nil
+}
+
 func (f *fakeSentState) MarkShowsNotified(_ context.Context, id string, showNames []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

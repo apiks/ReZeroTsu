@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ReZeroTsu/internal/animeschedule"
+	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/guilds"
 )
 
@@ -30,6 +31,8 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	}
 	st := newFakeSentState()
 	st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1", RoleID: "r1"}
+	// An existing document with nothing notified yet (a freshly seeded doc would start aired shows as notified).
+	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, LastSeedDate: now.Format("2006-01-02"), Shows: newGuildShowSubs(shows)}
 	d := newFakeDiscord(script...)
 	d.Roles["r1"] = true
 	return &guildHarness{d: d, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }}
