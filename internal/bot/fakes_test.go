@@ -86,8 +86,8 @@ type fakeDiscord struct {
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	// WebhookUnusable marks channels whose state says the bot lacks the permissions a webhook needs.
 	WebhookUnusable map[string]bool
-	DMError     error           // returned by OpenDM when set
-	RecentErr   error           // returned by RecentMessages when set
+	DMError         error // returned by OpenDM when set
+	RecentErr       error // returned by RecentMessages when set
 	// OnBlock, when set, runs as a blocking step starts waiting. Tests cancel the run from it, so shutdown tests
 	// need no timers.
 	OnBlock func()

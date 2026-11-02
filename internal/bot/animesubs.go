@@ -771,7 +771,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if ctx.Err() != nil {
 			return
 		}
-		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
+		handleNewEpisodesRejection(ctx, st, guildID, channelID, res.Err)
 		return
 	}
 }
@@ -779,7 +779,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 // handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
 // inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
 // (including missing permissions) leaves both in place.
-func handleNewEpisodesRejection(ctx context.Context, d RunOperations, st SentState, guildID, channelID string, err error) {
+func handleNewEpisodesRejection(ctx context.Context, st SentState, guildID, channelID string, err error) {
 	reason := discord.ClassifyChannelTerminal(err)
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:

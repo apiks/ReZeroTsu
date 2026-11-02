@@ -1,0 +1,24 @@
+version: "2"
+
+# Dead code and gofmt drift reached code review in the channel-sender change; these catch them before it.
+linters:
+  default: none
+  enable:
+    - govet
+    - unused
+    - unparam
+  exclusions:
+    rules:
+      # Test helpers legitimately take arguments that every test passes the same value for.
+      - path: _test\.go
+        linters:
+          - unparam
+      # Dead code that predates this config; decide whether to delete, then drop these two rules.
+      - path: internal/animeschedule/animeschedule\.go
+        text: lastFetchErr
+      - path: internal/bot/feeds\.go
+        text: removeFeedsForSubredditAndPostType
+
+formatters:
+  enable:
+    - gofmt

@@ -76,43 +76,43 @@ func TestGuildNewEpisodesDeliveredAtMostOnce(t *testing.T) {
 		wantSendCalls []int // cumulative Send calls after run 1, run 2
 	}{
 		{
-			name: "timeout after delivery, verification succeeds: next run sends nothing",
+			name:   "timeout after delivery, verification succeeds: next run sends nothing",
 			script: []step{timeoutAfterDelivery()}, wantDelivered: []int{1, 1}, wantSendCalls: []int{1, 1},
 		},
 		{
-			name: "timeout after delivery, verification fails: next run sends nothing",
+			name:   "timeout after delivery, verification fails: next run sends nothing",
 			script: []step{timeoutAfterDelivery()}, recentErr: errors.New("boom"),
 			wantDelivered: []int{1, 1}, wantSendCalls: []int{1, 1},
 		},
 		{
-			name: "timeout without delivery (verified missing): next run sends once",
+			name:   "timeout without delivery (verified missing): next run sends once",
 			script: []step{timeoutWithoutDelivery()}, wantDelivered: []int{0, 1}, wantSendCalls: []int{1, 2},
 		},
 		{
-			name: "5xx never causes a second send in the same run",
+			name:   "5xx never causes a second send in the same run",
 			script: []step{serverError()}, wantDelivered: []int{0, 1}, wantSendCalls: []int{1, 2},
 		},
 		{
-			name: "5xx after delivery is not resent",
+			name:   "5xx after delivery is not resent",
 			script: []step{serverErrorAfterDelivery()}, wantDelivered: []int{1, 1}, wantSendCalls: []int{1, 1},
 		},
 		{
-			name: "webhook timeout after delivery does not fall back",
+			name:   "webhook timeout after delivery does not fall back",
 			script: []step{timeoutAfterDelivery()}, webhook: &WebhookTarget{ID: "wh", Token: "t"},
 			wantDelivered: []int{1, 1}, wantSendCalls: []int{1, 1},
 		},
 		{
-			name: "unknown webhook falls back to the bot account exactly once",
+			name:   "unknown webhook falls back to the bot account exactly once",
 			script: []step{rejectWith(10015)}, webhook: &WebhookTarget{ID: "wh", Token: "t"},
 			wantDelivered: []int{1, 1}, wantSendCalls: []int{2, 2},
 		},
 		{
-			name: "invalid webhook token falls back to the bot account exactly once",
+			name:   "invalid webhook token falls back to the bot account exactly once",
 			script: []step{rejectWith(50027)}, webhook: &WebhookTarget{ID: "wh", Token: "t"},
 			wantDelivered: []int{1, 1}, wantSendCalls: []int{2, 2},
 		},
 		{
-			name: "other rejected code on a webhook is not retried in the run",
+			name:   "other rejected code on a webhook is not retried in the run",
 			script: []step{rejectWith(99999)}, webhook: &WebhookTarget{ID: "wh", Token: "t"},
 			wantDelivered: []int{0, 1}, wantSendCalls: []int{1, 2},
 		},
