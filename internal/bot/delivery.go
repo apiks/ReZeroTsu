@@ -32,6 +32,8 @@ type ChannelMessage struct {
 	AuthorID string
 	Content  string
 	Embeds   []*discordgo.MessageEmbed
+	// Timestamp is when the message was posted; zero when unknown.
+	Timestamp time.Time
 }
 
 // DiscordPort is the narrow Discord surface the per-target delivery runs depend on.
@@ -95,6 +97,11 @@ type SentState interface {
 	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
 	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
 
+	// --- ticket #9 (daily schedule) ---
+
+	// MarkSchedulePosted sets last_posted_date (UTC YYYY-MM-DD) on the guild's daily-schedule autopost entry.
+	MarkSchedulePosted(ctx context.Context, guildID, date string) error
+
 	// --- ticket #7 (user DMs) ---
 
 	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
@@ -143,7 +150,7 @@ func (p *discordgoPort) RecentMessages(_ context.Context, channelID string, limi
 		if m == nil {
 			continue
 		}
-		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds}
+		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds, Timestamp: m.Timestamp}
 		if m.Author != nil {
 			cm.AuthorID = m.Author.ID
 		}
@@ -253,6 +260,10 @@ func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) (
 
 func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
 	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
+}
+
+func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {
+	return m.db.Guilds().MarkAutopostPosted(ctx, guildID, postTypeDailySchedule, date)
 }
 
 func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {

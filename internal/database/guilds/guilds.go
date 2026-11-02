@@ -35,6 +35,8 @@ type Autopost struct {
 	Name     string `bson:"name"`
 	ID       string `bson:"id"`
 	RoleID   string `bson:"role_id,omitempty"`
+	// LastPostedDate is the UTC date (YYYY-MM-DD) the daily schedule was last confirmed posted; daily-schedule entries only.
+	LastPostedDate string `bson:"last_posted_date,omitempty"`
 }
 
 // ReactJoinWrap is one react_join_map entry; ChannelID holds the message ID (legacy).
@@ -404,6 +406,16 @@ func (r *Repo) SetAutopost(ctx context.Context, guildID, postType string, ap *Au
 	_, err := r.coll.UpdateOne(ctx, filter, push)
 	if err != nil {
 		return fmt.Errorf("SetAutopost: %w", err)
+	}
+	return nil
+}
+
+// MarkAutopostPosted sets last_posted_date on the guild's autopost entry for postType in one single-statement update.
+func (r *Repo) MarkAutopostPosted(ctx context.Context, guildID, postType, date string) error {
+	filter := bson.M{"_id": guildID, "autoposts.post_type": postType}
+	update := bson.M{"$set": bson.M{"autoposts.$.last_posted_date": date}}
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return fmt.Errorf("MarkAutopostPosted: %w", err)
 	}
 	return nil
 }
