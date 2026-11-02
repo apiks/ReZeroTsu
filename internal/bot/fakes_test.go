@@ -113,13 +113,29 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 	case stepReject:
 		f.mu.Unlock()
 		return "", &discordgo.RESTError{
-			Response: &http.Response{StatusCode: http.StatusForbidden},
+			Response: &http.Response{StatusCode: rejectStatus(st.code)},
 			Message:  &discordgo.APIErrorMessage{Code: st.code, Message: "rejected"},
 		}
 	default: // stepBlock
 		f.mu.Unlock()
 		<-ctx.Done()
 		return "", ctx.Err()
+	}
+}
+
+// rejectStatus is the HTTP status Discord answers with for a rejected-send code. Only access and permission
+// codes are 403s, so an unrecognised code is not mistaken for missing permissions (any 403).
+func rejectStatus(code int) int {
+	switch code {
+	case discordgo.ErrCodeMissingAccess, discordgo.ErrCodeMissingPermissions, discordgo.ErrCodeCannotSendMessagesToThisUser:
+		return http.StatusForbidden
+	case discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeUnknownMessage, discordgo.ErrCodeUnknownRole,
+		discordgo.ErrCodeUnknownUser, discordgo.ErrCodeUnknownWebhook:
+		return http.StatusNotFound
+	case discordgo.ErrCodeInvalidWebhookTokenProvided:
+		return http.StatusUnauthorized
+	default:
+		return http.StatusBadRequest
 	}
 }
 

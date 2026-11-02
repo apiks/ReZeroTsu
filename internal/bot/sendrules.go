@@ -12,8 +12,11 @@ import (
 )
 
 // Shared send rules for every delivery run (guild new-episodes, feeds, user DMs, ...):
-//   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send;
-//   - the webhook -> bot-account fallback runs only on a Rejected unknown/invalid webhook, after invalidating it;
+//   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; a
+//     context error returned by Send once the context is done means the request was never made (not verified);
+//   - the webhook -> bot-account fallback runs at most once per send, only when the webhook send is Rejected as
+//     an unknown/invalid webhook (which is invalidated first) or with a channel-terminal code (deleted,
+//     inaccessible, non-text, missing permissions); callers apply terminal handling to the bot-account error;
 //   - an Unknown outcome is verified by reading recent channel messages; if verification itself fails the
 //     message is treated as delivered (a duplicate role ping is worse than a miss);
 //   - "sent" state is written on a context detached from shutdown with a short timeout.
@@ -36,8 +39,9 @@ type SendResult struct {
 	Err error
 	// Presumed is true when Delivered was assumed because verification failed.
 	Presumed bool
-	// WebhookGone is true when the webhook turned out to be gone (and was invalidated), whatever the final
-	// outcome. Callers sending further chunks to the same channel must stop passing that webhook.
+	// WebhookGone is true when the webhook turned out to be unusable, whatever the final outcome: gone (and
+	// invalidated), or rejected with a channel-terminal code so the bot account was tried instead. Callers
+	// sending further chunks to the same channel must stop passing that webhook.
 	WebhookGone bool
 }
 
@@ -79,13 +83,21 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 
 	// Rejected: nothing was delivered.
 	gone := false
-	if webhook != nil && discord.IsWebhookGone(err) {
+	if webhook != nil && (discord.IsWebhookGone(err) || discord.ClassifyChannelTerminal(err) != discord.ChannelNotTerminal) {
+		// A gone webhook is invalidated. A channel-terminal rejection of the webhook does not prove the bot
+		// account cannot post (e.g. missing access to a private thread for the webhook), so callers only get
+		// to apply terminal handling when this single bot-account attempt is rejected too.
 		gone = true
-		d.InvalidateChannelWebhook(guildID, channelID)
+		if discord.IsWebhookGone(err) {
+			d.InvalidateChannelWebhook(guildID, channelID)
+		}
 		if cerr := ctx.Err(); cerr != nil {
 			return SendResult{Err: cerr, WebhookGone: true}, ""
 		}
 		id, err = d.Send(ctx, channelID, nil, msg)
+		if sendNotAttempted(ctx, err) {
+			return SendResult{Err: err, WebhookGone: true}, ""
+		}
 		switch discord.ClassifySend(err) {
 		case discord.Sent:
 			return SendResult{Delivered: true, WebhookGone: true}, id
