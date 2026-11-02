@@ -3,6 +3,7 @@ package anime_subs
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -132,6 +133,63 @@ func (r *Repo) AppendShows(ctx context.Context, id string, shows []*ShowSub) err
 	_, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$push": bson.M{"shows": bson.M{"$each": shows}}})
 	if err != nil {
 		return fmt.Errorf("AppendShows: %w", err)
+	}
+	return nil
+}
+
+// AddShowIfAbsent adds sub to the user's document in a single upsert statement unless a show with the same
+// name (case-insensitive) is already present. It reports whether the show was added.
+func (r *Repo) AddShowIfAbsent(ctx context.Context, id string, sub *ShowSub) (bool, error) {
+	filter := bson.M{
+		"id": id,
+		"shows": bson.M{"$not": bson.M{"$elemMatch": bson.M{
+			"show": bson.Regex{Pattern: "^" + regexp.QuoteMeta(sub.Show) + "$", Options: "i"},
+		}}},
+	}
+	update := bson.M{
+		"$push":        bson.M{"shows": sub},
+		"$setOnInsert": bson.M{"id": id, "is_guild": false, "last_seed_date": ""},
+	}
+	res, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
+	if err != nil {
+		// The document exists and already holds the show: the upsert tried to insert a duplicate id.
+		if mongo.IsDuplicateKeyError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("AddShowIfAbsent: %w", err)
+	}
+	return res.ModifiedCount > 0 || res.UpsertedCount > 0, nil
+}
+
+// RemoveShows removes the shows with exactly the given names from the document in a single update statement.
+func (r *Repo) RemoveShows(ctx context.Context, id string, showNames []string) error {
+	if len(showNames) == 0 {
+		return nil
+	}
+	update := bson.M{"$pull": bson.M{"shows": bson.M{"show": bson.M{"$in": showNames}}}}
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update); err != nil {
+		return fmt.Errorf("RemoveShows: %w", err)
+	}
+	return nil
+}
+
+// ClearShows empties the document's shows in a single update statement, leaving the document otherwise intact.
+func (r *Repo) ClearShows(ctx context.Context, id string) error {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": bson.M{"shows": []*ShowSub{}}}); err != nil {
+		return fmt.Errorf("ClearShows: %w", err)
+	}
+	return nil
+}
+
+// SetShowAirUnix records airUnix as the last notified air time of the named show, only where none is recorded yet.
+func (r *Repo) SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error {
+	update := bson.M{"$set": bson.M{"shows.$[s].last_notified_air_unix": airUnix}}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{
+		"s.show":                    showName,
+		"s.last_notified_air_unix": bson.M{"$not": bson.M{"$gt": 0}},
+	}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("SetShowAirUnix: %w", err)
 	}
 	return nil
 }
