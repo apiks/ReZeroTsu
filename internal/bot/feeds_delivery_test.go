@@ -45,7 +45,7 @@ func entry(channel string, pin bool) guilds.FeedEntry {
 }
 
 func runFeeds(ctx context.Context, d fakeDiscordPort, st SentState, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
-	processGuildFeeds(ctx, d, newChannelSenderFactory(d), st, "g1", feeds, parsed)
+	processGuildFeeds(ctx, d, newTestSenders(d), st, "g1", feeds, parsed)
 }
 
 func TestFeedsNoRepostWithMoreThanFortyFeeds(t *testing.T) {
@@ -212,7 +212,7 @@ func TestFeedsDeadWebhookIsNotReusedForLaterChunks(t *testing.T) {
 			compositeGUID: fmt.Sprintf("g%d", i),
 		})
 	}
-	flushChannel(context.Background(), d, newChannelSenderFactory(d), st, "g1", "c1", items)
+	flushChannel(context.Background(), d, newTestSenders(d), st, "g1", "c1", items)
 	if d.WebhookSends != 1 {
 		t.Errorf("webhook attempts = %d, want 1 (later chunks must not reuse the dead webhook)", d.WebhookSends)
 	}
@@ -243,7 +243,7 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 					compositeGUID: fmt.Sprintf("g%d", i),
 				})
 			}
-			flushChannel(context.Background(), d, newChannelSenderFactory(d), st, "g1", "c1", items)
+			flushChannel(context.Background(), d, newTestSenders(d), st, "g1", "c1", items)
 			if fmt.Sprint(st.FeedCheckWrites) != fmt.Sprint(tc.wantWrites) {
 				t.Errorf("feed-check writes = %v, want %v", st.FeedCheckWrites, tc.wantWrites)
 			}

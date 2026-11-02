@@ -77,7 +77,7 @@ func TestSendRulesNotAttemptedSendIsNotDelivered(t *testing.T) {
 		ctx := cancelOnBlock(d)
 		doc, _ := st.GetAnimeSubs(ctx, "u1")
 		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
-		_ = processAnimeSubUser(ctx, d, newChannelSenderFactory(d), st, doc, shows, now)
+		_ = processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, shows, now)
 		check(t, d)
 		if st.userShow("u1", "Show A").Notified {
 			t.Error("an unsent DM was recorded as notified")
@@ -104,16 +104,17 @@ func TestGuildNewEpisodesRejectedWebhookAvoidedOnlyAfterConfirmedFallback(t *tes
 		script           []step
 		recentErr        error
 		wantWebhookSends int // after two runs
+		wantResolves     int // after two runs: a webhook the cache still holds is not resolved again
 	}{
-		{name: "missing access (50001)", script: []step{rejectWith(50001), succeed()}, wantWebhookSends: 1},
-		{name: "missing permissions (50013)", script: []step{rejectWith(50013), succeed()}, wantWebhookSends: 1},
-		{name: "unknown webhook (10015)", script: []step{rejectWith(10015), succeed()}, wantWebhookSends: 2},
-		{name: "invalid webhook token (50027)", script: []step{rejectWith(50027), succeed()}, wantWebhookSends: 2},
-		{name: "unknown fallback verified delivered", script: []step{rejectWith(50001), timeoutAfterDelivery()}, wantWebhookSends: 1},
+		{name: "missing access (50001)", script: []step{rejectWith(50001), succeed()}, wantWebhookSends: 1, wantResolves: 1},
+		{name: "missing permissions (50013)", script: []step{rejectWith(50013), succeed()}, wantWebhookSends: 1, wantResolves: 1},
+		{name: "unknown webhook (10015)", script: []step{rejectWith(10015), succeed()}, wantWebhookSends: 2, wantResolves: 2},
+		{name: "invalid webhook token (50027)", script: []step{rejectWith(50027), succeed()}, wantWebhookSends: 2, wantResolves: 2},
+		{name: "unknown fallback verified delivered", script: []step{rejectWith(50001), timeoutAfterDelivery()}, wantWebhookSends: 1, wantResolves: 1},
 		{name: "unknown fallback presumed delivered", script: []step{rejectWith(50001), timeoutAfterDelivery()},
-			recentErr: errors.New("read failed"), wantWebhookSends: 2},
-		{name: "unknown fallback verified missing", script: []step{rejectWith(50001), timeoutWithoutDelivery()}, wantWebhookSends: 2},
-		{name: "fallback rejected too", script: []step{rejectWith(50001), rejectWith(99999)}, wantWebhookSends: 2},
+			recentErr: errors.New("read failed"), wantWebhookSends: 2, wantResolves: 1},
+		{name: "unknown fallback verified missing", script: []step{rejectWith(50001), timeoutWithoutDelivery()}, wantWebhookSends: 2, wantResolves: 1},
+		{name: "fallback rejected too", script: []step{rejectWith(50001), rejectWith(99999)}, wantWebhookSends: 2, wantResolves: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,13 +122,13 @@ func TestGuildNewEpisodesRejectedWebhookAvoidedOnlyAfterConfirmedFallback(t *tes
 			h.d.Webhook, h.d.RecentErr = testWebhook, tc.recentErr
 			for run := 1; run <= 2; run++ {
 				h.run(context.Background())
-				// Make the show due again for the next run.
-				for _, s := range h.st.AnimeSubs["c1"].Shows {
-					s.Notified = false
-				}
+				h.markAllDue()
 			}
 			if h.d.WebhookSends != tc.wantWebhookSends {
 				t.Errorf("webhook sends = %d, want %d", h.d.WebhookSends, tc.wantWebhookSends)
+			}
+			if h.d.ResolveCalls != tc.wantResolves {
+				t.Errorf("resolve calls = %d, want %d", h.d.ResolveCalls, tc.wantResolves)
 			}
 		})
 	}
@@ -167,8 +168,8 @@ func TestGuildNewEpisodesClientTimeoutIsVerified(t *testing.T) {
 func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 	assertBotOnly := func(t *testing.T, d *fakeDiscord, wantDelivered int) {
 		t.Helper()
-		if d.WebhookLookups != 0 || d.WebhookSends != 0 {
-			t.Errorf("webhook lookups = %d, webhook sends = %d, want none", d.WebhookLookups, d.WebhookSends)
+		if d.ResolveCalls != 0 || d.WebhookSends != 0 {
+			t.Errorf("webhook resolves = %d, webhook sends = %d, want none", d.ResolveCalls, d.WebhookSends)
 		}
 		if len(d.Delivered) != wantDelivered {
 			t.Errorf("delivered = %d, want %d", len(d.Delivered), wantDelivered)
@@ -182,7 +183,7 @@ func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 		d.Webhook = testWebhook
 		doc, _ := st.GetAnimeSubs(context.Background(), "u1")
 		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
-		_ = processAnimeSubUser(context.Background(), d, newChannelSenderFactory(d), st, doc, shows, now)
+		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, shows, now)
 		assertBotOnly(t, d, 1)
 	})
 	t.Run("reminder", func(t *testing.T) {

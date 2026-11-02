@@ -4,8 +4,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 // fakeClock is a settable clock for the webhook cache tests; nothing sleeps.
@@ -41,20 +39,19 @@ func (c *webhookCache) avoidCount() int {
 }
 
 func storeHook(c *webhookCache, guildID, channelID string) {
-	c.Store(guildID, channelID, &discordgo.Webhook{ID: "w-" + channelID, Token: "t"}, "")
+	c.Store(guildID, channelID, &WebhookTarget{ID: "w-" + channelID, Token: "t"})
 }
 
 func cached(c *webhookCache, guildID, channelID string) bool {
-	w, _ := c.Lookup(guildID, channelID)
-	return w != nil
+	return c.Lookup(guildID, channelID) != nil
 }
 
 func TestWebhookCacheStoresAndLooksUp(t *testing.T) {
 	c, _ := newTestWebhookCache()
-	c.Store("g1", "c1", &discordgo.Webhook{ID: "w1", Token: "t"}, "thread")
-	w, thread := c.Lookup("g1", "c1")
-	if w == nil || w.ID != "w1" || thread != "thread" {
-		t.Fatalf("Lookup = %v, %q, want w1 and thread", w, thread)
+	c.Store("g1", "c1", &WebhookTarget{ID: "w1", Token: "t", ThreadID: "thread"})
+	w := c.Lookup("g1", "c1")
+	if w == nil || w.ID != "w1" || w.ThreadID != "thread" {
+		t.Fatalf("Lookup = %+v, want w1 in thread", w)
 	}
 	if cached(c, "g1", "c2") {
 		t.Error("an unrelated channel has a cached webhook")

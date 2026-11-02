@@ -56,7 +56,7 @@ func TestProcessGuildNewEpisodesRolePing(t *testing.T) {
 			st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{{Show: "Aired", Guild: true}}}
 			d := newFakeDiscord()
 			d.RolePresence = map[string]rolePresence{"r1": tc.presence}
-			processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
+			processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
 			got := d.deliveredTo("c1")
 			if len(got) != 1 || got[0].Msg.Content != tc.wantContent {
 				t.Fatalf("delivered = %+v, want one message with content %q", got, tc.wantContent)
@@ -99,7 +99,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 			name: "posts aired shows once with one role ping and records them as notified",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
 				d.Roles["r1"] = true
-				processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", dayShows, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", dayShows, now)
 
 				got := d.deliveredTo("c1")
 				if len(got) != 1 {
@@ -123,7 +123,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 					}
 				}
 
-				processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", dayShows, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", dayShows, now)
 				if n := len(d.deliveredTo("c1")); n != 1 {
 					t.Errorf("second run delivered again: %d messages total, want 1", n)
 				}
@@ -133,7 +133,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 			name: "uses the webhook when one is available",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
 				d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
-				processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", dayShows, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", dayShows, now)
 				got := d.deliveredTo("c1")
 				if len(got) != 1 || got[0].Webhook == nil || got[0].Webhook.ID != "wh" {
 					t.Fatalf("delivered = %+v, want one webhook message", got)
@@ -153,7 +153,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subs}
 				d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
 				d.script = []step{rejectWith(10015)}
-				processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", func(bool) []animeschedule.ShowEntry { return many }, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return many }, now)
 				if d.WebhookSends != 1 {
 					t.Errorf("webhook attempts = %d, want 1", d.WebhookSends)
 				}
@@ -166,7 +166,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 			name: "deleted channel clears the autopost and sent state",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
 				d.script = []step{rejectWith(10003), rejectWith(10003)}
-				processGuildNewEpisodes(context.Background(), d, newChannelSenderFactory(d), st, "g1", dayShows, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", dayShows, now)
 				if len(d.Delivered) != 0 {
 					t.Fatalf("delivered %d messages, want 0", len(d.Delivered))
 				}

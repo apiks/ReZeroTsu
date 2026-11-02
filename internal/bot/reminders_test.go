@@ -102,7 +102,7 @@ func captureLogs(t *testing.T) *logBuf {
 func runSlice(t *testing.T, ctx context.Context, d fakeDiscordPort, st *fakeSentState, userID string) error {
 	t.Helper()
 	slice := st.snapshotReminders(userID)
-	return processReminderSlice(ctx, d, newChannelSenderFactory(d), st, slice, remindNow)
+	return processReminderSlice(ctx, d, newTestSenders(d), st, slice, remindNow)
 }
 
 func TestProcessReminderSlice_Outcomes(t *testing.T) {
@@ -254,7 +254,7 @@ func TestProcessReminderSlice_ClosedDMsLogOneWarningAndNeverRetry(t *testing.T) 
 
 func runDueRemindersForTest(t *testing.T, d fakeDiscordPort, st *fakeSentState) {
 	t.Helper()
-	deliverDueReminders(context.Background(), d, newChannelSenderFactory(d), st, remindNow)
+	deliverDueReminders(context.Background(), d, newTestSenders(d), st, remindNow)
 }
 
 func TestProcessReminderSlice_OpenDMFailure(t *testing.T) {
@@ -396,7 +396,7 @@ func TestProcessReminderSlice_ShutdownRightAfterSendStillRecordsDelivery(t *test
 	}
 	// After restart the delivered reminder is not sent again.
 	d2 := newFakeDiscord()
-	deliverDueReminders(context.Background(), d2, newChannelSenderFactory(d2), st, remindNow)
+	deliverDueReminders(context.Background(), d2, newTestSenders(d2), st, remindNow)
 	if d2.SendCalls != 1 || !strings.Contains(d2.Delivered[0].Msg.Embeds[0].Description, "b") {
 		t.Errorf("after restart delivered %+v, want only reminder b", d2.Delivered)
 	}
@@ -443,7 +443,7 @@ func TestDeliverDueReminders_OnlyDueDocumentsAreProcessed(t *testing.T) {
 	st.Reminders["u2"] = &reminders.RemindMeSlice{ID: "u2", Reminders: []reminders.RemindMe{futureReminder(1, "b")}}
 	d := newFakeDiscord()
 
-	deliverDueReminders(context.Background(), d, newChannelSenderFactory(d), st, remindNow)
+	deliverDueReminders(context.Background(), d, newTestSenders(d), st, remindNow)
 
 	if got := d.deliveredTo("dm-u1"); len(got) != 1 {
 		t.Errorf("u1 deliveries = %d, want 1", len(got))

@@ -24,7 +24,7 @@ func TestProcessAnimeSubUser(t *testing.T) {
 	}
 	run := func(ctx context.Context, d *fakeDiscord, st *fakeSentState, shows ...animeschedule.ShowEntry) error {
 		doc, _ := st.GetAnimeSubs(ctx, user)
-		return processAnimeSubUser(ctx, d, newChannelSenderFactory(d), st, doc, shows, now)
+		return processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, shows, now)
 	}
 	bg := context.Background()
 	dm := "dm-" + user
@@ -232,7 +232,7 @@ func TestProcessAnimeSubUserShutdownDuringOpenDMLogsNoError(t *testing.T) {
 	d := &cancelOnOpenDM{fakeDiscord: newFakeDiscord(), cancel: cancel}
 	doc, _ := st.GetAnimeSubs(ctx, "u1")
 	show := animeschedule.ShowEntry{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}
-	err := processAnimeSubUser(ctx, d, newChannelSenderFactory(d), st, doc, []animeschedule.ShowEntry{show}, now)
+	err := processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, []animeschedule.ShowEntry{show}, now)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}

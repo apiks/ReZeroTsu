@@ -154,8 +154,8 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		logger.For("bot").Info("shard ready", "shard_id", s.ShardID)
 		// One raw adapter and channel sender factory per shard, handed to that shard's delivery loops.
-		raw := newDiscordgoPort(s, cache)
-		ops, senders := RunOperations(raw), newChannelSenderFactory(raw)
+		raw := newDiscordgoPort(s)
+		ops, senders := RunOperations(raw), newChannelSenderFactory(raw, cache, realClock{})
 		if n := atomic.AddInt32(&readyCount, 1); n == int32(mgr.ShardCount) {
 			logger.PrintAlways("all shards ready")
 			startTopGGOnce.Do(func() {
