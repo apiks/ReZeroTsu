@@ -66,7 +66,7 @@ func TestChannelUsabilityNeedsStateAndNoREST(t *testing.T) {
 			if canSendToChannel(s, "c1") {
 				t.Errorf("canSendToChannel = true, want false")
 			}
-			if w, _, ok := getOrCreateChannelWebhook(s, "g1", "c1"); ok || w != nil {
+			if w, _, ok := getOrCreateChannelWebhook(s, newWebhookCache(realClock{}), "g1", "c1"); ok || w != nil {
 				t.Errorf("getOrCreateChannelWebhook = %v, %v, want nil, false", w, ok)
 			}
 			if n := tr.n.Load(); n != 0 {

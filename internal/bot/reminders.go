@@ -40,7 +40,7 @@ func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
 }
 
 // RunReminderLoop fetches due reminders, sends DMs, updates DB. Exits when ctx is cancelled.
-func RunReminderLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
+func RunReminderLoop(ctx context.Context, db *database.Client, session *discordgo.Session, cache *webhookCache, interval time.Duration) {
 	if interval <= 0 {
 		interval = reminderRunInterval
 	}
@@ -52,13 +52,13 @@ func RunReminderLoop(ctx context.Context, db *database.Client, session *discordg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runReminderCheck(ctx, db, session)
+			runReminderCheck(ctx, db, session, cache)
 		}
 	}
 }
 
-func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
-	deliverDueReminders(ctx, newDiscordgoPort(s), newMongoSentState(db), time.Now())
+func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Session, cache *webhookCache) {
+	deliverDueReminders(ctx, newDiscordgoPort(s, cache), newMongoSentState(db), time.Now())
 }
 
 // deliverDueReminders lists the documents with reminders due at now and delivers them with a worker pool.

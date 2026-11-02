@@ -121,10 +121,13 @@ type SentState interface {
 // --- production wiring: discordgo ---
 
 type discordgoPort struct {
+	cache *webhookCache
 	s *discordgo.Session
 }
 
-func newDiscordgoPort(s *discordgo.Session) DiscordPort { return &discordgoPort{s: s} }
+func newDiscordgoPort(s *discordgo.Session, cache *webhookCache) DiscordPort {
+	return &discordgoPort{s: s, cache: cache}
+}
 
 // Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
 // in-flight send would turn a message that Discord may still post into an Unknown outcome.
@@ -171,7 +174,7 @@ func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, li
 }
 
 func (p *discordgoPort) ChannelWebhook(guildID, channelID string) *WebhookTarget {
-	w, threadID, ok := getOrCreateChannelWebhook(p.s, guildID, channelID)
+	w, threadID, ok := getOrCreateChannelWebhook(p.s, p.cache, guildID, channelID)
 	if !ok || w == nil {
 		return nil
 	}
@@ -179,11 +182,11 @@ func (p *discordgoPort) ChannelWebhook(guildID, channelID string) *WebhookTarget
 }
 
 func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
-	invalidateChannelWebhook(guildID, channelID)
+	p.cache.Invalidate(guildID, channelID)
 }
 
 func (p *discordgoPort) AvoidChannelWebhook(guildID, channelID string) {
-	avoidChannelWebhook(guildID, channelID, time.Now())
+	p.cache.Avoid(guildID, channelID)
 }
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }
