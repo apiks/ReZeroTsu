@@ -85,6 +85,11 @@ type SentState interface {
 
 	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
 	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
+
+	// --- ticket #10 (feeds) ---
+
+	// ExistingFeedGUIDs returns the subset of guids that already have a feed check for the guild.
+	ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error)
 }
 
 // --- production wiring: discordgo ---
@@ -230,4 +235,16 @@ func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID,
 
 func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
 	return m.db.Reminders().Save(ctx, id, slice)
+}
+
+func (m *mongoSentState) ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error) {
+	found, err := m.db.FeedChecks().ExistingGUIDs(ctx, guildID, guids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(found))
+	for _, g := range found {
+		out[g] = struct{}{}
+	}
+	return out, nil
 }

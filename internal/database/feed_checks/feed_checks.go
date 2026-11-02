@@ -112,6 +112,30 @@ func (r *Repo) ListGUIDsByGuildID(ctx context.Context, guildID string, limit int
 	return out, nil
 }
 
+// ExistingGUIDs returns the subset of guids that already have a feed check for the guild.
+func (r *Repo) ExistingGUIDs(ctx context.Context, guildID string, guids []string) ([]string, error) {
+	if len(guids) == 0 {
+		return nil, nil
+	}
+	opts := options.Find().SetProjection(bson.M{"guid": 1})
+	cursor, err := r.coll.Find(ctx, bson.M{"guild_id": guildID, "guid": bson.M{"$in": guids}}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("ExistingGUIDs: %w", err)
+	}
+	defer cursor.Close(ctx)
+	var result []struct {
+		GUID string `bson:"guid"`
+	}
+	if err := cursor.All(ctx, &result); err != nil {
+		return nil, fmt.Errorf("ExistingGUIDs: %w", err)
+	}
+	out := make([]string, len(result))
+	for i := range result {
+		out[i] = result[i].GUID
+	}
+	return out, nil
+}
+
 // DeleteOlderThan deletes feed_checks with date before the given time.
 func (r *Repo) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
 	res, err := r.coll.DeleteMany(ctx, bson.M{"date": bson.M{"$lt": before}})
