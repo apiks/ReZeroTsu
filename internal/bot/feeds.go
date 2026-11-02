@@ -109,7 +109,7 @@ func advanceFeedCycleKey() (feedKey, bool) {
 }
 
 // RunFeedLoop runs delivery for this shard's guilds on each tick.
-func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
+func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, cache *webhookCache, interval time.Duration) {
 	if interval <= 0 {
 		interval = feedRunInterval
 	}
@@ -121,7 +121,7 @@ func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Se
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runFeedCheck(ctx, db, session, runCount%feedCleanupEveryRuns == 0)
+			runFeedCheck(ctx, db, session, cache, runCount%feedCleanupEveryRuns == 0)
 			runCount++
 		}
 	}
@@ -172,7 +172,7 @@ func waitFeedCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session, doCleanup bool) {
+func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session, cache *webhookCache, doCleanup bool) {
 	if doCleanup {
 		cutoff := time.Now().Add(-feedCheckLifespanDays * 24 * time.Hour)
 		n, err := db.FeedChecks().DeleteOlderThan(ctx, cutoff)
@@ -185,7 +185,7 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 		}
 	}
 
-	d := newDiscordgoPort(s)
+	d := newDiscordgoPort(s, cache)
 	st := newMongoSentState(db)
 
 	var guildWork []guildFeeds

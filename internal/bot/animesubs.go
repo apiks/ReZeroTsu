@@ -36,7 +36,7 @@ var (
 )
 
 // RunAnimeSubLoop runs the anime-sub check loop for this shard (round-robin). Exits when ctx is cancelled.
-func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration, getShardCount func() int) {
+func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordgo.Session, cache *webhookCache, interval time.Duration, getShardCount func() int) {
 	if interval <= 0 {
 		interval = animeSubRunInterval
 	}
@@ -48,7 +48,7 @@ func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !animeSubRoundRobin.RunWithTurn(session, getShardCount, func() { runAnimeSubCheck(ctx, db, session) }) {
+			if !animeSubRoundRobin.RunWithTurn(session, getShardCount, func() { runAnimeSubCheck(ctx, db, session, cache) }) {
 				continue
 			}
 		}
@@ -294,7 +294,7 @@ func guildRolePresence(g *discordgo.Guild, roleID string) rolePresence {
 	return roleAbsent
 }
 
-func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
+func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session, cache *webhookCache) {
 	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 		return
 	}
@@ -304,7 +304,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if len(todayShows) == 0 {
 		return
 	}
-	d := newDiscordgoPort(s)
+	d := newDiscordgoPort(s, cache)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 

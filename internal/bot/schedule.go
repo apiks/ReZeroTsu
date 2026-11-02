@@ -36,7 +36,7 @@ func runScheduleLoop(ctx context.Context, apiKey string) {
 }
 
 // RunDailyScheduleLoop posts today's schedule to each guild's dailyschedule channel once per day (00:00 UTC); shards staggered by ID.
-func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *discordgo.Session, apiKey string, getShardCount func() int) {
+func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *discordgo.Session, cache *webhookCache, apiKey string, getShardCount func() int) {
 	if apiKey == "" {
 		return
 	}
@@ -74,7 +74,7 @@ func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *dis
 			case <-staggerTimer.C:
 			}
 		}
-		runDailySchedulePost(ctx, db, session)
+		runDailySchedulePost(ctx, db, session, cache)
 		select {
 		case <-ctx.Done():
 			return
@@ -83,12 +83,12 @@ func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *dis
 	}
 }
 
-func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo.Session) {
+func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo.Session, cache *webhookCache) {
 	if !animeschedule.HasData() {
 		return
 	}
 	weekday := int(time.Now().UTC().Weekday())
-	d := newDiscordgoPort(s)
+	d := newDiscordgoPort(s, cache)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
