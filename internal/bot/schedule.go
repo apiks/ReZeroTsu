@@ -187,18 +187,18 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 			}
 		}
 		res = sender.post(ctx, msg)
-		if res.Delivered {
-			break
-		}
-		if ctx.Err() != nil {
+		if res.Outcome == PostCancelled {
 			return ctx.Err()
 		}
-		if discord.ClassifySend(res.Err) == discord.Rejected {
-			handleScheduleRejection(ctx, st, guildID, ap.ID, shardID, res.Err)
+		if res.Outcome == PostRejected {
+			handleScheduleRejection(ctx, st, guildID, ap.ID, shardID, res)
 			return nil
 		}
+		if res.Outcome != PostMissing {
+			break // delivered or presumed
+		}
 	}
-	if !res.Delivered {
+	if res.Outcome == PostMissing {
 		logger.For("schedule").Error("DailySchedule post failed", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", res.Err)
 		return nil
 	}
@@ -211,8 +211,9 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 
 // handleScheduleRejection applies the terminal handling for a Rejected schedule post: a deleted, non-text or
 // inaccessible channel clears the autopost; other rejections are only logged.
-func handleScheduleRejection(ctx context.Context, st SentState, guildID, channelID string, shardID int, err error) {
-	reason := discord.ClassifyChannelTerminal(err)
+func handleScheduleRejection(ctx context.Context, st SentState, guildID, channelID string, shardID int, res PostResult) {
+	err := res.Err
+	reason := res.Terminal
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
 	case discord.ChannelMissingPermissions:

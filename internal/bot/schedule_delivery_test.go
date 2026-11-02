@@ -59,6 +59,39 @@ func TestDailyScheduleDelivery(t *testing.T) {
 	}
 }
 
+// The daily schedule run retries a missing post once and never retries a rejected or cancelled one.
+func TestDailyScheduleRetriesOnlyMissingPosts(t *testing.T) {
+	t.Run("missing is retried once", func(t *testing.T) {
+		h := newScheduleHarness(timeoutWithoutDelivery(), timeoutWithoutDelivery(), timeoutWithoutDelivery())
+		_ = h.run(context.Background())
+		if h.fd.SendCalls != 2 {
+			t.Errorf("send calls = %d, want 2", h.fd.SendCalls)
+		}
+	})
+	t.Run("rejected is never retried", func(t *testing.T) {
+		for _, code := range []int{discordgo.ErrCodeMissingPermissions, discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeInvalidFormBody} {
+			h := newScheduleHarness(rejectWith(code))
+			if err := h.run(context.Background()); err != nil {
+				t.Fatalf("code %d: run: %v", code, err)
+			}
+			if h.fd.SendCalls != 1 {
+				t.Errorf("code %d: send calls = %d, want 1", code, h.fd.SendCalls)
+			}
+		}
+	})
+	t.Run("cancelled is never retried", func(t *testing.T) {
+		h := newScheduleHarness(timeoutWithoutDelivery(), succeed())
+		ctx, cancel := context.WithCancel(context.Background())
+		h.d = cancelDuringSend{fakeDiscord: h.fd, cancel: cancel}
+		if err := h.run(ctx); !errors.Is(err, context.Canceled) {
+			t.Errorf("run = %v, want context.Canceled", err)
+		}
+		if h.fd.SendCalls != 1 {
+			t.Errorf("send calls = %d, want 1", h.fd.SendCalls)
+		}
+	})
+}
+
 func TestDailyScheduleRerunSameDayPostsNothing(t *testing.T) {
 	h := newScheduleHarness()
 	_ = h.run(context.Background())
