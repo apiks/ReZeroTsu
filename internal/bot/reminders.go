@@ -219,7 +219,7 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 				return acqErr
 			}
 		}
-		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := newChannelSender(d, "", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch {
 		case res.Delivered:
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})

@@ -454,7 +454,7 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 	if len(items) == 0 {
 		return
 	}
-	sender := newFeedChannelSender(d, guildID, channelID)
+	sender := newChannelSender(d, guildID, channelID, feedPolicy())
 	for i := 0; i < len(items); i += discord.MaxEmbedsPerMessage {
 		end := min(i+discord.MaxEmbedsPerMessage, len(items))
 		embeds := make([]*discordgo.MessageEmbed, 0, end-i)
@@ -467,7 +467,7 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 			}
 		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
-		res, _ := sender.send(ctx, OutgoingMessage{Embeds: embeds})
+		res := sender.post(ctx, OutgoingMessage{Embeds: embeds})
 		if !res.Delivered {
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return
@@ -487,7 +487,8 @@ func sendOneAndPin(ctx context.Context, d DiscordPort, st SentState, guildID str
 			return
 		}
 	}
-	res, msgID := feedSend(ctx, d, guildID, feed.ChannelID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+	res := newChannelSender(d, guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+	msgID := res.MessageID
 	if !res.Delivered {
 		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res.Err)
 		return
