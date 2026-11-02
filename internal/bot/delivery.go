@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"time"
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
@@ -31,6 +32,8 @@ type ChannelMessage struct {
 	AuthorID string
 	Content  string
 	Embeds   []*discordgo.MessageEmbed
+	// Timestamp is when the message was posted; zero when unknown.
+	Timestamp time.Time
 }
 
 // DiscordPort is the narrow Discord surface the per-target delivery runs depend on.
@@ -86,11 +89,29 @@ type SentState interface {
 	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
 	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
 
+	// --- ticket #11: reminders delivered once ---
+
+	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
+	ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error)
+	// RemoveReminders atomically removes the reminders with the given IDs from the user's document and
+	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
+	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
+
+	// --- ticket #9 (daily schedule) ---
+
+	// MarkSchedulePosted sets last_posted_date (UTC YYYY-MM-DD) on the guild's daily-schedule autopost entry.
+	MarkSchedulePosted(ctx context.Context, guildID, date string) error
+
 	// --- ticket #7 (user DMs) ---
 
 	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
 	// key, in a single-statement update (matched by show name).
 	MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error
+
+	// --- ticket #10 (feeds) ---
+
+	// ExistingFeedGUIDs returns the subset of guids that already have a feed check for the guild.
+	ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error)
 }
 
 // --- production wiring: discordgo ---
@@ -134,7 +155,7 @@ func (p *discordgoPort) RecentMessages(_ context.Context, channelID string, limi
 		if m == nil {
 			continue
 		}
-		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds}
+		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds, Timestamp: m.Timestamp}
 		if m.Author != nil {
 			cm.AuthorID = m.Author.ID
 		}
@@ -238,6 +259,30 @@ func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *re
 	return m.db.Reminders().Save(ctx, id, slice)
 }
 
+func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error) {
+	return m.db.Reminders().ListDue(ctx, asOf)
+}
+
+func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
+	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
+}
+
+func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {
+	return m.db.Guilds().MarkAutopostPosted(ctx, guildID, postTypeDailySchedule, date)
+}
+
 func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
 	return m.db.AnimeSubs().MarkShowNotified(ctx, id, showName, airUnix, episodeKey)
+}
+
+func (m *mongoSentState) ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error) {
+	found, err := m.db.FeedChecks().ExistingGUIDs(ctx, guildID, guids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(found))
+	for _, g := range found {
+		out[g] = struct{}{}
+	}
+	return out, nil
 }
