@@ -110,12 +110,6 @@ func (f *channelSenderFactory) open(guildID, channelID string, policy sendPolicy
 	return newChannelSender(f.raw, f.cache, guildID, channelID, policy)
 }
 
-// invalidateWebhook drops the channel's cached webhook (run terminal handling; removed in a later ticket, when the
-// channel sender invalidates on a channel-terminal rejection itself).
-func (f *channelSenderFactory) invalidateWebhook(guildID, channelID string) {
-	f.cache.Invalidate(guildID, channelID)
-}
-
 // newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy. Unless the policy
 // is bot-account only it picks the channel's webhook once: none for an avoided channel, else the cached webhook,
 // else one resolved through the raw port (and cached).
@@ -147,6 +141,11 @@ func (c *channelSender) post(ctx context.Context, msg OutgoingMessage) PostResul
 	out := c.deliver(ctx, msg)
 	if out.webhookRejected {
 		c.webhook = nil
+	}
+	if !out.Delivered && out.Err != nil && discord.ClassifyChannelTerminal(out.Err) != discord.ChannelNotTerminal {
+		// The final attempt was rejected as channel-terminal: drop the channel's cached webhook so the next run
+		// resolves it again (the permission check then fails before any REST call).
+		c.cache.Invalidate(c.guildID, c.channelID)
 	}
 	return out.PostResult
 }
