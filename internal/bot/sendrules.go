@@ -131,8 +131,8 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 		// account cannot post (e.g. missing access to a private thread for the webhook), so callers only get
 		// to apply terminal handling when this single bot-account attempt is rejected too.
 		rejected = true
-		terminal := !discord.IsWebhookGone(err)
-		if !terminal {
+		gone := discord.IsWebhookGone(err)
+		if gone {
 			d.InvalidateChannelWebhook(guildID, channelID)
 		}
 		if cerr := ctx.Err(); cerr != nil {
@@ -148,7 +148,7 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 				res, id = verifyUnknownSend(ctx, d, channelID, nil, msg, err, match, presumeOnVerifyFailure, label)
 			}
 			res.webhookRejected = true
-			if res.Delivered && terminal {
+			if res.Delivered && !gone {
 				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
 				// run spends another rejected (401/403) request on it before falling back.
 				d.AvoidChannelWebhook(guildID, channelID)
