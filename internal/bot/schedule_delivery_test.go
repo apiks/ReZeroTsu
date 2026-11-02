@@ -80,6 +80,24 @@ func TestDailyScheduleRetriesOnlyMissingPosts(t *testing.T) {
 		}
 	})
 	t.Run("cancelled is never retried", func(t *testing.T) {
+		// The limiter stops while the context is alive, so the post is cancelled without shutdown. A wrongly retried
+		// post would wait for a second token, which the shutdown case below cannot show (a retry there stops at the
+		// cancelled context before any wait).
+		h := newScheduleHarness(succeed())
+		lim := &recordingLimiter{err: errors.New("send limiter stopped")}
+		senders, _, _ := newTestSendersWithLimiter(h.d, lim)
+		err := processDailyScheduleForGuild(context.Background(), h.d, senders, h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+		if err != nil {
+			t.Errorf("run = %v, want nil (context alive)", err)
+		}
+		if got := lim.Priorities(); len(got) != 1 {
+			t.Errorf("waits = %v, want exactly one", got)
+		}
+		if h.fd.SendCalls != 0 {
+			t.Errorf("send calls = %d, want 0", h.fd.SendCalls)
+		}
+	})
+	t.Run("cancelled by shutdown is never retried", func(t *testing.T) {
 		h := newScheduleHarness(timeoutWithoutDelivery(), succeed())
 		ctx, cancel := context.WithCancel(context.Background())
 		h.d = cancelDuringSend{fakeDiscord: h.fd, cancel: cancel}
