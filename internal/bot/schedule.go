@@ -168,7 +168,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 	}
 	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
-	vd := scheduleVerifyPort{DiscordPort: d, title: emb.Title, now: now}
+	match := scheduleMatcher(emb.Title, now)
 
 	var res SendResult
 	for attempt := range 2 {
@@ -186,12 +186,10 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 				return err
 			}
 		}
-		res = sendWithRules(ctx, vd, guildID, ap.ID, d.ChannelWebhook(guildID, ap.ID), msg)
-		if res.Delivered && !res.Presumed {
+		// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
+		res, _ = deliverWithRules(ctx, d, guildID, ap.ID, d.ChannelWebhook(guildID, ap.ID), msg, match, false, "schedule send")
+		if res.Delivered {
 			break
-		}
-		if res.Presumed {
-			res.Err = errors.New("delivery could not be verified")
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -201,7 +199,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 			return nil
 		}
 	}
-	if !res.Delivered || res.Presumed {
+	if !res.Delivered {
 		logger.For("schedule").Error("DailySchedule post failed", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", res.Err)
 		return nil
 	}

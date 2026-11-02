@@ -151,6 +151,39 @@ func TestDailyScheduleStaleSameTitleMessageDoesNotCountAsPosted(t *testing.T) {
 	}
 }
 
+func TestScheduleMatcher(t *testing.T) {
+	now := time.Date(2024, 3, 5, 10, 0, 0, 0, time.UTC)
+	emb := &discordgo.MessageEmbed{Title: "T", Description: "today's shows"}
+	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
+	wh := &WebhookTarget{ID: "wh", Token: "t"}
+	mk := func(author string, ts time.Time, e *discordgo.MessageEmbed) ChannelMessage {
+		return ChannelMessage{ID: "m", AuthorID: author, Timestamp: ts, Embeds: []*discordgo.MessageEmbed{e}}
+	}
+	tests := []struct {
+		name    string
+		msg     ChannelMessage
+		webhook *WebhookTarget
+		want    bool
+	}{
+		{"bot post today", mk(fakeBotUserID, now.Add(-time.Minute), emb), nil, true},
+		{"webhook post today", mk("wh", now.Add(-time.Minute), emb), wh, true},
+		{"zero timestamp accepted", mk(fakeBotUserID, time.Time{}, emb), nil, true},
+		{"same post yesterday", mk(fakeBotUserID, now.Add(-24*time.Hour), emb), nil, false},
+		{"other author", mk("someone", now, emb), nil, false},
+		{"webhook author without a webhook send", mk("wh", now, emb), nil, false},
+		{"other title", mk(fakeBotUserID, now, &discordgo.MessageEmbed{Title: "X", Description: "today's shows"}), nil, false},
+		{"same title, other description", mk(fakeBotUserID, now, &discordgo.MessageEmbed{Title: "T", Description: "other"}), nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := scheduleMatcher("T", now)([]ChannelMessage{tc.msg}, fakeBotUserID, tc.webhook, msg)
+			if got != tc.want {
+				t.Errorf("match = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestScheduleMessagesToday(t *testing.T) {
 	now := time.Date(2024, 3, 5, 10, 0, 0, 0, time.UTC)
 	mk := func(title string, ts time.Time) ChannelMessage {
