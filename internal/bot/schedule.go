@@ -236,23 +236,18 @@ type channelInfo struct {
 	ParentID string
 }
 
-// channelStateFirst looks the channel up in the gateway state cache and only falls back to REST on a miss.
-// A cached channel's fields are read under the state lock (discordgo's ChannelAdd overwrites the cached struct
-// in place).
+// channelStateFirst looks the channel up in the gateway state cache only. There is no REST fallback: its callers
+// then compute permissions from the state, which fails for a channel the state lacks. A cached channel's fields
+// are read under the state lock (discordgo's ChannelAdd overwrites the cached struct in place).
 func channelStateFirst(s *discordgo.Session, channelID string) (channelInfo, error) {
-	if s.State != nil {
-		if ch, err := s.State.Channel(channelID); err == nil && ch != nil {
-			return stateChannelInfo(s.State, ch), nil
-		}
+	if s.State == nil {
+		return channelInfo{}, errors.New("no state cache")
 	}
-	ch, err := s.Channel(channelID)
+	ch, err := s.State.Channel(channelID)
 	if err != nil {
 		return channelInfo{}, err
 	}
-	if ch == nil {
-		return channelInfo{}, errors.New("channel not found")
-	}
-	return channelInfo{Type: ch.Type, ParentID: ch.ParentID}, nil
+	return stateChannelInfo(s.State, ch), nil
 }
 
 // stateChannelInfo reads ch, owned by st, under st's read lock.
@@ -264,11 +259,11 @@ func stateChannelInfo(st *discordgo.State, ch *discordgo.Channel) channelInfo {
 
 // canSendToChannel reports whether the bot can send messages and embeds (View Channel, Send Messages, Embed Links; threads: Send in Threads).
 func canSendToChannel(s *discordgo.Session, channelID string) bool {
-	ch, err := channelStateFirst(s, channelID)
-	if err != nil {
+	if s.State == nil || s.State.User == nil {
 		return false
 	}
-	if s.State.User == nil {
+	ch, err := channelStateFirst(s, channelID)
+	if err != nil {
 		return false
 	}
 	perms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
