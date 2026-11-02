@@ -36,19 +36,20 @@ func SendBatchToChannel(ctx context.Context, s *discordgo.Session, w *discordgo.
 	return err
 }
 
-// resolveChannelWebhook returns a usable webhook for the channel (which may be a thread), or nil. It does the
-// channel-state lookup, thread-parent resolution, permission checks and lists or creates the bot's webhook; it
-// caches nothing (the channel sender's webhook cache does).
-func resolveChannelWebhook(s *discordgo.Session, channelID string) *WebhookTarget {
+// webhookChannelFromState does the state-only checks behind webhook delivery: the channel is known, a thread
+// resolves to its parent channel, and the bot has the permissions webhook delivery needs (View Channel, Send
+// Messages, Embed Links and Manage Webhooks on the webhook channel, plus Send Messages in Threads for a thread). It
+// returns the channel the webhook lives in and the thread ID (empty when the channel is not a thread). It makes no
+// REST call.
+func webhookChannelFromState(s *discordgo.Session, channelID string) (webhookChannelID, threadID string, ok bool) {
 	if s.State == nil || s.State.User == nil {
-		return nil
+		return "", "", false
 	}
 	ch, err := channelStateFirst(s, channelID)
 	if err != nil {
-		return nil
+		return "", "", false
 	}
-	webhookChannelID := channelID
-	threadID := ""
+	webhookChannelID = channelID
 	isThread := ch.Type == discordgo.ChannelTypeGuildPublicThread || ch.Type == discordgo.ChannelTypeGuildPrivateThread
 	if isThread && ch.ParentID != "" {
 		webhookChannelID = ch.ParentID
@@ -56,18 +57,29 @@ func resolveChannelWebhook(s *discordgo.Session, channelID string) *WebhookTarge
 	}
 	perms, err := s.State.UserChannelPermissions(s.State.User.ID, webhookChannelID)
 	if err != nil {
-		return nil
+		return "", "", false
 	}
 	required := int64(discordgo.PermissionManageWebhooks | discordgo.PermissionViewChannel | discordgo.PermissionSendMessages | discordgo.PermissionEmbedLinks)
 	if perms&required != required {
-		return nil
+		return "", "", false
 	}
 	if threadID != "" {
 		threadPerms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
 		sendThreads := int64(discordgo.PermissionSendMessagesInThreads)
 		if err != nil || threadPerms&sendThreads != sendThreads {
-			return nil
+			return "", "", false
 		}
+	}
+	return webhookChannelID, threadID, true
+}
+
+// resolveChannelWebhook returns a usable webhook for the channel (which may be a thread), or nil. It does the
+// channel-state lookup, thread-parent resolution, permission checks and lists or creates the bot's webhook; it
+// caches nothing (the channel sender's webhook cache does).
+func resolveChannelWebhook(s *discordgo.Session, channelID string) *WebhookTarget {
+	webhookChannelID, threadID, ok := webhookChannelFromState(s, channelID)
+	if !ok {
+		return nil
 	}
 
 	ws, err := s.ChannelWebhooks(webhookChannelID)

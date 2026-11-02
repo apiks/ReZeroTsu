@@ -64,6 +64,10 @@ type RawDiscord interface {
 	// ResolveWebhook returns a usable webhook for the channel, or nil when none can be used. It does no caching:
 	// the channel sender owns the webhook cache.
 	ResolveWebhook(guildID, channelID string) *WebhookTarget
+	// WebhookUsable reports from the cached state alone (no REST call) whether the bot may still use a webhook in
+	// the channel: the channel is known and the bot has the permissions webhook delivery needs. The channel
+	// sender asks before it uses a cached webhook, since a webhook send keeps working after the bot lost them.
+	WebhookUsable(channelID string) bool
 }
 
 var (
@@ -179,6 +183,11 @@ func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, li
 
 func (p *discordgoPort) ResolveWebhook(_, channelID string) *WebhookTarget {
 	return resolveChannelWebhook(p.s, channelID)
+}
+
+func (p *discordgoPort) WebhookUsable(channelID string) bool {
+	_, _, ok := webhookChannelFromState(p.s, channelID)
+	return ok
 }
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }

@@ -15,8 +15,8 @@ import (
 )
 
 // directSendCalls are the discordgo methods that put a message in front of a user or read the channel to check
-// whether one landed. Notification code reaches Discord only through the RawDiscord adapter in internal/bot/delivery.go,
-// so the shared send rules (no send after cancel, fallback, verification, detached "sent" writes) cannot be
+// whether one landed. Notification code reaches Discord only through the channel sender (internal/bot/channelsender.go),
+// which uses the RawDiscord adapter in internal/bot/delivery.go, so the shared send rules (no send after cancel, fallback, verification, detached "sent" writes) cannot be
 // bypassed by one more copy of the send.
 var directSendCalls = map[string]bool{
 	"ChannelMessageSend":        true,
@@ -28,11 +28,11 @@ var directSendCalls = map[string]bool{
 	"ChannelMessages":           true,
 }
 
-// sendAllowedFiles may call those methods directly: the port implementation, and the two files that send
-// one-off replies and logs that are not notifications.
+// sendAllowedFiles may call those methods directly: the raw Discord adapter, and the files that send one-off
+// replies and logs that are not notifications.
 var sendAllowedFiles = map[string]bool{
 	"delivery.go": true, // discordgo adapter implementation
-	"webhooks.go": true, // SendBatchToChannel, used by the port
+	"webhooks.go": true, // SendBatchToChannel, used by the raw Discord adapter
 	"bot.go":      true, // new-guild log message
 	"messages.go": true, // ping replies
 }
@@ -50,7 +50,7 @@ func checkDirectSends(fset *token.FileSet, file *ast.File, name string) []string
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if ok && directSendCalls[sel.Sel.Name] {
-			out = append(out, fmt.Sprintf("%s: .%s called directly; send through the channel sender (internal/bot/delivery.go) and sendrules.go",
+			out = append(out, fmt.Sprintf("%s: .%s called directly; send through the channel sender (internal/bot/channelsender.go)",
 				fset.Position(call.Pos()), sel.Sel.Name))
 		}
 		return true
@@ -136,7 +136,7 @@ func scanDir(t *testing.T, dir string, c check) []string {
 	return out
 }
 
-func TestNotificationSendsGoThroughTheDeliveryPort(t *testing.T) {
+func TestNotificationSendsGoThroughTheChannelSender(t *testing.T) {
 	for _, v := range scanDir(t, "../bot", checkDirectSends) {
 		t.Error(v)
 	}
@@ -171,7 +171,7 @@ import "strings"
 func f(role role) {
 	_ = strings.ToLower(role.Name)
 	_ = strings.TrimSpace(role.Name)
-	port.Send("c", nil)
+	sender.post(ctx, msg)
 }
 `
 	parse := func(src string) (*token.FileSet, *ast.File) {
@@ -190,10 +190,10 @@ func f(role role) {
 		want  int
 	}{
 		{"direct sends are flagged", violating, checkDirectSends, "feeds.go", 2},
-		{"the port implementation may send", violating, checkDirectSends, "delivery.go", 0},
+		{"the raw Discord adapter may send", violating, checkDirectSends, "delivery.go", 0},
 		{"EqualFold and show-name ToLower are flagged", violating, checkShowNameMatching, "feeds.go", 3},
-		{"unrelated lowercasing and port sends are fine", clean, checkShowNameMatching, "feeds.go", 0},
-		{"port calls are not direct sends", clean, checkDirectSends, "feeds.go", 0},
+		{"unrelated lowercasing and channel sender posts are fine", clean, checkShowNameMatching, "feeds.go", 0},
+		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
