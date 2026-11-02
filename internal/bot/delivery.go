@@ -36,24 +36,11 @@ type ChannelMessage struct {
 	Timestamp time.Time
 }
 
-// DiscordPort is the narrow Discord surface the per-target delivery runs depend on.
-// Production wiring is discordgo; tests use an in-memory fake.
-type DiscordPort interface {
-	// Send posts msg to channelID through webhook, or through the bot account when webhook is nil.
-	// It returns the new message ID when Discord reports one (webhook sends do not).
-	Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (messageID string, err error)
+// RunOperations is the Discord surface handed to delivery runs: everything a run may do besides post messages,
+// which only the channel sender does (through RawDiscord).
+type RunOperations interface {
 	// OpenDM returns the DM channel ID for userID.
 	OpenDM(ctx context.Context, userID string) (channelID string, err error)
-	// RecentMessages returns up to limit most recent messages in channelID, newest first.
-	RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error)
-
-	// ChannelWebhook returns a usable webhook for the channel, or nil when none can be used.
-	ChannelWebhook(guildID, channelID string) *WebhookTarget
-	// InvalidateChannelWebhook drops the cached webhook for the channel.
-	InvalidateChannelWebhook(guildID, channelID string)
-	// AvoidChannelWebhook drops the cached webhook for the channel and offers none for it for a while, so sends
-	// go through the bot account. Used when Discord rejected the webhook but the bot account could post.
-	AvoidChannelWebhook(guildID, channelID string)
 	// CanSend reports whether the bot may post embeds to the channel.
 	CanSend(channelID string) bool
 	// GuildRole reports whether the role still exists in the guild, or that the state cannot tell.
@@ -62,9 +49,31 @@ type DiscordPort interface {
 	PinReplacing(channelID, messageID, subreddit string)
 	// ShardID is used for log attribution only.
 	ShardID() int
+}
+
+// RawDiscord is the raw Discord surface handed only to the channel sender factory; delivery runs never hold it.
+type RawDiscord interface {
+	// Send posts msg to channelID through webhook, or through the bot account when webhook is nil.
+	// It returns the new message ID when Discord reports one (webhook sends do not).
+	Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (messageID string, err error)
+	// RecentMessages returns up to limit most recent messages in channelID, newest first.
+	RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error)
 	// BotUserID is the bot's own user ID, used to recognise its messages when verifying an Unknown send.
 	BotUserID() string
+
+	// ResolveWebhook returns a usable webhook for the channel, or nil when none can be used. It does no caching:
+	// the channel sender owns the webhook cache.
+	ResolveWebhook(guildID, channelID string) *WebhookTarget
+	// WebhookUsable reports from the cached state alone (no REST call) whether the bot may still use a webhook in
+	// the channel: the channel is known and the bot has the permissions webhook delivery needs. The channel
+	// sender asks before it uses a cached webhook, since a webhook send keeps working after the bot lost them.
+	WebhookUsable(channelID string) bool
 }
+
+var (
+	_ RunOperations = (*discordgoPort)(nil)
+	_ RawDiscord    = (*discordgoPort)(nil)
+)
 
 // SentState is the narrow persistence surface the per-target delivery runs depend on:
 // the "already sent" records plus the per-guild configuration read alongside them.
@@ -124,7 +133,9 @@ type discordgoPort struct {
 	s *discordgo.Session
 }
 
-func newDiscordgoPort(s *discordgo.Session) DiscordPort { return &discordgoPort{s: s} }
+func newDiscordgoPort(s *discordgo.Session) *discordgoPort {
+	return &discordgoPort{s: s}
+}
 
 // Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
 // in-flight send would turn a message that Discord may still post into an Unknown outcome.
@@ -170,20 +181,13 @@ func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, li
 	return out, nil
 }
 
-func (p *discordgoPort) ChannelWebhook(guildID, channelID string) *WebhookTarget {
-	w, threadID, ok := getOrCreateChannelWebhook(p.s, guildID, channelID)
-	if !ok || w == nil {
-		return nil
-	}
-	return &WebhookTarget{ID: w.ID, Token: w.Token, ThreadID: threadID}
+func (p *discordgoPort) ResolveWebhook(_, channelID string) *WebhookTarget {
+	return resolveChannelWebhook(p.s, channelID)
 }
 
-func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
-	invalidateChannelWebhook(guildID, channelID)
-}
-
-func (p *discordgoPort) AvoidChannelWebhook(guildID, channelID string) {
-	avoidChannelWebhook(guildID, channelID, time.Now())
+func (p *discordgoPort) WebhookUsable(channelID string) bool {
+	_, _, ok := webhookChannelFromState(p.s, channelID)
+	return ok
 }
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }

@@ -18,6 +18,9 @@ type guildHarness struct {
 	st  *fakeSentState
 	now time.Time
 	fn  weekdayShows
+	// senders and clock are shared by every run of the harness, like the shard's factory and the shared cache.
+	senders *channelSenderFactory
+	clock   *fakeClock
 }
 
 func newGuildHarness(n int, script ...step) *guildHarness {
@@ -35,11 +38,19 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, LastSeedDate: now.Format("2006-01-02"), Shows: newGuildShowSubs(shows)}
 	d := newFakeDiscord(script...)
 	d.Roles["r1"] = true
-	return &guildHarness{d: d, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }}
+	senders, clk := newTestSendersWithClock(d)
+	return &guildHarness{d: d, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }, senders: senders, clock: clk}
 }
 
 func (h *guildHarness) run(ctx context.Context) {
-	processGuildNewEpisodes(ctx, h.d, h.st, "g1", h.fn, h.now)
+	processGuildNewEpisodes(ctx, h.d, h.senders, h.st, "g1", h.fn, h.now)
+}
+
+// markAllDue makes every show due again for the next run.
+func (h *guildHarness) markAllDue() {
+	for _, s := range h.st.AnimeSubs["c1"].Shows {
+		s.Notified = false
+	}
 }
 
 func (h *guildHarness) notifiedCount() int {
@@ -154,19 +165,91 @@ func TestGuildNewEpisodesDuplicateEntriesNeverRepost(t *testing.T) {
 	}
 }
 
-func TestGuildNewEpisodesUnknownWebhookInvalidatesAndFallsBack(t *testing.T) {
-	h := newGuildHarness(1, rejectWith(10015))
+// A gone webhook falls back to the bot account in its run; the next run resolves a webhook again and posts through it.
+func TestGuildNewEpisodesGoneWebhookFallsBackThenNextRunUsesWebhookAgain(t *testing.T) {
+	for _, code := range []int{10015, 50027} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			h := newGuildHarness(1, rejectWith(code))
+			h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+			h.run(context.Background())
+			got := h.d.deliveredTo("c1")
+			if len(got) != 1 || got[0].Webhook != nil {
+				t.Fatalf("delivered = %+v, want one bot-account message", got)
+			}
+			if h.notifiedCount() != 1 {
+				t.Errorf("notified = %d, want 1", h.notifiedCount())
+			}
+			if h.d.ResolveCalls != 1 {
+				t.Fatalf("resolve calls after run 1 = %d, want 1", h.d.ResolveCalls)
+			}
+
+			h.markAllDue()
+			h.run(context.Background())
+			if h.d.ResolveCalls != 2 {
+				t.Errorf("resolve calls after run 2 = %d, want 2 (re-resolved)", h.d.ResolveCalls)
+			}
+			got = h.d.deliveredTo("c1")
+			if len(got) != 2 || got[1].Webhook == nil {
+				t.Errorf("delivered = %+v, want the second message through the webhook", got)
+			}
+		})
+	}
+}
+
+// After a channel-terminal webhook rejection followed by a bot-account success, the next run makes no resolve call and
+// no webhook attempt until the avoid period has passed on the clock.
+func TestGuildNewEpisodesAvoidedChannelSkipsWebhookUntilAvoidPeriodPasses(t *testing.T) {
+	h := newGuildHarness(1, rejectWith(50001), succeed())
 	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
 	h.run(context.Background())
-	if len(h.d.Invalidated) != 1 {
-		t.Errorf("invalidated = %v, want exactly one", h.d.Invalidated)
+	if h.d.WebhookSends != 1 || h.d.ResolveCalls != 1 {
+		t.Fatalf("run 1: webhook sends = %d, resolves = %d, want 1 and 1", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.WebhookSends != 1 || h.d.ResolveCalls != 1 {
+		t.Errorf("run 2 (avoided): webhook sends = %d, resolves = %d, want 1 and 1", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+	if got := len(h.d.Delivered); got != 2 {
+		t.Fatalf("delivered = %d, want 2 (run 2 through the bot account)", got)
+	}
+
+	h.clock.Advance(webhookAvoidTTL)
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.ResolveCalls != 2 || h.d.WebhookSends != 2 {
+		t.Errorf("run 3 (avoid over): webhook sends = %d, resolves = %d, want 2 and 2", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+}
+
+// A webhook cached by one run is not used once the state says the bot lost the permissions webhook delivery needs: the
+// next run posts through the bot account. When the permissions come back the cached webhook is used again, without a
+// new resolve.
+func TestGuildNewEpisodesCachedWebhookNotUsedWhileStateLacksPermissions(t *testing.T) {
+	h := newGuildHarness(1)
+	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+	h.run(context.Background())
+	if h.d.WebhookSends != 1 || h.d.ResolveCalls != 1 {
+		t.Fatalf("run 1: webhook sends = %d, resolves = %d, want 1 and 1", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+
+	h.d.WebhookUnusable["c1"] = true
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.WebhookSends != 1 {
+		t.Errorf("run 2 (permissions lost): webhook sends = %d, want 1 (no new webhook send)", h.d.WebhookSends)
 	}
 	got := h.d.deliveredTo("c1")
-	if len(got) != 1 || got[0].Webhook != nil {
-		t.Fatalf("delivered = %+v, want one bot-account message", got)
+	if len(got) != 2 || got[1].Webhook != nil {
+		t.Fatalf("delivered = %+v, want the second message through the bot account", got)
 	}
-	if h.notifiedCount() != 1 {
-		t.Errorf("notified = %d, want 1", h.notifiedCount())
+
+	delete(h.d.WebhookUnusable, "c1")
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.WebhookSends != 2 || h.d.ResolveCalls != 1 {
+		t.Errorf("run 3 (permissions back): webhook sends = %d, resolves = %d, want 2 and 1", h.d.WebhookSends, h.d.ResolveCalls)
 	}
 }
 
@@ -179,12 +262,11 @@ func TestGuildNewEpisodesTerminalWebhookRejectionTriesBotAccount(t *testing.T) {
 		wantDelivered int
 		wantNotified  int
 		wantCleared   bool
-		wantInvalid   int
 	}{
 		{name: "webhook 50001 then bot success", script: []step{rejectWith(50001), succeed()}, wantDelivered: 1, wantNotified: 2},
 		{name: "webhook 50013 then bot success", script: []step{rejectWith(50013), succeed()}, wantDelivered: 1, wantNotified: 2},
-		{name: "webhook 50001 then bot 50001", script: []step{rejectWith(50001), rejectWith(50001)}, wantCleared: true, wantInvalid: 1},
-		{name: "webhook 10003 then bot 10003", script: []step{rejectWith(10003), rejectWith(10003)}, wantCleared: true, wantInvalid: 1},
+		{name: "webhook 50001 then bot 50001", script: []step{rejectWith(50001), rejectWith(50001)}, wantCleared: true},
+		{name: "webhook 10003 then bot 10003", script: []step{rejectWith(10003), rejectWith(10003)}, wantCleared: true},
 		{name: "webhook 50001 then bot non-terminal rejection", script: []step{rejectWith(50001), rejectWith(99999)}},
 	}
 	for _, tc := range tests {
@@ -211,9 +293,6 @@ func TestGuildNewEpisodesTerminalWebhookRejectionTriesBotAccount(t *testing.T) {
 			}
 			if doc, _ := h.st.GetAnimeSubs(context.Background(), "c1"); (doc == nil) != tc.wantCleared {
 				t.Errorf("sent state deleted = %v, want %v", doc == nil, tc.wantCleared)
-			}
-			if len(h.d.Invalidated) != tc.wantInvalid {
-				t.Errorf("invalidated = %v, want %d", h.d.Invalidated, tc.wantInvalid)
 			}
 		})
 	}
@@ -269,18 +348,22 @@ func TestGuildNewEpisodesNoSendAfterCancel(t *testing.T) {
 	}
 }
 
-func TestSendWithRulesCancelledMidSendNeverFallsBack(t *testing.T) {
-	d := newFakeDiscord(blockUntilCancelled())
+func TestGuildNewEpisodesCancelledMidSendNeverFallsBack(t *testing.T) {
+	h := newGuildHarness(1, blockUntilCancelled())
+	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
 	ctx, cancel := context.WithCancel(context.Background())
-	d.OnBlock = cancel
-	res := sendWithRules(ctx, d, "g1", "c1", &WebhookTarget{ID: "wh", Token: "t"}, OutgoingMessage{})
-	if res.Delivered {
+	h.d.OnBlock = cancel
+	h.run(ctx)
+	if h.notifiedCount() != 0 {
 		t.Error("reported delivered for an undelivered message")
 	}
-	if d.SendCalls != 1 {
-		t.Errorf("send calls = %d, want 1 (no fallback on context error)", d.SendCalls)
+	if h.d.SendCalls != 1 {
+		t.Errorf("send calls = %d, want 1 (no fallback on context error)", h.d.SendCalls)
 	}
-	if len(d.Invalidated) != 0 {
-		t.Errorf("webhook invalidated on a context error: %v", d.Invalidated)
+	// The webhook was resolved once and is kept: a context error does not make the next run resolve again.
+	h.d.script, h.d.OnBlock = nil, nil
+	h.run(context.Background())
+	if h.d.ResolveCalls != 1 {
+		t.Errorf("resolve calls = %d, want 1 (webhook kept after a context error)", h.d.ResolveCalls)
 	}
 }

@@ -109,7 +109,7 @@ func advanceFeedCycleKey() (feedKey, bool) {
 }
 
 // RunFeedLoop runs delivery for this shard's guilds on each tick.
-func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
+func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Session, ops RunOperations, senders *channelSenderFactory, interval time.Duration) {
 	if interval <= 0 {
 		interval = feedRunInterval
 	}
@@ -121,7 +121,7 @@ func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Se
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runFeedCheck(ctx, db, session, runCount%feedCleanupEveryRuns == 0)
+			runFeedCheck(ctx, db, session, ops, senders, runCount%feedCleanupEveryRuns == 0)
 			runCount++
 		}
 	}
@@ -172,7 +172,7 @@ func waitFeedCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session, doCleanup bool) {
+func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session, d RunOperations, senders *channelSenderFactory, doCleanup bool) {
 	if doCleanup {
 		cutoff := time.Now().Add(-feedCheckLifespanDays * 24 * time.Hour)
 		n, err := db.FeedChecks().DeleteOlderThan(ctx, cutoff)
@@ -185,7 +185,6 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 		}
 	}
 
-	d := newDiscordgoPort(s)
 	st := newMongoSentState(db)
 
 	var guildWork []guildFeeds
@@ -222,7 +221,7 @@ func runFeedCheck(ctx context.Context, db *database.Client, s *discordgo.Session
 	}
 
 	for _, gw := range guildWork {
-		processGuildFeeds(ctx, d, st, gw.guild.ID, gw.feeds, parsed)
+		processGuildFeeds(ctx, d, senders, st, gw.guild.ID, gw.feeds, parsed)
 	}
 }
 
@@ -291,7 +290,7 @@ func removeFeedsForChannel(ctx context.Context, st SentState, guildID, channelID
 // processGuildFeeds delivers the not-yet-sent items of one guild's feeds. Which items were already sent is
 // looked up for exactly the candidate GUIDs, so the number of feeds in a guild cannot push live items out of
 // the dedupe set; GUIDs queued within this run are tracked so one item goes to a channel only once per run.
-func processGuildFeeds(ctx context.Context, d DiscordPort, st SentState, guildID string, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
+func processGuildFeeds(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
 	type candidate struct {
 		feed guilds.FeedEntry
 		item *gofeed.Item
@@ -341,8 +340,8 @@ func processGuildFeeds(ctx context.Context, d DiscordPort, st SentState, guildID
 		queued[c.guid] = struct{}{}
 		emb := buildFeedEmbed(c.feed, c.item)
 		if c.feed.Pin {
-			flushChannelBatches(ctx, d, st, guildID, channelBatches)
-			sendOneAndPin(ctx, d, st, guildID, c.feed, c.guid, emb)
+			flushChannelBatches(ctx, d, senders, st, guildID, channelBatches)
+			sendOneAndPin(ctx, d, senders, st, guildID, c.feed, c.guid, emb)
 			if !waitFeedCtx(ctx, feedPinThrottle) {
 				return
 			}
@@ -351,17 +350,17 @@ func processGuildFeeds(ctx context.Context, d DiscordPort, st SentState, guildID
 		ch := c.feed.ChannelID
 		channelBatches[ch] = append(channelBatches[ch], sendItem{embed: emb, feed: c.feed, compositeGUID: c.guid})
 		if len(channelBatches[ch]) >= discord.MaxEmbedsPerMessage {
-			flushChannel(ctx, d, st, guildID, ch, channelBatches[ch])
+			flushChannel(ctx, d, senders, st, guildID, ch, channelBatches[ch])
 			channelBatches[ch] = nil
 			if !waitFeedCtx(ctx, feedWebhookThrottle) {
 				return
 			}
 		}
 	}
-	flushChannelBatches(ctx, d, st, guildID, channelBatches)
+	flushChannelBatches(ctx, d, senders, st, guildID, channelBatches)
 }
 
-func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guildID string, channelBatches map[string][]sendItem) {
+func flushChannelBatches(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, channelBatches map[string][]sendItem) {
 	type batch struct {
 		channelID string
 		list      []sendItem
@@ -393,7 +392,7 @@ func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guild
 				if ctx.Err() != nil {
 					return
 				}
-				flushChannel(ctx, d, st, guildID, entry.channelID, entry.list)
+				flushChannel(ctx, d, senders, st, guildID, entry.channelID, entry.list)
 			}
 		}()
 	}
@@ -414,7 +413,7 @@ func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guild
 
 // persistFeedChunk records the items of a delivered chunk in one write. The write is detached from shutdown so
 // that a delivered item is never re-sent on the next run.
-func persistFeedChunk(ctx context.Context, d DiscordPort, st SentState, guildID string, chunk []sendItem) {
+func persistFeedChunk(ctx context.Context, d RunOperations, st SentState, guildID string, chunk []sendItem) {
 	now := time.Now()
 	fcs := make([]feed_checks.FeedCheck, 0, len(chunk))
 	for _, it := range chunk {
@@ -433,28 +432,24 @@ func persistFeedChunk(ctx context.Context, d DiscordPort, st SentState, guildID 
 }
 
 // handleFeedSendFailure maps the error of an undelivered feed send to its terminal handling.
-func handleFeedSendFailure(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, err error) {
+func handleFeedSendFailure(ctx context.Context, d RunOperations, st SentState, guildID, channelID string, err error) {
 	if ctx.Err() != nil {
 		return
 	}
 	switch reason := discord.ClassifyChannelTerminal(err); reason {
-	case discord.ChannelDeleted, discord.ChannelInaccessible:
-		d.InvalidateChannelWebhook(guildID, channelID)
-		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
-	case discord.ChannelNotText:
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
 		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
 	case discord.ChannelMissingPermissions:
-		d.InvalidateChannelWebhook(guildID, channelID)
 	default:
 		logger.For("feeds").Warn("feed send failed", "shard_id", d.ShardID(), "channel_id", channelID, "err", err)
 	}
 }
 
-func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, items []sendItem) {
+func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID, channelID string, items []sendItem) {
 	if len(items) == 0 {
 		return
 	}
-	sender := newFeedChannelSender(d, guildID, channelID)
+	sender := senders.open(guildID, channelID, feedPolicy())
 	for i := 0; i < len(items); i += discord.MaxEmbedsPerMessage {
 		end := min(i+discord.MaxEmbedsPerMessage, len(items))
 		embeds := make([]*discordgo.MessageEmbed, 0, end-i)
@@ -467,7 +462,7 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 			}
 		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
-		res, _ := sender.send(ctx, OutgoingMessage{Embeds: embeds})
+		res := sender.post(ctx, OutgoingMessage{Embeds: embeds})
 		if !res.Delivered {
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return
@@ -481,13 +476,14 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 }
 
 // sendOneAndPin sends one message through the bot account (a message ID is needed to pin), records it, then pins it.
-func sendOneAndPin(ctx context.Context, d DiscordPort, st SentState, guildID string, feed guilds.FeedEntry, compositeGUID string, emb *discordgo.MessageEmbed) {
+func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feed guilds.FeedEntry, compositeGUID string, emb *discordgo.MessageEmbed) {
 	if globalSendLimiter != nil {
 		if err := globalSendLimiter.Acquire(ctx, PriorityFeeds); err != nil {
 			return
 		}
 	}
-	res, msgID := feedSend(ctx, d, guildID, feed.ChannelID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+	res := senders.open(guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+	msgID := res.MessageID
 	if !res.Delivered {
 		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res.Err)
 		return

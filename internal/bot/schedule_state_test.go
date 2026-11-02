@@ -48,7 +48,7 @@ func stateWithChannel(t *testing.T, user *discordgo.User) *discordgo.State {
 	return st
 }
 
-// The permission checks behind canSendToChannel and getOrCreateChannelWebhook read the state cache, so a channel
+// The permission checks behind canSendToChannel and resolveChannelWebhook read the state cache, so a channel
 // missing from it is unusable straight away: no REST lookup is spent on it. A nil state or a state without the bot
 // user is unusable too, and never panics.
 func TestChannelUsabilityNeedsStateAndNoREST(t *testing.T) {
@@ -66,8 +66,8 @@ func TestChannelUsabilityNeedsStateAndNoREST(t *testing.T) {
 			if canSendToChannel(s, "c1") {
 				t.Errorf("canSendToChannel = true, want false")
 			}
-			if w, _, ok := getOrCreateChannelWebhook(s, "g1", "c1"); ok || w != nil {
-				t.Errorf("getOrCreateChannelWebhook = %v, %v, want nil, false", w, ok)
+			if w := resolveChannelWebhook(s, "c1"); w != nil {
+				t.Errorf("resolveChannelWebhook = %v, want nil", w)
 			}
 			if n := tr.n.Load(); n != 0 {
 				t.Errorf("REST requests = %d, want 0", n)

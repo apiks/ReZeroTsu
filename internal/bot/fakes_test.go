@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/feed_checks"
@@ -43,6 +42,19 @@ func serverError() step               { return step{kind: stepServerError} }
 func serverErrorAfterDelivery() step  { return step{kind: stepServerErrorDelivered} }
 func inFlightTimeoutAtShutdown() step { return step{kind: stepInFlightAtShutdown} }
 
+// newTestSendersWithClock builds the real channel sender factory over the fake raw port, with a fresh shared
+// webhook cache and a fake clock. Runs that must share webhook state across calls reuse the returned factory.
+func newTestSendersWithClock(raw RawDiscord) (*channelSenderFactory, *fakeClock) {
+	clk := newFakeClock()
+	return newChannelSenderFactory(raw, newWebhookCache(clk)), clk
+}
+
+// newTestSenders is newTestSendersWithClock for tests that never move the clock.
+func newTestSenders(raw RawDiscord) *channelSenderFactory {
+	f, _ := newTestSendersWithClock(raw)
+	return f
+}
+
 // delivered is one message that "reached Discord".
 type delivered struct {
 	ChannelID string
@@ -50,7 +62,13 @@ type delivered struct {
 	Msg       OutgoingMessage
 }
 
-// fakeDiscord is an in-memory DiscordPort. Send calls consume script steps in order; once the script is
+// fakeDiscordPort is both interfaces a Discord adapter satisfies.
+type fakeDiscordPort interface {
+	RunOperations
+	RawDiscord
+}
+
+// fakeDiscord is an in-memory Discord adapter (run operations and raw Discord). Send calls consume script steps in order; once the script is
 // exhausted every Send succeeds.
 type fakeDiscord struct {
 	mu        sync.Mutex
@@ -63,9 +81,11 @@ type fakeDiscord struct {
 	RecentCalls int
 
 	// Configuration.
-	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
+	Webhook     *WebhookTarget  // returned by ResolveWebhook; nil means no webhook available
 	Roles       map[string]bool // roleID -> exists
 	NoSendPerms map[string]bool // channelID -> CanSend false
+	// WebhookUnusable marks channels whose state says the bot lacks the permissions a webhook needs.
+	WebhookUnusable map[string]bool
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
 	// OnBlock, when set, runs as a blocking step starts waiting. Tests cancel the run from it, so shutdown tests
@@ -75,20 +95,14 @@ type fakeDiscord struct {
 	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
 	RolePresence map[string]rolePresence
 
-	Invalidated []string // "guild:channel"
-	Avoided     []string // "guild:channel"
-	Pinned      []string // "channel:message"
+	Pinned []string // "channel:message"
 
-	// WebhookLookups counts ChannelWebhook calls.
-	WebhookLookups int
-	// avoidUntil maps the "guild:channel" keys whose webhook was avoided to when the avoidance expires. As in
-	// production, only avoidance stops ChannelWebhook offering a webhook; invalidation just clears the cache, and
-	// the next lookup re-resolves (here: returns Webhook again).
-	avoidUntil map[string]time.Time
+	// ResolveCalls counts ResolveWebhook calls: the only record of webhook resolution.
+	ResolveCalls int
 }
 
 func newFakeDiscord(script ...step) *fakeDiscord {
-	return &fakeDiscord{script: script, Roles: map[string]bool{}, NoSendPerms: map[string]bool{}}
+	return &fakeDiscord{script: script, Roles: map[string]bool{}, NoSendPerms: map[string]bool{}, WebhookUnusable: map[string]bool{}}
 }
 
 func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
@@ -196,34 +210,19 @@ func (f *fakeDiscord) RecentMessages(_ context.Context, channelID string, limit 
 	return out, nil
 }
 
-func (f *fakeDiscord) ChannelWebhook(guildID, channelID string) *WebhookTarget {
+// ResolveWebhook returns the configured webhook and counts the call.
+func (f *fakeDiscord) ResolveWebhook(_, _ string) *WebhookTarget {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.WebhookLookups++
-	if until, ok := f.avoidUntil[guildID+":"+channelID]; ok && time.Now().Before(until) {
-		return nil
-	}
+	f.ResolveCalls++
 	return f.Webhook
 }
 
-// InvalidateChannelWebhook only clears the (modelled) cache and the avoid entry, like production: the next
-// ChannelWebhook re-resolves the same webhook.
-func (f *fakeDiscord) InvalidateChannelWebhook(guildID, channelID string) {
+// WebhookUsable is true unless the channel is marked in WebhookUnusable.
+func (f *fakeDiscord) WebhookUsable(channelID string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.Invalidated = append(f.Invalidated, guildID+":"+channelID)
-	delete(f.avoidUntil, guildID+":"+channelID)
-}
-
-// AvoidChannelWebhook makes ChannelWebhook offer no webhook for the channel for webhookAvoidTTL.
-func (f *fakeDiscord) AvoidChannelWebhook(guildID, channelID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.Avoided = append(f.Avoided, guildID+":"+channelID)
-	if f.avoidUntil == nil {
-		f.avoidUntil = map[string]time.Time{}
-	}
-	f.avoidUntil[guildID+":"+channelID] = time.Now().Add(webhookAvoidTTL)
+	return !f.WebhookUnusable[channelID]
 }
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }
@@ -432,8 +431,9 @@ func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, ch
 }
 
 var (
-	_ DiscordPort = (*fakeDiscord)(nil)
-	_ SentState   = (*fakeSentState)(nil)
+	_ RunOperations = (*fakeDiscord)(nil)
+	_ RawDiscord    = (*fakeDiscord)(nil)
+	_ SentState     = (*fakeSentState)(nil)
 )
 
 // blocked runs OnBlock, if set, as a blocking step starts waiting. The caller must not hold f.mu.

@@ -40,7 +40,7 @@ func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
 }
 
 // RunReminderLoop fetches due reminders, sends DMs, updates DB. Exits when ctx is cancelled.
-func RunReminderLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
+func RunReminderLoop(ctx context.Context, db *database.Client, session *discordgo.Session, ops RunOperations, senders *channelSenderFactory, interval time.Duration) {
 	if interval <= 0 {
 		interval = reminderRunInterval
 	}
@@ -52,17 +52,17 @@ func RunReminderLoop(ctx context.Context, db *database.Client, session *discordg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runReminderCheck(ctx, db, session)
+			runReminderCheck(ctx, db, ops, senders)
 		}
 	}
 }
 
-func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
-	deliverDueReminders(ctx, newDiscordgoPort(s), newMongoSentState(db), time.Now())
+func runReminderCheck(ctx context.Context, db *database.Client, d RunOperations, senders *channelSenderFactory) {
+	deliverDueReminders(ctx, d, senders, newMongoSentState(db), time.Now())
 }
 
 // deliverDueReminders lists the documents with reminders due at now and delivers them with a worker pool.
-func deliverDueReminders(ctx context.Context, d DiscordPort, st SentState, now time.Time) {
+func deliverDueReminders(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, now time.Time) {
 	slices, err := st.ListDueReminders(ctx, now)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -85,7 +85,7 @@ func deliverDueReminders(ctx context.Context, d DiscordPort, st SentState, now t
 				if slice == nil {
 					continue
 				}
-				if err := processReminderSlice(ctx, d, st, slice, now); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processReminderSlice(ctx, d, senders, st, slice, now); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("reminders").Error("processReminderSlice failed", "user_id", slice.ID, "err", err)
 				}
 			}
@@ -105,7 +105,7 @@ func deliverDueReminders(ctx context.Context, d DiscordPort, st SentState, now t
 	wg.Wait()
 }
 
-func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slice *reminders.RemindMeSlice, now time.Time) error {
+func processReminderSlice(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, slice *reminders.RemindMeSlice, now time.Time) error {
 	if slice == nil {
 		return nil
 	}
@@ -219,7 +219,7 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 				return acqErr
 			}
 		}
-		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch {
 		case res.Delivered:
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})

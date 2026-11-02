@@ -36,7 +36,7 @@ func runScheduleLoop(ctx context.Context, apiKey string) {
 }
 
 // RunDailyScheduleLoop posts today's schedule to each guild's dailyschedule channel once per day (00:00 UTC); shards staggered by ID.
-func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *discordgo.Session, apiKey string, getShardCount func() int) {
+func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *discordgo.Session, ops RunOperations, senders *channelSenderFactory, apiKey string, getShardCount func() int) {
 	if apiKey == "" {
 		return
 	}
@@ -74,7 +74,7 @@ func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *dis
 			case <-staggerTimer.C:
 			}
 		}
-		runDailySchedulePost(ctx, db, session)
+		runDailySchedulePost(ctx, db, session, ops, senders)
 		select {
 		case <-ctx.Done():
 			return
@@ -83,12 +83,11 @@ func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *dis
 	}
 }
 
-func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo.Session) {
+func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo.Session, d RunOperations, senders *channelSenderFactory) {
 	if !animeschedule.HasData() {
 		return
 	}
 	weekday := int(time.Now().UTC().Weekday())
-	d := newDiscordgoPort(s)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
@@ -114,7 +113,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 				if g == nil || g.ID == "" {
 					continue
 				}
-				if err := processDailyScheduleForGuild(ctx, d, st, g.ID, weekday, dayShows, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processDailyScheduleForGuild(ctx, d, senders, st, g.ID, weekday, dayShows, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("schedule").Error("processDailyScheduleForGuild failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
 				}
 			}
@@ -140,7 +139,7 @@ var scheduleRetryWait = 3 * time.Second
 // processDailyScheduleForGuild posts the daily schedule to one guild at most once per UTC day: one attempt
 // following the shared send rules, then at most one retry when the post is verifiably missing (or verification
 // itself failed, which is the opposite of the default policy). Rejected outcomes are never retried.
-func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentState, guildID string, weekday int, dayShows weekdayShows, now time.Time) error {
+func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, weekday int, dayShows weekdayShows, now time.Time) error {
 	if guildID == "" {
 		return nil
 	}
@@ -169,9 +168,9 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
-	sender := newChannelSender(d, guildID, ap.ID).withPolicy(scheduleMatcher(emb.Title, now), false, "schedule send")
+	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))
 
-	var res SendResult
+	var res PostResult
 	for attempt := range 2 {
 		if attempt > 0 {
 			t := time.NewTimer(scheduleRetryWait)
@@ -187,7 +186,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 				return err
 			}
 		}
-		res, _ = sender.send(ctx, msg)
+		res = sender.post(ctx, msg)
 		if res.Delivered {
 			break
 		}
@@ -212,7 +211,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 
 // handleScheduleRejection applies the terminal handling for a Rejected schedule post: a deleted, non-text or
 // inaccessible channel clears the autopost; other rejections are only logged.
-func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, shardID int, err error) {
+func handleScheduleRejection(ctx context.Context, d RunOperations, st SentState, guildID, channelID string, shardID int, err error) {
 	reason := discord.ClassifyChannelTerminal(err)
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
@@ -227,7 +226,6 @@ func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, g
 	} else {
 		logger.For("schedule").Warn(reason.String()+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
 	}
-	d.InvalidateChannelWebhook(guildID, channelID)
 }
 
 // channelInfo is the part of a channel the send paths read.

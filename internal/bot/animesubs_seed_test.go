@@ -59,7 +59,7 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 		{
 			name: "newly created document marks aired non-delayed shows as notified and posts nothing",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later, delayed), now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later, delayed), now)
 				if len(d.Delivered) != 0 {
 					t.Fatalf("delivered %d messages, want 0", len(d.Delivered))
 				}
@@ -70,9 +70,9 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 			name: "disable then re-enable on the same day does not repost aired episodes",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
 				sched := schedule(one, later)
-				processGuildNewEpisodes(context.Background(), d, st, "g1", sched, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", sched, now)
 				_ = st.DeleteAnimeSubs(context.Background(), "c1") // what /new-episodes enabled:false does
-				processGuildNewEpisodes(context.Background(), d, st, "g1", sched, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", sched, now)
 				if len(d.Delivered) != 0 {
 					t.Fatalf("delivered %d messages, want 0", len(d.Delivered))
 				}
@@ -81,10 +81,10 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 		{
 			name: "show that airs after the seed is announced once",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later), now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later), now)
 				after := now.Add(2 * time.Hour)
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later), after)
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later), after)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later), after)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later), after)
 				got := d.deliveredTo("c1")
 				if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
 					t.Fatalf("delivered = %+v, want one message with one embed", got)
@@ -109,8 +109,8 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 				after := now.Add(2 * time.Hour)
 				lateAired := late
 				lateAired.AirTimeUnix = now.Unix() + 600
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later, lateAired), after)
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later, lateAired), after)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later, lateAired), after)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later, lateAired), after)
 				if n := len(d.deliveredTo("c1")); n != 1 {
 					t.Errorf("delivered %d messages, want 1", n)
 				}
@@ -140,7 +140,7 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 				if doc, _ := st.GetAnimeSubs(context.Background(), "c1"); doc.LastSeedDate != today {
 					t.Errorf("LastSeedDate = %q, want %q", doc.LastSeedDate, today)
 				}
-				processGuildNewEpisodes(context.Background(), d, st, "g1", schedule(one, later), now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", schedule(one, later), now)
 				if n := len(d.deliveredTo("c1")); n != 1 {
 					t.Errorf("delivered %d messages after rollover, want 1", n)
 				}
