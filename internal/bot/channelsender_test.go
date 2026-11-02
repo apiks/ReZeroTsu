@@ -195,6 +195,40 @@ func TestChannelSenderPostTokenWaitEndedMakesNoSendAndIsCancelled(t *testing.T) 
 	}
 }
 
+// A token wait that succeeds while shutdown has started (the real limiter's fast path never reads the context, and
+// its Done branch can return a token already granted) sends nothing and reports cancelled.
+func TestChannelSenderPostShutdownDuringSuccessfulTokenWaitMakesNoSend(t *testing.T) {
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		policy sendPolicy
+	}{
+		{"new-episodes", newEpisodesPolicy()},
+		{"reminder", reminderPolicy()},
+		{"feed", feedPolicy()},
+		{"daily schedule", schedulePolicy("Schedule", now)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			d := newFakeDiscord()
+			lim := &recordingLimiter{onAcquire: func() error { cancel(); return nil }}
+			senders, _, _ := newTestSendersWithLimiter(d, lim)
+			res := senders.open("g1", "c1", tc.policy).post(ctx, OutgoingMessage{Content: "hello"})
+			if res.Outcome != PostCancelled {
+				t.Errorf("outcome = %v, want cancelled", res.Outcome)
+			}
+			if !errors.Is(res.Err, context.Canceled) {
+				t.Errorf("err = %v, want context.Canceled", res.Err)
+			}
+			if d.SendCalls != 0 {
+				t.Errorf("send calls = %d, want none", d.SendCalls)
+			}
+		})
+	}
+}
+
 // Shutdown is checked before the token wait: a post made after shutdown started does not queue for the budget.
 func TestChannelSenderPostAfterShutdownDoesNotWaitForAToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

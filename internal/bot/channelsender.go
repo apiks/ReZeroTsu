@@ -10,11 +10,11 @@ import (
 
 // The channel sender is the one way a delivery run posts its messages to a single channel or DM under the send
 // rules (see GLOSSARY.md):
-//   - a post checks for shutdown, then waits for one token of the shared send budget at its policy's priority, then
-//     sends; a failed token wait (shutdown, or the limiter stopping) sends nothing and reports cancelled, and the
-//     bot-account fallback uses the same token;
+//   - a post checks for shutdown, waits for one token of the shared send budget at its policy's priority, checks
+//     for shutdown again, then sends; a failed token wait (shutdown, or the limiter stopping) or shutdown noticed
+//     after the wait sends nothing and reports cancelled, and the bot-account fallback uses the same token;
 //   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; only a
-//     Send that never made the request (errSendNotAttempted: a send-limiter wait ended by the context) skips
+//     Send that never made the request (errSendNotAttempted: the webhook limiter wait ended by the context) skips
 //     verification, while any other context error (e.g. an in-flight client timeout) stays Unknown;
 //   - the webhook -> bot-account fallback runs at most once per post, only when the webhook send is Rejected as
 //     an unknown/invalid webhook (which is invalidated first) or with a channel-terminal code (deleted,
@@ -90,7 +90,8 @@ const (
 	// PostMissing means an unknown outcome was verified as not delivered, or its verification failed under a
 	// policy that does not presume delivery.
 	PostMissing
-	// PostCancelled means the post ended undelivered while shutdown was under way.
+	// PostCancelled means the post ended undelivered because shutdown was under way, or because its send-limiter
+	// token wait failed while the context was alive (the limiter stopped).
 	PostCancelled
 )
 
@@ -223,8 +224,8 @@ func rejectedResult(err error) PostResult {
 	return PostResult{Outcome: PostRejected, Terminal: discord.ClassifyChannelTerminal(err), Err: err}
 }
 
-// deliver makes one post: cancel check, token wait, never-attempted check, outcome classification, rejected-webhook
-// fallback, Unknown verification and unrecognised-rejection logging.
+// deliver makes one post: shutdown check, one token wait, shutdown check again, send, never-attempted check, outcome
+// classification, rejected-webhook fallback, Unknown verification and unrecognised-rejection logging.
 func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOutcome {
 	if err := ctx.Err(); err != nil {
 		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
@@ -232,6 +233,11 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 	// One token per post, taken after the shutdown check and before the first send; the bot-account fallback below
 	// reuses it. A failed wait (shutdown, or the limiter stopping) sends nothing.
 	if err := c.limiter.Acquire(ctx, c.policy.priority); err != nil {
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
+	}
+	// A successful wait does not prove the context is alive (the limiter's fast path never reads it, and its Done
+	// branch can return a token already granted), and the Discord port ignores ctx, so check again before sending.
+	if err := ctx.Err(); err != nil {
 		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
 	}
 	webhook := c.webhook
