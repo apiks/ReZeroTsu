@@ -4,8 +4,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 // webhookAvoidTTL is how long a channel whose webhook Discord rejected (while the bot account could post)
@@ -21,25 +19,20 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
-type cachedWebhook struct {
-	webhook  *discordgo.Webhook
-	threadID string
-}
-
 // webhookCache holds the resolved webhooks and the avoid entries of every shard, behind one lock. It is built once at
 // startup and shared; it reads time only from its clock.
 type webhookCache struct {
 	clock clock
 
 	mu         sync.RWMutex
-	webhooks   map[string]cachedWebhook
+	webhooks   map[string]*WebhookTarget
 	avoidUntil map[string]time.Time
 }
 
 func newWebhookCache(c clock) *webhookCache {
 	return &webhookCache{
 		clock:      c,
-		webhooks:   make(map[string]cachedWebhook),
+		webhooks:   make(map[string]*WebhookTarget),
 		avoidUntil: make(map[string]time.Time),
 	}
 }
@@ -71,21 +64,17 @@ func (c *webhookCache) Avoided(guildID, channelID string) bool {
 	return false
 }
 
-// Lookup returns the channel's cached webhook and thread ID, or nil.
-func (c *webhookCache) Lookup(guildID, channelID string) (*discordgo.Webhook, string) {
+// Lookup returns the channel's cached webhook, or nil.
+func (c *webhookCache) Lookup(guildID, channelID string) *WebhookTarget {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	e, ok := c.webhooks[channelWebhookKey(guildID, channelID)]
-	if !ok {
-		return nil, ""
-	}
-	return e.webhook, e.threadID
+	return c.webhooks[channelWebhookKey(guildID, channelID)]
 }
 
 // Store caches a resolved webhook for the channel.
-func (c *webhookCache) Store(guildID, channelID string, w *discordgo.Webhook, threadID string) {
+func (c *webhookCache) Store(guildID, channelID string, w *WebhookTarget) {
 	c.mu.Lock()
-	c.webhooks[channelWebhookKey(guildID, channelID)] = cachedWebhook{webhook: w, threadID: threadID}
+	c.webhooks[channelWebhookKey(guildID, channelID)] = w
 	c.mu.Unlock()
 }
 

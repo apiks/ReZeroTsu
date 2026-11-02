@@ -36,18 +36,16 @@ func SendBatchToChannel(ctx context.Context, s *discordgo.Session, w *discordgo.
 	return err
 }
 
-// getOrCreateChannelWebhook returns the webhook for guild+channel (channel may be thread), through the shared cache.
-func getOrCreateChannelWebhook(s *discordgo.Session, cache *webhookCache, guildID, channelID string) (*discordgo.Webhook, string, bool) {
-	// An avoided channel needs no channel or permission work.
-	if cache.Avoided(guildID, channelID) {
-		return nil, "", false
-	}
+// resolveChannelWebhook returns a usable webhook for the channel (which may be a thread), or nil. It does the
+// channel-state lookup, thread-parent resolution, permission checks and lists or creates the bot's webhook; it
+// caches nothing (the channel sender's webhook cache does).
+func resolveChannelWebhook(s *discordgo.Session, channelID string) *WebhookTarget {
 	if s.State == nil || s.State.User == nil {
-		return nil, "", false
+		return nil
 	}
 	ch, err := channelStateFirst(s, channelID)
 	if err != nil {
-		return nil, "", false
+		return nil
 	}
 	webhookChannelID := channelID
 	threadID := ""
@@ -58,32 +56,27 @@ func getOrCreateChannelWebhook(s *discordgo.Session, cache *webhookCache, guildI
 	}
 	perms, err := s.State.UserChannelPermissions(s.State.User.ID, webhookChannelID)
 	if err != nil {
-		return nil, "", false
+		return nil
 	}
 	required := int64(discordgo.PermissionManageWebhooks | discordgo.PermissionViewChannel | discordgo.PermissionSendMessages | discordgo.PermissionEmbedLinks)
 	if perms&required != required {
-		return nil, "", false
+		return nil
 	}
 	if threadID != "" {
 		threadPerms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
 		sendThreads := int64(discordgo.PermissionSendMessagesInThreads)
 		if err != nil || threadPerms&sendThreads != sendThreads {
-			return nil, "", false
+			return nil
 		}
-	}
-
-	if w, tid := cache.Lookup(guildID, channelID); w != nil {
-		return w, tid, true
 	}
 
 	ws, err := s.ChannelWebhooks(webhookChannelID)
 	if err != nil {
-		return nil, "", false
+		return nil
 	}
 	for _, w := range ws {
 		if w.User != nil && w.User.ID == s.State.User.ID && w.ChannelID == webhookChannelID {
-			cache.Store(guildID, channelID, w, threadID)
-			return w, threadID, true
+			return &WebhookTarget{ID: w.ID, Token: w.Token, ThreadID: threadID}
 		}
 	}
 	time.Sleep(webhookCreateThrottle)
@@ -104,8 +97,7 @@ func getOrCreateChannelWebhook(s *discordgo.Session, cache *webhookCache, guildI
 	}
 	w, err := s.WebhookCreate(webhookChannelID, username, avatarURL)
 	if err != nil {
-		return nil, "", false
+		return nil
 	}
-	cache.Store(guildID, channelID, w, threadID)
-	return w, threadID, true
+	return &WebhookTarget{ID: w.ID, Token: w.Token, ThreadID: threadID}
 }

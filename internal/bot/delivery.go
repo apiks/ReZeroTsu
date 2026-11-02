@@ -61,13 +61,9 @@ type RawDiscord interface {
 	// BotUserID is the bot's own user ID, used to recognise its messages when verifying an Unknown send.
 	BotUserID() string
 
-	// ChannelWebhook returns a usable webhook for the channel, or nil when none can be used.
-	ChannelWebhook(guildID, channelID string) *WebhookTarget
-	// InvalidateChannelWebhook drops the cached webhook for the channel.
-	InvalidateChannelWebhook(guildID, channelID string)
-	// AvoidChannelWebhook drops the cached webhook for the channel and offers none for it for a while, so sends
-	// go through the bot account. Used when Discord rejected the webhook but the bot account could post.
-	AvoidChannelWebhook(guildID, channelID string)
+	// ResolveWebhook returns a usable webhook for the channel, or nil when none can be used. It does no caching:
+	// the channel sender owns the webhook cache.
+	ResolveWebhook(guildID, channelID string) *WebhookTarget
 }
 
 var (
@@ -130,12 +126,11 @@ type SentState interface {
 // --- production wiring: discordgo ---
 
 type discordgoPort struct {
-	cache *webhookCache
 	s *discordgo.Session
 }
 
-func newDiscordgoPort(s *discordgo.Session, cache *webhookCache) *discordgoPort {
-	return &discordgoPort{s: s, cache: cache}
+func newDiscordgoPort(s *discordgo.Session) *discordgoPort {
+	return &discordgoPort{s: s}
 }
 
 // Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
@@ -182,20 +177,8 @@ func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, li
 	return out, nil
 }
 
-func (p *discordgoPort) ChannelWebhook(guildID, channelID string) *WebhookTarget {
-	w, threadID, ok := getOrCreateChannelWebhook(p.s, p.cache, guildID, channelID)
-	if !ok || w == nil {
-		return nil
-	}
-	return &WebhookTarget{ID: w.ID, Token: w.Token, ThreadID: threadID}
-}
-
-func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
-	p.cache.Invalidate(guildID, channelID)
-}
-
-func (p *discordgoPort) AvoidChannelWebhook(guildID, channelID string) {
-	p.cache.Avoid(guildID, channelID)
+func (p *discordgoPort) ResolveWebhook(_, channelID string) *WebhookTarget {
+	return resolveChannelWebhook(p.s, channelID)
 }
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }

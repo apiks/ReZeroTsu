@@ -87,38 +87,59 @@ type sendOutcome struct {
 // as soon as Discord rejected it, so no caller has to track that itself.
 type channelSender struct {
 	d                  RawDiscord
+	cache              *webhookCache
 	guildID, channelID string
 	webhook            *WebhookTarget
 	policy             sendPolicy
 }
 
-// channelSenderFactory opens channel senders over one shard's raw Discord adapter. It is built once per shard.
+// channelSenderFactory opens channel senders over one shard's raw Discord adapter, the webhook cache shared by all
+// shards and the clock. It is built once per shard.
 type channelSenderFactory struct {
-	raw RawDiscord
+	raw   RawDiscord
+	cache *webhookCache
+	clock clock
 }
 
-func newChannelSenderFactory(raw RawDiscord) *channelSenderFactory {
-	return &channelSenderFactory{raw: raw}
+func newChannelSenderFactory(raw RawDiscord, cache *webhookCache, clk clock) *channelSenderFactory {
+	return &channelSenderFactory{raw: raw, cache: cache, clock: clk}
 }
 
 // open opens a channel sender for channelID (guildID is empty for a DM) under policy.
 func (f *channelSenderFactory) open(guildID, channelID string, policy sendPolicy) *channelSender {
-	return newChannelSender(f.raw, guildID, channelID, policy)
+	return newChannelSender(f.raw, f.cache, guildID, channelID, policy)
 }
 
-// invalidateWebhook drops the channel's cached webhook (run terminal handling; moves into the channel sender in a
-// later ticket).
+// invalidateWebhook drops the channel's cached webhook (run terminal handling; removed in a later ticket, when the
+// channel sender invalidates on a channel-terminal rejection itself).
 func (f *channelSenderFactory) invalidateWebhook(guildID, channelID string) {
-	f.raw.InvalidateChannelWebhook(guildID, channelID)
+	f.cache.Invalidate(guildID, channelID)
 }
 
-// newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy.
-func newChannelSender(d RawDiscord, guildID, channelID string, policy sendPolicy) *channelSender {
-	c := &channelSender{d: d, guildID: guildID, channelID: channelID, policy: policy}
+// newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy. Unless the policy
+// is bot-account only it picks the channel's webhook once: none for an avoided channel, else the cached webhook,
+// else one resolved through the raw port (and cached).
+func newChannelSender(d RawDiscord, cache *webhookCache, guildID, channelID string, policy sendPolicy) *channelSender {
+	c := &channelSender{d: d, cache: cache, guildID: guildID, channelID: channelID, policy: policy}
 	if !policy.botAccountOnly {
-		c.webhook = d.ChannelWebhook(guildID, channelID)
+		c.webhook = c.selectWebhook()
 	}
 	return c
+}
+
+// selectWebhook returns the webhook to try for the channel, or nil.
+func (c *channelSender) selectWebhook() *WebhookTarget {
+	if c.cache.Avoided(c.guildID, c.channelID) {
+		return nil
+	}
+	if w := c.cache.Lookup(c.guildID, c.channelID); w != nil {
+		return w
+	}
+	w := c.d.ResolveWebhook(c.guildID, c.channelID)
+	if w != nil {
+		c.cache.Store(c.guildID, c.channelID, w)
+	}
+	return w
 }
 
 // post delivers msg.
@@ -155,7 +176,7 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 		// to apply terminal handling when this single bot-account attempt is rejected too.
 		gone := discord.IsWebhookGone(err)
 		if gone {
-			c.d.InvalidateChannelWebhook(c.guildID, c.channelID)
+			c.cache.Invalidate(c.guildID, c.channelID)
 		}
 		if cerr := ctx.Err(); cerr != nil {
 			return sendOutcome{PostResult: PostResult{Err: cerr}, webhookRejected: true}
@@ -174,7 +195,7 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
 				// run spends another rejected (401/403) request on it before falling back. A presumed delivery
 				// proves nothing about the bot account, so it does not avoid the webhook.
-				c.d.AvoidChannelWebhook(c.guildID, c.channelID)
+				c.cache.Avoid(c.guildID, c.channelID)
 			}
 			return res
 		}

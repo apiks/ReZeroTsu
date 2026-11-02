@@ -60,7 +60,7 @@ func newScheduleHarness(script ...step) *scheduleHarness {
 }
 
 func (h *scheduleHarness) run(ctx context.Context) error {
-	return processDailyScheduleForGuild(ctx, h.d, newChannelSenderFactory(h.d), h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+	return processDailyScheduleForGuild(ctx, h.d, newTestSenders(h.d), h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
 }
 
 func (h *scheduleHarness) lastPosted() string {
