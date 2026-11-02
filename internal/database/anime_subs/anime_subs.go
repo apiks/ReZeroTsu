@@ -123,35 +123,69 @@ func (r *Repo) AppendShows(ctx context.Context, id string, shows []*ShowSub) err
 	if len(shows) == 0 {
 		return nil
 	}
-	_, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$push": bson.M{"shows": bson.M{"$each": shows}}})
+	_, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, mongo.Pipeline{
+		{{Key: "$set", Value: bson.M{"shows": appendedShowsExpr(shows)}}},
+	})
 	if err != nil {
 		return fmt.Errorf("AppendShows: %w", err)
 	}
 	return nil
 }
 
+// appendedShowsExpr is an aggregation expression yielding the document's shows with the given shows appended.
+// A stored shows of null (written by older versions) or any other non-array counts as empty, which a plain
+// $push would reject. The shows are wrapped in $literal so a name starting with "$" is never read as a field path.
+func appendedShowsExpr(shows []*ShowSub) bson.M {
+	literals := make(bson.A, 0, len(shows))
+	for _, s := range shows {
+		literals = append(literals, bson.M{"$literal": s})
+	}
+	return bson.M{"$concatArrays": bson.A{
+		bson.M{"$cond": bson.A{bson.M{"$isArray": "$shows"}, "$shows", bson.A{}}},
+		literals,
+	}}
+}
+
+// updateOneFunc runs one UpdateOne against the collection; it is the seam between the add-show logic and Mongo.
+type updateOneFunc func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error)
+
 // AddShowIfAbsent adds sub to the user's document in a single upsert statement unless a show with the same
 // name (case-insensitive) is already present. It reports whether the show was added.
 func (r *Repo) AddShowIfAbsent(ctx context.Context, id string, sub *ShowSub) (bool, error) {
+	return addShowIfAbsent(ctx, func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error) {
+		return r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(upsert))
+	}, id, sub)
+}
+
+func addShowIfAbsent(ctx context.Context, updateOne updateOneFunc, id string, sub *ShowSub) (bool, error) {
 	filter := bson.M{
 		"id": id,
 		"shows": bson.M{"$not": bson.M{"$elemMatch": bson.M{
 			"show": bson.Regex{Pattern: "^" + regexp.QuoteMeta(sub.Show) + "$", Options: "i"},
 		}}},
 	}
-	update := bson.M{
-		"$push":        bson.M{"shows": sub},
-		"$setOnInsert": bson.M{"id": id, "is_guild": false, "last_seed_date": ""},
+	// A pipeline update: it tolerates a stored shows of null and fills the defaults a $setOnInsert would.
+	update := mongo.Pipeline{{{Key: "$set", Value: bson.M{
+		"id":             bson.M{"$ifNull": bson.A{"$id", id}},
+		"is_guild":       bson.M{"$ifNull": bson.A{"$is_guild", false}},
+		"last_seed_date": bson.M{"$ifNull": bson.A{"$last_seed_date", ""}},
+		"shows":          appendedShowsExpr([]*ShowSub{sub}),
+	}}}}
+	res, err := updateOne(ctx, filter, update, true)
+	if err == nil {
+		return res.ModifiedCount > 0 || res.UpsertedCount > 0, nil
 	}
-	res, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
-	if err != nil {
-		// The document exists and already holds the show: the upsert tried to insert a duplicate id.
-		if mongo.IsDuplicateKeyError(err) {
-			return false, nil
-		}
+	if !mongo.IsDuplicateKeyError(err) {
 		return false, fmt.Errorf("AddShowIfAbsent: %w", err)
 	}
-	return res.ModifiedCount > 0 || res.UpsertedCount > 0, nil
+	// The filter matched no document, so the upsert tried to insert a duplicate id. Either the document exists
+	// and already holds the show, or a concurrent first-time call created it just before us. Retry once without
+	// the upsert: it adds the show in the second case and matches nothing in the first.
+	res, err = updateOne(ctx, filter, update, false)
+	if err != nil {
+		return false, fmt.Errorf("AddShowIfAbsent: %w", err)
+	}
+	return res.MatchedCount > 0, nil
 }
 
 // RemoveShows removes the shows with exactly the given names from the document in a single update statement.
