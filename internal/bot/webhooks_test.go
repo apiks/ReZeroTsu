@@ -38,7 +38,7 @@ func avoidEntryExists(key string) bool {
 // The avoid map must not only grow: invalidating a channel (deleted-channel handling) forgets its avoid entry,
 // and setting a new entry prunes the expired ones.
 func TestChannelWebhookAvoidEntriesAreForgotten(t *testing.T) {
-	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	t0 := time.Now()
 	tests := []struct {
 		name    string
 		act     func()
@@ -90,5 +90,26 @@ func TestChannelWebhookAvoidEntriesAreForgotten(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Invalidating any channel also forgets avoid entries that have already expired, so entries of channels that are
+// never looked up again (deleted, autopost cleared) do not pile up. A live entry is untouched.
+func TestInvalidatePrunesExpiredAvoidEntries(t *testing.T) {
+	resetWebhookAvoid(t)
+	expired, live := channelWebhookKey("g1", "c1"), channelWebhookKey("g1", "c2")
+	now := time.Now()
+	channelWebhookMu.Lock()
+	channelWebhookAvoidUntil[expired] = now.Add(-time.Minute)
+	channelWebhookAvoidUntil[live] = now.Add(webhookAvoidTTL)
+	channelWebhookMu.Unlock()
+
+	invalidateChannelWebhook("g1", "c9")
+
+	if avoidEntryExists(expired) {
+		t.Error("expired avoid entry survived an invalidate")
+	}
+	if !avoidEntryExists(live) {
+		t.Error("live avoid entry was dropped by an invalidate")
 	}
 }

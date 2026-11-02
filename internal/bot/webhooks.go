@@ -16,7 +16,7 @@ const (
 	webhookCreateThrottle = 150 * time.Millisecond
 	// webhookAvoidTTL is how long a channel whose webhook Discord rejected (while the bot account could post)
 	// is sent to through the bot account only.
-	webhookAvoidTTL = time.Hour
+	webhookAvoidTTL = 15 * time.Minute
 )
 
 var (
@@ -158,6 +158,7 @@ func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) 
 // invalidateChannelWebhook drops the channel's cached webhook (e.g. the channel was deleted). An avoid entry is kept so a
 // bot-account rejection does not un-avoid a rejected webhook; it expires by TTL.
 func invalidateChannelWebhook(guildID, channelID string) {
+	defer pruneExpiredAvoid(time.Now())
 	key := channelWebhookKey(guildID, channelID)
 	channelWebhookMu.Lock()
 	delete(channelWebhookMap, key)
@@ -170,11 +171,7 @@ func invalidateChannelWebhook(guildID, channelID string) {
 func avoidChannelWebhook(guildID, channelID string, now time.Time) {
 	key := channelWebhookKey(guildID, channelID)
 	channelWebhookMu.Lock()
-	for k, until := range channelWebhookAvoidUntil {
-		if !now.Before(until) {
-			delete(channelWebhookAvoidUntil, k)
-		}
-	}
+	pruneExpiredAvoidLocked(now)
 	delete(channelWebhookMap, key)
 	channelWebhookAvoidUntil[key] = now.Add(webhookAvoidTTL)
 	channelWebhookMu.Unlock()
@@ -214,5 +211,20 @@ func invalidateGuildWebhooks(guildID string) {
 			delete(channelWebhookAvoidUntil, key)
 		}
 	}
+	channelWebhookMu.Unlock()
+}
+
+// pruneExpiredAvoidLocked forgets the avoid entries that have expired at now. The caller holds channelWebhookMu.
+func pruneExpiredAvoidLocked(now time.Time) {
+	for k, until := range channelWebhookAvoidUntil {
+		if !now.Before(until) {
+			delete(channelWebhookAvoidUntil, k)
+		}
+	}
+}
+
+func pruneExpiredAvoid(now time.Time) {
+	channelWebhookMu.Lock()
+	pruneExpiredAvoidLocked(now)
 	channelWebhookMu.Unlock()
 }
