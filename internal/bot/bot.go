@@ -71,9 +71,10 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 
 	runtime := &shardRuntime{mgr: mgr, start: time.Now()}
 
-	mgr.AddHandler(onReady(ctx, db, cfg, mgr))
+	cache := newWebhookCache(realClock{})
+	mgr.AddHandler(onReady(ctx, db, cfg, mgr, cache))
 	mgr.AddHandler(onGuildCreate(ctx, db, cfg))
-	mgr.AddHandler(onGuildDelete())
+	mgr.AddHandler(onGuildDelete(cache))
 	mgr.AddHandler(OnMessageCreate(ctx, db, cfg.OwnerID, cfg.Prefixes, runtime))
 	mgr.AddHandler(OnVoiceStateUpdate(ctx, db))
 	mgr.AddHandler(OnMessageReactionAdd(ctx, db))
@@ -121,7 +122,7 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 	}
 }
 
-func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *shards.Manager) func(*discordgo.Session, *discordgo.Ready) {
+func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *shards.Manager, cache *webhookCache) func(*discordgo.Session, *discordgo.Ready) {
 	var startRemindersOnce sync.Once
 	var startScheduleLoopOnce sync.Once
 	var startAnimeSubCleanupOnce sync.Once
@@ -161,7 +162,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 			})
 		}
 		startRemindersOnce.Do(func() {
-			go RunReminderLoop(ctx, db, s, 15*time.Second)
+			go RunReminderLoop(ctx, db, s, cache, 15*time.Second)
 		})
 		backfillLastNotifiedOnce.Do(func() {
 			go func() {
@@ -177,15 +178,15 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		onceVal, _ := shardLoopsOnce.LoadOrStore(s.ShardID, &sync.Once{})
 		onceVal.(*sync.Once).Do(func() {
-			go RunFeedLoop(ctx, db, s, 0)
+			go RunFeedLoop(ctx, db, s, cache, 0)
 			if cfg.AnimeScheduleAPIKey != "" {
 				animeschedule.SetAPIKey(cfg.AnimeScheduleAPIKey)
 				animeschedule.UpdateAnimeSchedule(ctx, cfg.AnimeScheduleAPIKey)
 				startScheduleLoopOnce.Do(func() {
 					go runScheduleLoop(ctx, cfg.AnimeScheduleAPIKey)
 				})
-				go RunDailyScheduleLoop(ctx, db, s, cfg.AnimeScheduleAPIKey, getShardCount)
-				go RunAnimeSubLoop(ctx, db, s, 15*time.Second, getShardCount)
+				go RunDailyScheduleLoop(ctx, db, s, cache, cfg.AnimeScheduleAPIKey, getShardCount)
+				go RunAnimeSubLoop(ctx, db, s, cache, 15*time.Second, getShardCount)
 				startAnimeSubCleanupOnce.Do(func() {
 					go RunAnimeSubFinishedCleanupLoop(ctx, db, 24*time.Hour)
 				})
@@ -238,9 +239,9 @@ func onGuildCreate(ctx context.Context, db *database.Client, cfg *config.Config)
 }
 
 // onGuildDelete logs leave and invalidates webhook cache for the guild.
-func onGuildDelete() func(*discordgo.Session, *discordgo.GuildDelete) {
+func onGuildDelete(cache *webhookCache) func(*discordgo.Session, *discordgo.GuildDelete) {
 	return func(_ *discordgo.Session, g *discordgo.GuildDelete) {
-		invalidateGuildWebhooks(g.ID)
+		cache.PurgeGuild(g.ID)
 		if g.Guild != nil && g.Guild.Name != "" {
 			logger.For("bot").Info("left guild", "guild_id", g.ID, "guild_name", g.Guild.Name)
 		} else {
