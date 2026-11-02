@@ -16,7 +16,18 @@ const (
 	CannotDMUserCode       = 50007 // Cannot send messages to this user (DMs disabled or blocked)
 	ChannelNotTextCode     = 50008 // Cannot send messages in a non-text channel (e.g. voice)
 	MissingPermissionsCode = 50013 // Bot lacks permission for the action (e.g. Send Messages in channel)
+	UnknownWebhookCode     = 10015 // Webhook was deleted
+	InvalidWebhookTokenCode = 50027 // Webhook token is no longer valid
 )
+
+// IsWebhookGone reports whether err says the webhook is unknown (10015) or its token invalid (50027).
+func IsWebhookGone(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Message == nil {
+		return false
+	}
+	return restErr.Message.Code == UnknownWebhookCode || restErr.Message.Code == InvalidWebhookTokenCode
+}
 
 // IsUnknownChannel reports whether err is channel-deleted (10003). Use when clearing stored channel IDs.
 func IsUnknownChannel(err error) bool {

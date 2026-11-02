@@ -88,6 +88,19 @@ func (r *Repo) Set(ctx context.Context, id string, isGuild bool, shows []*ShowSu
 	return nil
 }
 
+// MarkShowsNotified sets notified=true on the named shows of the document in a single update statement.
+func (r *Repo) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
+	if len(showNames) == 0 {
+		return nil
+	}
+	update := bson.M{"$set": bson.M{"shows.$[s].notified": true}}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": bson.M{"$in": showNames}}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("MarkShowsNotified: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) DeleteByID(ctx context.Context, id string) error {
 	_, err := r.coll.DeleteOne(ctx, bson.M{"id": id})
 	if err != nil {

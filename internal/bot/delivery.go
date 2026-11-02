@@ -56,6 +56,8 @@ type DiscordPort interface {
 	PinReplacing(channelID, messageID, subreddit string)
 	// ShardID is used for log attribution only.
 	ShardID() int
+	// BotUserID is the bot's own user ID, used to recognise its messages when verifying an Unknown send.
+	BotUserID() string
 }
 
 // SentState is the narrow persistence surface the per-target delivery runs depend on:
@@ -64,6 +66,8 @@ type DiscordPort interface {
 type SentState interface {
 	GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
 	SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error
+	// MarkShowsNotified sets notified=true for the named shows in one single-statement update.
+	MarkShowsNotified(ctx context.Context, id string, showNames []string) error
 	DeleteAnimeSubs(ctx context.Context, id string) error
 
 	GetAutopost(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
@@ -157,6 +161,13 @@ func (p *discordgoPort) PinReplacing(channelID, messageID, subreddit string) {
 
 func (p *discordgoPort) ShardID() int { return p.s.ShardID }
 
+func (p *discordgoPort) BotUserID() string {
+	if p.s.State != nil && p.s.State.User != nil {
+		return p.s.State.User.ID
+	}
+	return ""
+}
+
 // --- production wiring: Mongo repositories ---
 
 type mongoSentState struct {
@@ -171,6 +182,10 @@ func (m *mongoSentState) GetAnimeSubs(ctx context.Context, id string) (*anime_su
 
 func (m *mongoSentState) SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error {
 	return m.db.AnimeSubs().Set(ctx, id, isGuild, shows)
+}
+
+func (m *mongoSentState) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
+	return m.db.AnimeSubs().MarkShowsNotified(ctx, id, showNames)
 }
 
 func (m *mongoSentState) DeleteAnimeSubs(ctx context.Context, id string) error {
