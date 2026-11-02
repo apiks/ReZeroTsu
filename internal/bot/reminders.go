@@ -21,13 +21,14 @@ const (
 	reminderThrottlePerMessage = 150 * time.Millisecond
 	reminderRunInterval        = 15 * time.Second
 	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
-	// user-undeliverable ones: once it is this far past its due time it is dropped.
+	// user-undeliverable ones: once it has been failing this long since its first rejection it is dropped.
 	reminderGiveUpAfter = 24 * time.Hour
 )
 
-// reminderGivenUp reports whether a reminder rejected by Discord is too far past its due time to keep retrying.
+// reminderGivenUp reports whether a reminder rejected by Discord has been failing too long to keep retrying.
+// A reminder that has not failed before (no failing_since) is never given up on.
 func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
-	return now.Sub(r.Date) > reminderGiveUpAfter
+	return !r.FailingSince.IsZero() && now.Sub(r.FailingSince) > reminderGiveUpAfter
 }
 
 // RunReminderLoop fetches due reminders, sends DMs, updates DB. Exits when ctx is cancelled.
@@ -115,6 +116,23 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			logger.For("reminders").Error("RemoveReminders failed", "user_id", userID, "reminders", refs, "err", err)
 		}
 	}
+	// markFailing records now as the first-rejection time of the reminders that have none yet, on a detached context.
+	markFailing := func(rs ...reminders.RemindMe) {
+		var refs []reminders.RemindRef
+		for _, r := range rs {
+			if r.FailingSince.IsZero() {
+				refs = append(refs, reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+			}
+		}
+		if len(refs) == 0 {
+			return
+		}
+		if err := detachedWrite(ctx, func(wctx context.Context) error {
+			return st.MarkRemindersFailing(wctx, userID, refs, now)
+		}); err != nil {
+			logger.For("reminders").Error("MarkRemindersFailing failed", "user_id", userID, "reminders", refs, "err", err)
+		}
+	}
 	dmID, err := d.OpenDM(ctx, userID)
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
@@ -133,13 +151,17 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			// Any other rejection (401, missing access, Cloudflare ban, ...) may be an outage: keep and retry,
 			// except the reminders that have kept failing for more than reminderGiveUpAfter.
 			var expired []reminders.RemindRef
+			var kept []reminders.RemindMe
 			for _, r := range due {
 				if reminderGivenUp(r, now) {
 					expired = append(expired, reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+				} else {
+					kept = append(kept, r)
 				}
 			}
+			markFailing(kept...)
 			if len(expired) > 0 {
-				logger.For("reminders").Warn("UserChannelCreate still rejected long after the due time, giving up on overdue reminders",
+				logger.For("reminders").Warn("UserChannelCreate still rejected long after the first failure, giving up on those reminders",
 					append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(expired), "err", err)...)
 				remove(expired...)
 			}
@@ -200,11 +222,15 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 		case discord.ClassifySend(res.Err) == discord.Rejected && reminderGivenUp(r, now):
 			// Rejected with another code for more than reminderGiveUpAfter: it is not going to work.
-			logger.For("reminders").Warn("reminder still rejected long after the due time, giving up",
+			logger.For("reminders").Warn("reminder still rejected long after the first failure, giving up",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 		default:
 			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
+			// A rejection starts the give-up window, if this is the reminder's first one.
+			if discord.ClassifySend(res.Err) == discord.Rejected {
+				markFailing(r)
+			}
 			logger.For("reminders").Warn("reminder send failed, will retry",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 		}

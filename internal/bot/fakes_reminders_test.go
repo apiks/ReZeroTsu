@@ -62,6 +62,42 @@ func (f *fakeSentState) RemoveReminders(ctx context.Context, id string, refs []r
 	return nil
 }
 
+// MarkRemindersFailing sets FailingSince on the matching reminders that do not have one yet.
+func (f *fakeSentState) MarkRemindersFailing(ctx context.Context, id string, refs []reminders.RemindRef, since time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.Reminders[id]
+	if !ok {
+		return nil
+	}
+	for i := range doc.Reminders {
+		r := &doc.Reminders[i]
+		for _, ref := range refs {
+			if ref.RemindID == r.RemindID && ref.Date.Equal(r.Date) && r.FailingSince.IsZero() {
+				r.FailingSince = since
+			}
+		}
+	}
+	return nil
+}
+
+// failingSince returns the stored FailingSince of the user's reminder with remindID.
+func (f *fakeSentState) failingSince(id string, remindID int) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if doc, ok := f.Reminders[id]; ok {
+		for _, r := range doc.Reminders {
+			if r.RemindID == remindID {
+				return r.FailingSince
+			}
+		}
+	}
+	return time.Time{}
+}
+
 // appendReminderDirect simulates a concurrent /remind appending to the stored document.
 func (f *fakeSentState) appendReminderDirect(id string, r reminders.RemindMe) {
 	f.mu.Lock()

@@ -36,6 +36,13 @@ func overdueReminder(id int, msg string, by time.Duration) reminders.RemindMe {
 	return reminders.RemindMe{Message: msg, Date: remindNow.Add(-by), RemindID: id, CreatedAt: remindNow.Add(-by - time.Hour)}
 }
 
+// failingReminder is a reminder three days overdue whose delivery Discord has been rejecting for failingFor.
+func failingReminder(id int, msg string, failingFor time.Duration) reminders.RemindMe {
+	r := overdueReminder(id, msg, 72*time.Hour)
+	r.FailingSince = remindNow.Add(-failingFor)
+	return r
+}
+
 func futureReminder(id int, msg string) reminders.RemindMe {
 	return reminders.RemindMe{Message: msg, Date: remindNow.Add(time.Hour), RemindID: id}
 }
@@ -148,23 +155,30 @@ func TestProcessReminderSlice_Outcomes(t *testing.T) {
 			wantSends: 1,
 		},
 		{
-			name:      "generic 4xx on a reminder more than 24 hours overdue drops it",
+			name:      "first generic 4xx on a three-day-overdue reminder keeps it",
 			script:    []step{rejectWith(0)},
-			stored:    []reminders.RemindMe{overdueReminder(1, "a", 25*time.Hour)},
-			wantLeft:  nil,
-			wantSends: 1,
-		},
-		{
-			name:      "generic 4xx just under 24 hours overdue keeps it",
-			script:    []step{rejectWith(0)},
-			stored:    []reminders.RemindMe{overdueReminder(1, "a", 23*time.Hour)},
+			stored:    []reminders.RemindMe{overdueReminder(1, "a", 72*time.Hour)},
 			wantLeft:  []int{1},
 			wantSends: 1,
 		},
 		{
-			name:      "server error on a reminder more than 24 hours overdue keeps it (may be an outage)",
+			name:      "generic 4xx after failing for 25 hours drops it",
+			script:    []step{rejectWith(0)},
+			stored:    []reminders.RemindMe{failingReminder(1, "a", 25*time.Hour)},
+			wantLeft:  nil,
+			wantSends: 1,
+		},
+		{
+			name:      "generic 4xx after failing for 23 hours keeps it",
+			script:    []step{rejectWith(0)},
+			stored:    []reminders.RemindMe{failingReminder(1, "a", 23*time.Hour)},
+			wantLeft:  []int{1},
+			wantSends: 1,
+		},
+		{
+			name:      "server error after failing for 25 hours keeps it (may be an outage)",
 			script:    []step{serverError()},
-			stored:    []reminders.RemindMe{overdueReminder(1, "a", 25*time.Hour)},
+			stored:    []reminders.RemindMe{failingReminder(1, "a", 25*time.Hour)},
 			wantLeft:  []int{1},
 			wantSends: 1,
 		},
@@ -278,18 +292,53 @@ func TestProcessReminderSlice_OpenDMFailure(t *testing.T) {
 	}
 }
 
-// A non-user rejection of the DM channel creation keeps recent reminders (it may be an outage) but gives up on
-// the ones more than 24 hours overdue, with one warning.
+// The 24-hour give-up window counts from the first rejection, not the due time: the first rejection records
+// failing_since, and later rejections leave it unchanged. Both the send and the OpenDM path behave this way.
+func TestProcessReminderSlice_FirstRejectionRecordsFailingSince(t *testing.T) {
+	earlier := remindNow.Add(-time.Hour)
+	tests := []struct {
+		name   string
+		dmErr  error
+		script []step
+		stored reminders.RemindMe
+		want   time.Time
+	}{
+		{"send path, first failure", nil, []step{rejectWith(0)}, overdueReminder(1, "a", 72*time.Hour), remindNow},
+		{"send path, later failure keeps the first time", nil, []step{rejectWith(0)}, failingReminder(1, "a", time.Hour), earlier},
+		{"OpenDM path, first failure", restErr(http.StatusForbidden, 40003), nil, overdueReminder(1, "a", 72*time.Hour), remindNow},
+		{"OpenDM path, later failure keeps the first time", restErr(http.StatusForbidden, 40003), nil, failingReminder(1, "a", time.Hour), earlier},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			captureLogs(t)
+			d := newFakeDiscord(tc.script...)
+			d.DMError = tc.dmErr
+			st := stateWith("u1", tc.stored)
+			if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
+				t.Fatal(err)
+			}
+			if got := st.reminderIDs("u1"); !reflect.DeepEqual(got, []int{1}) {
+				t.Fatalf("remaining = %v, want [1]", got)
+			}
+			if got := st.failingSince("u1", 1); !got.Equal(tc.want) {
+				t.Errorf("failing_since = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A non-user rejection of the DM channel creation keeps reminders (it may be an outage) but gives up on the ones
+// that have been failing for more than 24 hours, with one warning.
 func TestProcessReminderSlice_OpenDMRejectionGivesUpAfter24Hours(t *testing.T) {
 	logs := captureLogs(t)
 	d := newFakeDiscord()
 	d.DMError = restErr(http.StatusUnauthorized, 0)
-	st := stateWith("u1", overdueReminder(1, "old", 25*time.Hour), dueReminder(2, "recent"), futureReminder(3, "later"))
+	st := stateWith("u1", failingReminder(1, "old", 25*time.Hour), failingReminder(2, "recent", 23*time.Hour), overdueReminder(4, "first", 72*time.Hour), futureReminder(3, "later"))
 	if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.reminderIDs("u1"); !reflect.DeepEqual(got, []int{2, 3}) {
-		t.Errorf("remaining = %v, want [2 3]", got)
+	if got := st.reminderIDs("u1"); !reflect.DeepEqual(got, []int{2, 4, 3}) {
+		t.Errorf("remaining = %v, want [2 4 3]", got)
 	}
 	if got := logs.countContaining("WARN", "giving up"); got != 1 {
 		t.Errorf("give-up warnings = %d, want 1", got)

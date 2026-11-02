@@ -97,6 +97,9 @@ type SentState interface {
 	// from the user's document and deletes the document once it is empty. Other reminders (including ones added
 	// meanwhile, even with a re-used ID) are untouched.
 	RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error
+	// MarkRemindersFailing atomically records since as the first-failure time of the reminders matching the refs
+	// (by ID and due time), leaving reminders that already have one unchanged.
+	MarkRemindersFailing(ctx context.Context, id string, refs []reminders.RemindRef, since time.Time) error
 
 	// --- ticket #9 (daily schedule) ---
 
@@ -271,6 +274,10 @@ func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) (
 
 func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error {
 	return m.db.Reminders().RemoveByRefs(ctx, id, refs)
+}
+
+func (m *mongoSentState) MarkRemindersFailing(ctx context.Context, id string, refs []reminders.RemindRef, since time.Time) error {
+	return m.db.Reminders().MarkFailingSince(ctx, id, refs, since)
 }
 
 func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {
