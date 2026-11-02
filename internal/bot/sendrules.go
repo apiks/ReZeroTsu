@@ -125,12 +125,10 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 	}
 
 	// Rejected: nothing was delivered.
-	rejected := false
 	if webhook != nil && (discord.IsWebhookGone(err) || discord.ClassifyChannelTerminal(err) != discord.ChannelNotTerminal) {
 		// A gone webhook is invalidated. A channel-terminal rejection of the webhook does not prove the bot
 		// account cannot post (e.g. missing access to a private thread for the webhook), so callers only get
 		// to apply terminal handling when this single bot-account attempt is rejected too.
-		rejected = true
 		gone := discord.IsWebhookGone(err)
 		if gone {
 			d.InvalidateChannelWebhook(guildID, channelID)
@@ -156,12 +154,19 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 			}
 			return res, id
 		}
+		logUnrecognisedRejection(label, guildID, channelID, err)
+		return SendResult{Err: err, webhookRejected: true}, ""
 	}
+	logUnrecognisedRejection(label, guildID, channelID, err)
+	return SendResult{Err: err}, ""
+}
+
+// logUnrecognisedRejection warns about a Rejected error that callers have no terminal handling for.
+func logUnrecognisedRejection(label, guildID, channelID string, err error) {
 	if !isKnownRejection(err) {
 		logger.For("delivery").Warn(label+" rejected with unrecognised code, not retrying",
 			append([]any{"guild_id", guildID, "channel_id", channelID}, discord.RESTAttrs(err)...)...)
 	}
-	return SendResult{Err: err, webhookRejected: rejected}, ""
 }
 
 // errSendNotAttempted marks a Send error returned before any request was made (a send-limiter wait ended by
