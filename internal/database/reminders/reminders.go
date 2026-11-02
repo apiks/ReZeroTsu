@@ -35,7 +35,7 @@ func NewRepo(coll *mongo.Collection) *Repo {
 }
 
 // ListDue returns all reminders documents that have at least one reminder with date <= asOf.
-// Uses the index on reminders.date. Caller should split each doc into due vs remaining and Save remaining.
+// Uses the index on reminders.date. Callers remove the reminders they delivered with RemoveByRefs.
 func (r *Repo) ListDue(ctx context.Context, asOf time.Time) ([]*RemindMeSlice, error) {
 	cursor, err := r.coll.Find(ctx, bson.M{"reminders.date": bson.M{"$lte": asOf}})
 	if err != nil {
@@ -64,25 +64,6 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*RemindMeSlice, error) {
 		return nil, fmt.Errorf("GetByID: %w", err)
 	}
 	return &doc, nil
-}
-
-// Save upserts a reminders document by id. If slice is nil or has no reminders, the document is deleted.
-func (r *Repo) Save(ctx context.Context, id string, slice *RemindMeSlice) error {
-	if slice == nil || len(slice.Reminders) == 0 {
-		_, err := r.coll.DeleteOne(ctx, bson.M{"id": id})
-		if err != nil {
-			return fmt.Errorf("Save: %w", err)
-		}
-		return nil
-	}
-	slice.ID = id
-	filter := bson.M{"id": id}
-	update := bson.M{"$set": slice}
-	_, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
-	if err != nil {
-		return fmt.Errorf("Save: %w", err)
-	}
-	return nil
 }
 
 // Append atomically adds rm to the user's document, creating it when missing (is_guild is only set on creation).

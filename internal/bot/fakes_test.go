@@ -379,20 +379,6 @@ func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, ch
 	return n, nil
 }
 
-func (f *fakeSentState) SaveReminders(_ context.Context, id string, slice *reminders.RemindMeSlice) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if slice == nil || len(slice.Reminders) == 0 {
-		delete(f.Reminders, id)
-		return nil
-	}
-	c := *slice
-	c.ID = id
-	c.Reminders = append([]reminders.RemindMe(nil), slice.Reminders...)
-	f.Reminders[id] = &c
-	return nil
-}
-
 var (
 	_ DiscordPort = (*fakeDiscord)(nil)
 	_ SentState   = (*fakeSentState)(nil)

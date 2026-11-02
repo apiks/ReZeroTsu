@@ -86,9 +86,6 @@ type SentState interface {
 	RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error)
 	DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error)
 
-	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
-	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
-
 	// --- ticket #11: reminders delivered once ---
 
 	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
@@ -259,10 +256,6 @@ func (m *mongoSentState) RemoveFeedsByChannel(ctx context.Context, guildID, chan
 
 func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
 	return m.db.FeedChecks().DeleteByChannelID(ctx, guildID, channelID)
-}
-
-func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
-	return m.db.Reminders().Save(ctx, id, slice)
 }
 
 func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error) {
