@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/feed_checks"
@@ -77,9 +78,10 @@ type fakeDiscord struct {
 
 	// WebhookLookups counts ChannelWebhook calls.
 	WebhookLookups int
-	// dropped holds the "guild:channel" keys whose webhook was invalidated or avoided: like the production cache,
-	// a later lookup does not offer the old webhook again.
-	dropped map[string]bool
+	// avoidUntil maps the "guild:channel" keys whose webhook was avoided to when the avoidance expires. As in
+	// production, only avoidance stops ChannelWebhook offering a webhook; invalidation just clears the cache, and
+	// the next lookup re-resolves (here: returns Webhook again).
+	avoidUntil map[string]time.Time
 }
 
 func newFakeDiscord(script ...step) *fakeDiscord {
@@ -193,32 +195,30 @@ func (f *fakeDiscord) ChannelWebhook(guildID, channelID string) *WebhookTarget {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.WebhookLookups++
-	if f.dropped[guildID+":"+channelID] {
+	if until, ok := f.avoidUntil[guildID+":"+channelID]; ok && time.Now().Before(until) {
 		return nil
 	}
 	return f.Webhook
 }
 
+// InvalidateChannelWebhook only clears the (modelled) cache and the avoid entry, like production: the next
+// ChannelWebhook re-resolves the same webhook.
 func (f *fakeDiscord) InvalidateChannelWebhook(guildID, channelID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Invalidated = append(f.Invalidated, guildID+":"+channelID)
-	f.drop(guildID, channelID)
+	delete(f.avoidUntil, guildID+":"+channelID)
 }
 
+// AvoidChannelWebhook makes ChannelWebhook offer no webhook for the channel for webhookAvoidTTL.
 func (f *fakeDiscord) AvoidChannelWebhook(guildID, channelID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Avoided = append(f.Avoided, guildID+":"+channelID)
-	f.drop(guildID, channelID)
-}
-
-// drop must be called with f.mu held.
-func (f *fakeDiscord) drop(guildID, channelID string) {
-	if f.dropped == nil {
-		f.dropped = map[string]bool{}
+	if f.avoidUntil == nil {
+		f.avoidUntil = map[string]time.Time{}
 	}
-	f.dropped[guildID+":"+channelID] = true
+	f.avoidUntil[guildID+":"+channelID] = time.Now().Add(webhookAvoidTTL)
 }
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }

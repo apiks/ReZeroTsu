@@ -43,17 +43,22 @@ func TestDeliverWithRulesNotAttemptedSendIsNotSent(t *testing.T) {
 	}
 }
 
-// Once the bot account delivered a message the webhook was rejected for, the channel's webhook is dropped, so the
-// next send (a later run that looks the webhook up again) does not spend another rejected request on it.
+// Once the bot account delivered a message the webhook was rejected for with a channel-terminal code, the
+// channel's webhook is avoided, so the next send (a later run that looks the webhook up again) does not spend
+// another rejected request on it. A gone webhook is only invalidated: the next lookup re-resolves (in production
+// re-creates) one, which is used again. The fake models both, so calling invalidate where avoid is due fails here.
 func TestDeliverWithRulesRejectedWebhookNotOfferedAfterFallback(t *testing.T) {
 	tests := []struct {
-		name   string
-		reject int
+		name             string
+		reject           int
+		wantWebhookSends int
+		wantAvoided      int
+		wantInvalidated  int
 	}{
-		{name: "missing access (50001)", reject: 50001},
-		{name: "missing permissions (50013)", reject: 50013},
-		{name: "unknown webhook (10015)", reject: 10015},
-		{name: "invalid webhook token (50027)", reject: 50027},
+		{name: "missing access (50001)", reject: 50001, wantWebhookSends: 1, wantAvoided: 1},
+		{name: "missing permissions (50013)", reject: 50013, wantWebhookSends: 1, wantAvoided: 1},
+		{name: "unknown webhook (10015)", reject: 10015, wantWebhookSends: 2, wantInvalidated: 1},
+		{name: "invalid webhook token (50027)", reject: 50027, wantWebhookSends: 2, wantInvalidated: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,11 +71,14 @@ func TestDeliverWithRulesRejectedWebhookNotOfferedAfterFallback(t *testing.T) {
 					t.Fatalf("run %d: result = %+v, want delivered", run, res)
 				}
 			}
-			if d.WebhookSends != 1 {
-				t.Errorf("webhook sends = %d, want 1 (the rejected webhook must not be used again)", d.WebhookSends)
+			if d.WebhookSends != tc.wantWebhookSends {
+				t.Errorf("webhook sends = %d, want %d", d.WebhookSends, tc.wantWebhookSends)
 			}
 			if d.SendCalls != 3 {
-				t.Errorf("send calls = %d, want 3 (webhook, fallback, then bot account)", d.SendCalls)
+				t.Errorf("send calls = %d, want 3 (webhook, fallback, then one send on run 2)", d.SendCalls)
+			}
+			if len(d.Avoided) != tc.wantAvoided || len(d.Invalidated) != tc.wantInvalidated {
+				t.Errorf("avoided = %v, invalidated = %v, want %d and %d", d.Avoided, d.Invalidated, tc.wantAvoided, tc.wantInvalidated)
 			}
 		})
 	}
