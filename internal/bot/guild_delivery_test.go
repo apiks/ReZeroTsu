@@ -236,7 +236,7 @@ func TestGuildNewEpisodesShutdownMidRun(t *testing.T) {
 	// 11 due shows -> 2 batches. Batch 1 delivered, then shutdown while batch 2 is in flight.
 	h := newGuildHarness(11, succeed(), blockUntilCancelled())
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
+	h.d.OnBlock = cancel
 	h.run(ctx)
 
 	if len(h.d.Delivered) != 1 {
@@ -272,7 +272,7 @@ func TestGuildNewEpisodesNoSendAfterCancel(t *testing.T) {
 func TestSendWithRulesCancelledMidSendNeverFallsBack(t *testing.T) {
 	d := newFakeDiscord(blockUntilCancelled())
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(20*time.Millisecond, cancel)
+	d.OnBlock = cancel
 	res := sendWithRules(ctx, d, "g1", "c1", &WebhookTarget{ID: "wh", Token: "t"}, OutgoingMessage{})
 	if res.Delivered {
 		t.Error("reported delivered for an undelivered message")

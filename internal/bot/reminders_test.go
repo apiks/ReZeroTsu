@@ -355,6 +355,9 @@ func TestProcessReminderSlice_OpenDMRejectionGivesUpAfter24Hours(t *testing.T) {
 // A failed send still waits the per-message throttle before the next reminder of the user.
 func TestProcessReminderSlice_ThrottlesBetweenFailingSends(t *testing.T) {
 	captureLogs(t)
+	old := reminderThrottlePerMessage
+	reminderThrottlePerMessage = 20 * time.Millisecond
+	t.Cleanup(func() { reminderThrottlePerMessage = old })
 	var mu sync.Mutex
 	var sentAt []time.Time
 	d := &hookDiscord{fakeDiscord: newFakeDiscord(rejectWith(0), rejectWith(0), rejectWith(0))}
