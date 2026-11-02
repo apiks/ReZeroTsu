@@ -443,6 +443,10 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 		if dmID == "" {
 			dmID, err = d.OpenDM(ctx, userID)
 			if err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					// Shutdown aborted the request: nothing to report.
+					return cerr
+				}
 				logger.For("animesubs").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 				throttle := time.NewTimer(animeSubThrottlePerUser)
 				defer throttle.Stop()

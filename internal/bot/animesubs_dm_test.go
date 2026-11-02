@@ -172,3 +172,34 @@ func TestProcessAnimeSubUser(t *testing.T) {
 		t.Run(tt.name, tt.run)
 	}
 }
+
+// cancelOnOpenDM cancels the run (shutdown) while the DM channel is being created, failing it with the
+// context error like the real context-aware OpenDM.
+type cancelOnOpenDM struct {
+	*fakeDiscord
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnOpenDM) OpenDM(ctx context.Context, _ string) (string, error) {
+	c.cancel()
+	return "", ctx.Err()
+}
+
+func TestProcessAnimeSubUserShutdownDuringOpenDMLogsNoError(t *testing.T) {
+	logs := captureLogs(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	st := newFakeSentState()
+	st.AnimeSubs["u1"] = &anime_subs.AnimeSubs{ID: "u1", Shows: []*anime_subs.ShowSub{{Show: "Show A"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &cancelOnOpenDM{fakeDiscord: newFakeDiscord(), cancel: cancel}
+	doc, _ := st.GetAnimeSubs(ctx, "u1")
+	show := animeschedule.ShowEntry{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}
+	err := processAnimeSubUser(ctx, d, st, doc, []animeschedule.ShowEntry{show}, now)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if n := logs.count("ERROR"); n != 0 {
+		t.Errorf("error logs = %d, want 0 on shutdown", n)
+	}
+}

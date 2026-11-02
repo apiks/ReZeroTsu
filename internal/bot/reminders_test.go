@@ -31,6 +31,11 @@ func dueReminder(id int, msg string) reminders.RemindMe {
 	return reminders.RemindMe{Message: msg, Date: remindNow.Add(-time.Minute), RemindID: id, CreatedAt: remindNow.Add(-time.Hour)}
 }
 
+// overdueReminder is a reminder that was due by long before remindNow.
+func overdueReminder(id int, msg string, by time.Duration) reminders.RemindMe {
+	return reminders.RemindMe{Message: msg, Date: remindNow.Add(-by), RemindID: id, CreatedAt: remindNow.Add(-by - time.Hour)}
+}
+
 func futureReminder(id int, msg string) reminders.RemindMe {
 	return reminders.RemindMe{Message: msg, Date: remindNow.Add(time.Hour), RemindID: id}
 }
@@ -59,6 +64,19 @@ func (l *logBuf) count(level string) int {
 	n := 0
 	for _, line := range strings.Split(l.buf.String(), "\n") {
 		if strings.Contains(line, "level="+level) {
+			n++
+		}
+	}
+	return n
+}
+
+// countContaining counts the log lines at level that contain text.
+func (l *logBuf) countContaining(level, text string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, line := range strings.Split(l.buf.String(), "\n") {
+		if strings.Contains(line, "level="+level) && strings.Contains(line, text) {
 			n++
 		}
 	}
@@ -126,6 +144,27 @@ func TestProcessReminderSlice_Outcomes(t *testing.T) {
 			name:      "generic 4xx without a user-specific code keeps the reminder",
 			script:    []step{rejectWith(0)},
 			stored:    []reminders.RemindMe{dueReminder(1, "a")},
+			wantLeft:  []int{1},
+			wantSends: 1,
+		},
+		{
+			name:      "generic 4xx on a reminder more than 24 hours overdue drops it",
+			script:    []step{rejectWith(0)},
+			stored:    []reminders.RemindMe{overdueReminder(1, "a", 25*time.Hour)},
+			wantLeft:  nil,
+			wantSends: 1,
+		},
+		{
+			name:      "generic 4xx just under 24 hours overdue keeps it",
+			script:    []step{rejectWith(0)},
+			stored:    []reminders.RemindMe{overdueReminder(1, "a", 23*time.Hour)},
+			wantLeft:  []int{1},
+			wantSends: 1,
+		},
+		{
+			name:      "server error on a reminder more than 24 hours overdue keeps it (may be an outage)",
+			script:    []step{serverError()},
+			stored:    []reminders.RemindMe{overdueReminder(1, "a", 25*time.Hour)},
 			wantLeft:  []int{1},
 			wantSends: 1,
 		},
@@ -236,6 +275,56 @@ func TestProcessReminderSlice_OpenDMFailure(t *testing.T) {
 				t.Errorf("send calls = %d, want 0", d.SendCalls)
 			}
 		})
+	}
+}
+
+// A non-user rejection of the DM channel creation keeps recent reminders (it may be an outage) but gives up on
+// the ones more than 24 hours overdue, with one warning.
+func TestProcessReminderSlice_OpenDMRejectionGivesUpAfter24Hours(t *testing.T) {
+	logs := captureLogs(t)
+	d := newFakeDiscord()
+	d.DMError = restErr(http.StatusUnauthorized, 0)
+	st := stateWith("u1", overdueReminder(1, "old", 25*time.Hour), dueReminder(2, "recent"), futureReminder(3, "later"))
+	if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.reminderIDs("u1"); !reflect.DeepEqual(got, []int{2, 3}) {
+		t.Errorf("remaining = %v, want [2 3]", got)
+	}
+	if got := logs.countContaining("WARN", "giving up"); got != 1 {
+		t.Errorf("give-up warnings = %d, want 1", got)
+	}
+	// The dropped reminder is not retried (nor logged) again.
+	if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.countContaining("WARN", "giving up"); got != 1 {
+		t.Errorf("give-up warnings after rerun = %d, want 1", got)
+	}
+}
+
+// A failed send still waits the per-message throttle before the next reminder of the user.
+func TestProcessReminderSlice_ThrottlesBetweenFailingSends(t *testing.T) {
+	captureLogs(t)
+	var mu sync.Mutex
+	var sentAt []time.Time
+	d := &hookDiscord{fakeDiscord: newFakeDiscord(rejectWith(0), rejectWith(0), rejectWith(0))}
+	d.afterSend = func() {
+		mu.Lock()
+		sentAt = append(sentAt, time.Now())
+		mu.Unlock()
+	}
+	st := stateWith("u1", dueReminder(1, "a"), dueReminder(2, "b"), dueReminder(3, "c"))
+	if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sentAt) != 3 {
+		t.Fatalf("sends = %d, want 3", len(sentAt))
+	}
+	for i := 1; i < len(sentAt); i++ {
+		if gap := sentAt[i].Sub(sentAt[i-1]); gap < reminderThrottlePerMessage {
+			t.Errorf("gap before send %d = %v, want at least %v", i+1, gap, reminderThrottlePerMessage)
+		}
 	}
 }
 
