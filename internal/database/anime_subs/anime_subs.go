@@ -93,6 +93,19 @@ func (r *Repo) Seed(ctx context.Context, id string, isGuild bool, shows []*ShowS
 	return nil
 }
 
+// MarkShowsNotified sets notified=true on the named shows of the document in a single update statement.
+func (r *Repo) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
+	if len(showNames) == 0 {
+		return nil
+	}
+	update := bson.M{"$set": bson.M{"shows.$[s].notified": true}}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": bson.M{"$in": showNames}}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("MarkShowsNotified: %w", err)
+	}
+	return nil
+}
+
 // AppendShows adds shows to an existing document without rewriting its other entries or its seed date.
 // Entries whose show name already exists (case-insensitive) are the caller's responsibility to filter out.
 func (r *Repo) AppendShows(ctx context.Context, id string, shows []*ShowSub) error {

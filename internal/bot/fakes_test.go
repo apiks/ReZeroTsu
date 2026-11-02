@@ -24,6 +24,8 @@ const (
 	stepTimeoutDelivered                  // deliver, then return a deadline error
 	stepTimeoutUndelivered                // do not deliver, return a deadline error
 	stepBlock                             // do not deliver, block until ctx is cancelled
+	stepServerError                       // do not deliver, return a REST 500
+	stepServerErrorDelivered              // deliver, then return a REST 500
 )
 
 type step struct {
@@ -36,6 +38,8 @@ func rejectWith(code int) step      { return step{kind: stepReject, code: code} 
 func timeoutAfterDelivery() step    { return step{kind: stepTimeoutDelivered} }
 func timeoutWithoutDelivery() step  { return step{kind: stepTimeoutUndelivered} }
 func blockUntilCancelled() step     { return step{kind: stepBlock} }
+func serverError() step             { return step{kind: stepServerError} }
+func serverErrorAfterDelivery() step { return step{kind: stepServerErrorDelivered} }
 
 // delivered is one message that "reached Discord".
 type delivered struct {
@@ -57,6 +61,7 @@ type fakeDiscord struct {
 	Roles       map[string]bool // roleID -> exists
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	DMError     error           // returned by OpenDM when set
+	RecentErr   error           // returned by RecentMessages when set
 
 	Invalidated []string // "guild:channel"
 	Pinned      []string // "channel:message"
@@ -90,6 +95,15 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 	case stepTimeoutUndelivered:
 		f.mu.Unlock()
 		return "", context.DeadlineExceeded
+	case stepServerError, stepServerErrorDelivered:
+		if st.kind == stepServerErrorDelivered {
+			deliver()
+		}
+		f.mu.Unlock()
+		return "", &discordgo.RESTError{
+			Response: &http.Response{StatusCode: http.StatusInternalServerError},
+			Message:  &discordgo.APIErrorMessage{Message: "server error"},
+		}
 	case stepReject:
 		f.mu.Unlock()
 		return "", &discordgo.RESTError{
@@ -113,13 +127,20 @@ func (f *fakeDiscord) OpenDM(_ context.Context, userID string) (string, error) {
 func (f *fakeDiscord) RecentMessages(_ context.Context, channelID string, limit int) ([]ChannelMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.RecentErr != nil {
+		return nil, f.RecentErr
+	}
 	var out []ChannelMessage
 	for i := len(f.Delivered) - 1; i >= 0 && len(out) < limit; i-- {
 		d := f.Delivered[i]
 		if d.ChannelID != channelID {
 			continue
 		}
-		out = append(out, ChannelMessage{ID: fmt.Sprintf("msg-%d", i+1), Content: d.Msg.Content, Embeds: d.Msg.Embeds})
+		author := fakeBotUserID
+		if d.Webhook != nil {
+			author = d.Webhook.ID
+		}
+		out = append(out, ChannelMessage{ID: fmt.Sprintf("msg-%d", i+1), AuthorID: author, Content: d.Msg.Content, Embeds: d.Msg.Embeds})
 	}
 	return out, nil
 }
@@ -143,6 +164,10 @@ func (f *fakeDiscord) PinReplacing(channelID, messageID, _ string) {
 }
 
 func (f *fakeDiscord) ShardID() int { return 0 }
+
+const fakeBotUserID = "bot-user"
+
+func (f *fakeDiscord) BotUserID() string { return fakeBotUserID }
 
 // deliveredTo returns the messages delivered to channelID.
 func (f *fakeDiscord) deliveredTo(channelID string) []delivered {
@@ -229,6 +254,26 @@ func (f *fakeSentState) AppendAnimeSubShows(_ context.Context, id string, shows 
 		return nil
 	}
 	d.Shows = append(d.Shows, copyShows(shows)...)
+	return nil
+}
+
+func (f *fakeSentState) MarkShowsNotified(_ context.Context, id string, showNames []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.AnimeSubs[id]
+	if !ok {
+		return nil
+	}
+	for _, s := range d.Shows {
+		if s == nil {
+			continue
+		}
+		for _, n := range showNames {
+			if s.Show == n {
+				s.Notified = true
+			}
+		}
+	}
 	return nil
 }
 

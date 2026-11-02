@@ -632,18 +632,17 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		return
 	}
 	webhook := d.ChannelWebhook(guildID, channelID)
-	updated := false
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 		end := min(i+discord.MaxEmbedsPerMessage, len(due))
 		batch := due[i:end]
 		embeds := make([]*discordgo.MessageEmbed, len(batch))
+		names := make([]string, len(batch))
 		for j, e := range batch {
 			embeds[j] = e.emb
+			names[j] = e.sub.Show
 		}
 		content := ""
 		if i == 0 && roleID != "" {
@@ -654,52 +653,41 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 				return
 			}
 		}
-		msg := OutgoingMessage{Content: content, Embeds: embeds}
-		usedWebhook := webhook != nil
-		_, sendErr := d.Send(ctx, channelID, webhook, msg)
-		if sendErr != nil && usedWebhook && !discord.IsUnknownChannel(sendErr) {
-			d.InvalidateChannelWebhook(guildID, channelID)
+		res := sendWithRules(ctx, d, guildID, channelID, webhook, OutgoingMessage{Content: content, Embeds: embeds})
+		if res.Delivered {
+			// A batch we cannot confirm as recorded would be resent next run, so record it right away
+			// on a context that survives shutdown.
+			markErr := detachedWrite(ctx, func(wctx context.Context) error {
+				return st.MarkShowsNotified(wctx, channelID, names)
+			})
+			if markErr != nil {
+				logger.For("animesubs").Error("mark shows notified failed", "channel_id", channelID, "err", markErr)
+				return
+			}
+			logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
+			continue
 		}
-		if sendErr != nil {
-			_, sendErr = d.Send(ctx, channelID, nil, msg)
-		}
-		if sendErr != nil {
-			if updated {
-				if err := st.SetAnimeSubs(ctx, channelID, true, doc.Shows); err != nil {
-					logger.For("animesubs").Error("Set guild before break failed", "channel_id", channelID, "err", err)
-				}
-			}
-			if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
-				_ = st.DeleteAnimeSubs(ctx, channelID)
-				if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-				}
-				d.InvalidateChannelWebhook(guildID, channelID)
-				return
-			}
-			if discord.IsChannelNotText(sendErr) {
-				_ = st.DeleteAnimeSubs(ctx, channelID)
-				if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-				}
-				d.InvalidateChannelWebhook(guildID, channelID)
-				logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
-				return
-			}
-			if discord.IsMissingPermissions(sendErr) {
-				return
-			}
+		sendErr := res.Err
+		if ctx.Err() != nil {
 			return
 		}
-		logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
-		for _, e := range batch {
-			e.sub.Notified = true
+		if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
+			_ = st.DeleteAnimeSubs(ctx, channelID)
+			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+				logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
+			}
+			d.InvalidateChannelWebhook(guildID, channelID)
+			return
 		}
-		updated = true
-	}
-	if updated {
-		if err := st.SetAnimeSubs(ctx, channelID, true, doc.Shows); err != nil {
-			logger.For("animesubs").Error("Set guild failed", "channel_id", channelID, "err", err)
+		if discord.IsChannelNotText(sendErr) {
+			_ = st.DeleteAnimeSubs(ctx, channelID)
+			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+				logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
+			}
+			d.InvalidateChannelWebhook(guildID, channelID)
+			logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
+			return
 		}
+		return
 	}
 }
