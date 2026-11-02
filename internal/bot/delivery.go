@@ -122,6 +122,8 @@ type discordgoPort struct {
 
 func newDiscordgoPort(s *discordgo.Session) DiscordPort { return &discordgoPort{s: s} }
 
+// Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
+// in-flight send would turn a message that Discord may still post into an Unknown outcome.
 func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
 	if webhook != nil {
 		w := &discordgo.Webhook{ID: webhook.ID, Token: webhook.Token}
@@ -137,16 +139,16 @@ func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *Web
 	return m.ID, nil
 }
 
-func (p *discordgoPort) OpenDM(_ context.Context, userID string) (string, error) {
-	ch, err := p.s.UserChannelCreate(userID)
+func (p *discordgoPort) OpenDM(ctx context.Context, userID string) (string, error) {
+	ch, err := p.s.UserChannelCreate(userID, discordgo.WithContext(ctx))
 	if err != nil {
 		return "", err
 	}
 	return ch.ID, nil
 }
 
-func (p *discordgoPort) RecentMessages(_ context.Context, channelID string, limit int) ([]ChannelMessage, error) {
-	msgs, err := p.s.ChannelMessages(channelID, limit, "", "", "")
+func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error) {
+	msgs, err := p.s.ChannelMessages(channelID, limit, "", "", "", discordgo.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
