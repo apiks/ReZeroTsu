@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"time"
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
@@ -85,6 +86,14 @@ type SentState interface {
 
 	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
 	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
+
+	// --- ticket #11: reminders delivered once ---
+
+	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
+	ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error)
+	// RemoveReminders atomically removes the reminders with the given IDs from the user's document and
+	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
+	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
 
 	// --- ticket #7 (user DMs) ---
 
@@ -236,6 +245,14 @@ func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID,
 
 func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
 	return m.db.Reminders().Save(ctx, id, slice)
+}
+
+func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error) {
+	return m.db.Reminders().ListDue(ctx, asOf)
+}
+
+func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
+	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
 }
 
 func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {

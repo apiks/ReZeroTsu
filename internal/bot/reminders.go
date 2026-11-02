@@ -41,8 +41,12 @@ func RunReminderLoop(ctx context.Context, db *database.Client, session *discordg
 }
 
 func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
-	now := time.Now()
-	slices, err := db.Reminders().ListDue(ctx, now)
+	deliverDueReminders(ctx, newDiscordgoPort(s), newMongoSentState(db), time.Now())
+}
+
+// deliverDueReminders lists the documents with reminders due at now and delivers them with a worker pool.
+func deliverDueReminders(ctx context.Context, d DiscordPort, st SentState, now time.Time) {
+	slices, err := st.ListDueReminders(ctx, now)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			logger.For("reminders").Error("ListDue failed", "err", err)
@@ -53,8 +57,6 @@ func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		return
 	}
 
-	d := newDiscordgoPort(s)
-	st := newMongoSentState(db)
 	sliceCh := make(chan *reminders.RemindMeSlice)
 	workerCount := max(runtime.NumCPU()*2, 1)
 	var wg sync.WaitGroup
@@ -90,15 +92,37 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 	if slice == nil {
 		return nil
 	}
-	due, remaining := splitDueReminders(slice.Reminders, now)
+	due, _ := splitDueReminders(slice.Reminders, now)
 	if len(due) == 0 {
 		return nil
 	}
 
 	userID := slice.ID
+	// remove deletes delivered or undeliverable reminders by ID, on a context detached from shutdown.
+	remove := func(ids ...int) {
+		if err := detachedWrite(ctx, func(wctx context.Context) error {
+			return st.RemoveReminders(wctx, userID, ids)
+		}); err != nil {
+			logger.For("reminders").Error("RemoveReminders failed", "user_id", userID, "remind_ids", ids, "err", err)
+		}
+	}
 	dmID, err := d.OpenDM(ctx, userID)
 	if err != nil {
-		logger.For("reminders").Error("UserChannelCreate failed", "user_id", userID, "err", err)
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if discord.ClassifySend(err) == discord.Rejected {
+			// Discord refused to open a DM channel: none of this user's due reminders can ever be delivered.
+			ids := make([]int, 0, len(due))
+			for _, r := range due {
+				ids = append(ids, r.RemindID)
+			}
+			logger.For("reminders").Warn("UserChannelCreate rejected, dropping due reminders",
+				append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(ids), "err", err)...)
+			remove(ids...)
+		} else {
+			logger.For("reminders").Error("UserChannelCreate failed", "user_id", userID, "err", err)
+		}
 		throttle := time.NewTimer(reminderThrottlePerUser)
 		defer throttle.Stop()
 		select {
@@ -108,7 +132,6 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 		}
 		return nil
 	}
-	var dueNotSent []reminders.RemindMe
 	throttleTimer := time.NewTimer(reminderThrottlePerMessage)
 	defer throttleTimer.Stop()
 	for i, r := range due {
@@ -136,18 +159,23 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 				return acqErr
 			}
 		}
-		_, err = d.Send(ctx, dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
-		if err != nil {
-			args := append(discord.RESTAttrs(err), "user_id", userID, "err", err)
-			if discord.IsCannotDMUser(err) {
-				logger.For("reminders").Warn("ChannelMessageSendComplex failed", args...)
-			} else {
-				logger.For("reminders").Error("ChannelMessageSendComplex failed", args...)
-			}
-			dueNotSent = append(dueNotSent, r)
+		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		switch {
+		case res.Delivered:
+			remove(r.RemindID)
+			logger.For("reminders").Debug("reminder sent", "user_id", userID, "remind_id", r.RemindID, "presumed", res.Presumed)
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case discord.ClassifySend(res.Err) == discord.Rejected:
+			// Rejected (closed DMs, ...): drop after this one attempt instead of retrying every run.
+			logger.For("reminders").Warn("reminder rejected, dropping",
+				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
+			remove(r.RemindID)
+		default:
+			// Unknown outcome verified as not delivered: keep it for the next run.
+			logger.For("reminders").Warn("reminder send failed, will retry", "user_id", userID, "remind_id", r.RemindID, "err", res.Err)
 			continue
 		}
-		logger.For("reminders").Debug("reminder sent", "user_id", userID)
 		// Throttle per channel so we don't hit Discord's per-channel send limit
 		if i < len(due)-1 {
 			if !throttleTimer.Stop() {
@@ -163,21 +191,6 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			case <-throttleTimer.C:
 			}
 		}
-	}
-
-	// Save only future reminders plus due ones we failed to send (so they are retried next run).
-	toSave := append(remaining, dueNotSent...)
-	var remainingSlice *reminders.RemindMeSlice
-	if len(toSave) > 0 {
-		remainingSlice = &reminders.RemindMeSlice{
-			ID:        slice.ID,
-			IsGuild:   slice.IsGuild,
-			Reminders: toSave,
-			Premium:   slice.Premium,
-		}
-	}
-	if err := st.SaveReminders(ctx, slice.ID, remainingSlice); err != nil {
-		logger.For("reminders").Error("Save failed", "user_id", slice.ID, "err", err)
 	}
 
 	throttle := time.NewTimer(reminderThrottlePerUser)
