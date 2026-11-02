@@ -94,6 +94,12 @@ type SentState interface {
 	// RemoveReminders atomically removes the reminders with the given IDs from the user's document and
 	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
 	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
+
+	// --- ticket #7 (user DMs) ---
+
+	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
+	// key, in a single-statement update (matched by show name).
+	MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error
 }
 
 // --- production wiring: discordgo ---
@@ -247,4 +253,8 @@ func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) (
 
 func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
 	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
+}
+
+func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
+	return m.db.AnimeSubs().MarkShowNotified(ctx, id, showName, airUnix, episodeKey)
 }
