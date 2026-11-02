@@ -168,7 +168,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 	}
 	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
-	vd := scheduleVerifyPort{DiscordPort: d, title: emb.Title, now: now}
+	match := scheduleMatcher(emb.Title, now)
 
 	var res SendResult
 	for attempt := range 2 {
@@ -186,12 +186,10 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 				return err
 			}
 		}
-		res = sendWithRules(ctx, vd, guildID, ap.ID, d.ChannelWebhook(guildID, ap.ID), msg)
-		if res.Delivered && !res.Presumed {
+		// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
+		res, _ = deliverWithRules(ctx, d, guildID, ap.ID, d.ChannelWebhook(guildID, ap.ID), msg, match, false, "schedule send")
+		if res.Delivered {
 			break
-		}
-		if res.Presumed {
-			res.Err = errors.New("delivery could not be verified")
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -201,7 +199,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 			return nil
 		}
 	}
-	if !res.Delivered || res.Presumed {
+	if !res.Delivered {
 		logger.For("schedule").Error("DailySchedule post failed", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", res.Err)
 		return nil
 	}
@@ -215,36 +213,50 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 // handleScheduleRejection applies the terminal handling for a Rejected schedule post: a deleted, non-text or
 // inaccessible channel clears the autopost; other rejections are only logged.
 func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, shardID int, err error) {
-	var reason string
-	switch {
-	case discord.IsUnknownChannel(err):
-		reason = "channel deleted (10003)"
-	case discord.IsChannelNotText(err):
-		reason = "channel is non-text"
-	case discord.IsChannelUnavailable(err):
-		reason = "channel inaccessible (10003/50001)"
-	case discord.IsMissingPermissions(err):
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	case discord.ChannelMissingPermissions:
 		return
 	default:
 		logger.For("schedule").Error("DailySchedule post rejected", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", err)
 		return
 	}
 	if setErr := st.SetAutopost(ctx, guildID, postTypeDailySchedule, nil); setErr != nil {
-		logger.For("schedule").Error(reason+", failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", setErr)
+		logger.For("schedule").Error(reason.String()+", failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", setErr)
 	} else {
-		logger.For("schedule").Warn(reason+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
+		logger.For("schedule").Warn(reason.String()+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
 	}
 	d.InvalidateChannelWebhook(guildID, channelID)
 }
 
 // channelStateFirst looks the channel up in the gateway state cache and only falls back to REST on a miss.
+// A cached channel is returned as a private copy taken under the state lock (discordgo's ChannelAdd overwrites
+// the cached struct in place); REST results are already private.
 func channelStateFirst(s *discordgo.Session, channelID string) (*discordgo.Channel, error) {
 	if s.State != nil {
 		if ch, err := s.State.Channel(channelID); err == nil && ch != nil {
-			return ch, nil
+			return copyStateChannel(s.State, ch), nil
 		}
 	}
 	return s.Channel(channelID)
+}
+
+// copyStateChannel copies ch, owned by st, under st's read lock, including its permission overwrites.
+func copyStateChannel(st *discordgo.State, ch *discordgo.Channel) *discordgo.Channel {
+	st.RLock()
+	defer st.RUnlock()
+	c := *ch
+	if ch.PermissionOverwrites != nil {
+		c.PermissionOverwrites = make([]*discordgo.PermissionOverwrite, len(ch.PermissionOverwrites))
+		for i, ow := range ch.PermissionOverwrites {
+			if ow != nil {
+				owCopy := *ow
+				c.PermissionOverwrites[i] = &owCopy
+			}
+		}
+	}
+	return &c
 }
 
 // canSendToChannel reports whether the bot can send messages and embeds (View Channel, Send Messages, Embed Links; threads: Send in Threads).

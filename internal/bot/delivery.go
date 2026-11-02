@@ -53,8 +53,8 @@ type DiscordPort interface {
 	InvalidateChannelWebhook(guildID, channelID string)
 	// CanSend reports whether the bot may post embeds to the channel.
 	CanSend(channelID string) bool
-	// GuildHasRole reports whether the role still exists in the guild.
-	GuildHasRole(guildID, roleID string) bool
+	// GuildRole reports whether the role still exists in the guild, or that the state cannot tell.
+	GuildRole(guildID, roleID string) rolePresence
 	// PinReplacing pins messageID, first unpinning the bot's older pins for the same subreddit.
 	PinReplacing(channelID, messageID, subreddit string)
 	// ShardID is used for log attribution only.
@@ -81,12 +81,10 @@ type SentState interface {
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
 
-	SaveFeedCheck(ctx context.Context, guildID string, fc feed_checks.FeedCheck) error
+	// SaveFeedChecks upserts the feed checks by (guild, GUID) in one round trip.
+	SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error
 	RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error)
 	DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error)
-
-	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
-	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
 
 	// --- ticket #11: reminders delivered once ---
 
@@ -180,12 +178,19 @@ func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }
 
-func (p *discordgoPort) GuildHasRole(guildID, roleID string) bool {
+func (p *discordgoPort) GuildRole(guildID, roleID string) rolePresence {
+	if p.s.State == nil {
+		return roleUnknown
+	}
 	g, err := p.s.State.Guild(guildID)
 	if err != nil {
-		return false
+		// Not in the state (e.g. removed by an unavailable GUILD_DELETE): unknown, not absent.
+		return roleUnknown
 	}
-	return roleExistsInGuild(g, roleID)
+	// The guild struct is owned by the state cache; read it under the state lock.
+	p.s.State.RLock()
+	defer p.s.State.RUnlock()
+	return guildRolePresence(g, roleID)
 }
 
 func (p *discordgoPort) PinReplacing(channelID, messageID, subreddit string) {
@@ -241,8 +246,8 @@ func (m *mongoSentState) GetGuildSettings(ctx context.Context, guildID string) (
 	return m.db.Guilds().GetGuildSettings(ctx, guildID)
 }
 
-func (m *mongoSentState) SaveFeedCheck(ctx context.Context, guildID string, fc feed_checks.FeedCheck) error {
-	return m.db.FeedChecks().Save(ctx, guildID, fc)
+func (m *mongoSentState) SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
+	return m.db.FeedChecks().SaveMany(ctx, guildID, fcs)
 }
 
 func (m *mongoSentState) RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
@@ -251,10 +256,6 @@ func (m *mongoSentState) RemoveFeedsByChannel(ctx context.Context, guildID, chan
 
 func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
 	return m.db.FeedChecks().DeleteByChannelID(ctx, guildID, channelID)
-}
-
-func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
-	return m.db.Reminders().Save(ctx, id, slice)
 }
 
 func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error) {

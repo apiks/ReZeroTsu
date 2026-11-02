@@ -37,15 +37,28 @@ func NewRepo(coll *mongo.Collection) *Repo {
 	return &Repo{coll: coll}
 }
 
-// Save upserts a feed check by (guild_id, guid).
-func (r *Repo) Save(ctx context.Context, guildID string, fc FeedCheck) error {
-	fc.GuildID = guildID
-	filter := bson.M{"guild_id": guildID, "guid": fc.GUID}
-	_, err := r.coll.UpdateOne(ctx, filter, bson.M{"$set": fc}, options.UpdateOne().SetUpsert(true))
-	if err != nil {
-		return fmt.Errorf("Save: %w", err)
+// SaveMany upserts the feed checks by (guild_id, guid) in a single unordered BulkWrite round trip.
+func (r *Repo) SaveMany(ctx context.Context, guildID string, fcs []FeedCheck) error {
+	if len(fcs) == 0 {
+		return nil
+	}
+	if _, err := r.coll.BulkWrite(ctx, saveManyModels(guildID, fcs), options.BulkWrite().SetOrdered(false)); err != nil {
+		return fmt.Errorf("SaveMany: %w", err)
 	}
 	return nil
+}
+
+// saveManyModels builds one upsert per feed check, keyed by (guild_id, guid).
+func saveManyModels(guildID string, fcs []FeedCheck) []mongo.WriteModel {
+	models := make([]mongo.WriteModel, 0, len(fcs))
+	for _, fc := range fcs {
+		fc.GuildID = guildID
+		models = append(models, mongo.NewUpdateOneModel().
+			SetFilter(bson.M{"guild_id": guildID, "guid": fc.GUID}).
+			SetUpdate(bson.M{"$set": fc}).
+			SetUpsert(true))
+	}
+	return models
 }
 
 // DeleteByChannelID deletes feed_checks for the guild and channel.

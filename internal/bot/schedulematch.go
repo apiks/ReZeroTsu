@@ -1,9 +1,6 @@
 package bot
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 // The daily schedule embed has no URL, so the shared description/URL matcher alone could mistake an older
 // identical post for today's. Verification for the schedule therefore first narrows the recent messages to
@@ -28,18 +25,11 @@ func scheduleMessagesToday(recent []ChannelMessage, title string, now time.Time)
 	return out
 }
 
-// scheduleVerifyPort narrows RecentMessages to today's schedule posts so that sendWithRules' verification
-// of an Unknown outcome uses the schedule matching rules.
-type scheduleVerifyPort struct {
-	DiscordPort
-	title string
-	now   time.Time
-}
-
-func (p scheduleVerifyPort) RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error) {
-	recent, err := p.DiscordPort.RecentMessages(ctx, channelID, limit)
-	if err != nil {
-		return nil, err
+// scheduleMatcher is the recentMatcher for a daily schedule post titled title on now's UTC day: a message by
+// the bot (or the webhook used) carrying that title, posted today (an unknown timestamp is accepted), whose
+// embeds match by URL and description.
+func scheduleMatcher(title string, now time.Time) recentMatcher {
+	return func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {
+		return matchRecentMessage(scheduleMessagesToday(recent, title, now), botUserID, webhook, msg)
 	}
-	return scheduleMessagesToday(recent, p.title, p.now), nil
 }

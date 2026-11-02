@@ -56,6 +56,8 @@ type fakeDiscord struct {
 	SendCalls int
 	// WebhookSends counts Send calls made through a webhook, delivered or not.
 	WebhookSends int
+	// RecentCalls counts RecentMessages calls (verification reads).
+	RecentCalls int
 
 	// Configuration.
 	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
@@ -63,6 +65,9 @@ type fakeDiscord struct {
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
+
+	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
+	RolePresence map[string]rolePresence
 
 	Invalidated []string // "guild:channel"
 	Pinned      []string // "channel:message"
@@ -111,13 +116,29 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 	case stepReject:
 		f.mu.Unlock()
 		return "", &discordgo.RESTError{
-			Response: &http.Response{StatusCode: http.StatusForbidden},
+			Response: &http.Response{StatusCode: rejectStatus(st.code)},
 			Message:  &discordgo.APIErrorMessage{Code: st.code, Message: "rejected"},
 		}
 	default: // stepBlock
 		f.mu.Unlock()
 		<-ctx.Done()
 		return "", ctx.Err()
+	}
+}
+
+// rejectStatus is the HTTP status Discord answers with for a rejected-send code. Only access and permission
+// codes are 403s, so an unrecognised code is not mistaken for missing permissions (any 403).
+func rejectStatus(code int) int {
+	switch code {
+	case discordgo.ErrCodeMissingAccess, discordgo.ErrCodeMissingPermissions, discordgo.ErrCodeCannotSendMessagesToThisUser:
+		return http.StatusForbidden
+	case discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeUnknownMessage, discordgo.ErrCodeUnknownRole,
+		discordgo.ErrCodeUnknownUser, discordgo.ErrCodeUnknownWebhook:
+		return http.StatusNotFound
+	case discordgo.ErrCodeInvalidWebhookTokenProvided:
+		return http.StatusUnauthorized
+	default:
+		return http.StatusBadRequest
 	}
 }
 
@@ -131,6 +152,7 @@ func (f *fakeDiscord) OpenDM(_ context.Context, userID string) (string, error) {
 func (f *fakeDiscord) RecentMessages(_ context.Context, channelID string, limit int) ([]ChannelMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.RecentCalls++
 	if f.RecentErr != nil {
 		return nil, f.RecentErr
 	}
@@ -159,7 +181,15 @@ func (f *fakeDiscord) InvalidateChannelWebhook(guildID, channelID string) {
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }
 
-func (f *fakeDiscord) GuildHasRole(_, roleID string) bool { return f.Roles[roleID] }
+func (f *fakeDiscord) GuildRole(_, roleID string) rolePresence {
+	if p, ok := f.RolePresence[roleID]; ok {
+		return p
+	}
+	if f.Roles[roleID] {
+		return rolePresent
+	}
+	return roleAbsent
+}
 
 func (f *fakeDiscord) PinReplacing(channelID, messageID, _ string) {
 	f.mu.Lock()
@@ -195,6 +225,9 @@ type fakeSentState struct {
 	FeedChecks  []feed_checks.FeedCheck
 	Reminders   map[string]*reminders.RemindMeSlice
 	FeedsPurged []string // "guild:channel"
+
+	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
+	FeedCheckWrites []int
 }
 
 func newFakeSentState() *fakeSentState {
@@ -307,17 +340,21 @@ func (f *fakeSentState) GetGuildSettings(_ context.Context, guildID string) (*gu
 	return f.Settings[guildID], nil
 }
 
-func (f *fakeSentState) SaveFeedCheck(_ context.Context, guildID string, fc feed_checks.FeedCheck) error {
+func (f *fakeSentState) SaveFeedChecks(_ context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fc.GuildID = guildID
-	for i := range f.FeedChecks {
-		if f.FeedChecks[i].GuildID == guildID && f.FeedChecks[i].GUID == fc.GUID {
-			f.FeedChecks[i] = fc
-			return nil
+	f.FeedCheckWrites = append(f.FeedCheckWrites, len(fcs))
+next:
+	for _, fc := range fcs {
+		fc.GuildID = guildID
+		for i := range f.FeedChecks {
+			if f.FeedChecks[i].GuildID == guildID && f.FeedChecks[i].GUID == fc.GUID {
+				f.FeedChecks[i] = fc
+				continue next
+			}
 		}
+		f.FeedChecks = append(f.FeedChecks, fc)
 	}
-	f.FeedChecks = append(f.FeedChecks, fc)
 	return nil
 }
 
@@ -342,20 +379,6 @@ func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, ch
 	}
 	f.FeedChecks = kept
 	return n, nil
-}
-
-func (f *fakeSentState) SaveReminders(_ context.Context, id string, slice *reminders.RemindMeSlice) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if slice == nil || len(slice.Reminders) == 0 {
-		delete(f.Reminders, id)
-		return nil
-	}
-	c := *slice
-	c.ID = id
-	c.Reminders = append([]reminders.RemindMe(nil), slice.Reminders...)
-	f.Reminders[id] = &c
-	return nil
 }
 
 var (

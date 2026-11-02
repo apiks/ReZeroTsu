@@ -91,30 +91,56 @@ type userSubsStore interface {
 	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
 	RemoveShows(ctx context.Context, id string, showNames []string) error
 	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
+	// CollapseDuplicateShows drops null entries and every later entry whose show name repeats an earlier one
+	// (case-insensitive, surrounding spaces ignored), in a single update statement.
+	CollapseDuplicateShows(ctx context.Context, id string) error
 }
 
-// cleanupFinishedShows removes, per user document, only the shows that are no longer airing, and returns
-// how many documents were changed. Shows added concurrently are never touched.
+// cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
+// duplicate entries (keeping the first) and null entries among the rest. It returns how many documents were
+// changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
 func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		if doc == nil {
+			return nil
+		}
 		var finished []string
+		needsCollapse := false
+		seen := make(map[string]struct{}, len(doc.Shows))
 		for _, sub := range doc.Shows {
 			if sub == nil {
+				needsCollapse = true
 				continue
 			}
-			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
+			key := strings.ToLower(strings.TrimSpace(sub.Show))
+			if _, ok := airing[key]; !ok {
 				finished = append(finished, sub.Show)
+				continue
+			}
+			if _, dup := seen[key]; dup {
+				needsCollapse = true
+			}
+			seen[key] = struct{}{}
+		}
+		changed := false
+		if len(finished) > 0 {
+			if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
+				logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
+				return nil
+			}
+			changed = true
+		}
+		if needsCollapse {
+			if err := st.CollapseDuplicateShows(ctx, doc.ID); err != nil {
+				logger.For("animesubs").Error("finished cleanup CollapseDuplicateShows failed", "user_id", doc.ID, "err", err)
+			} else {
+				changed = true
 			}
 		}
-		if len(finished) == 0 {
-			return nil
+		if changed {
+			updated++
 		}
-		if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
-			logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
-			return nil
-		}
-		updated++
 		return nil
 	})
 	return updated, err
@@ -219,16 +245,40 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 // weekdayShows returns the shows for a weekday, optionally including donghua.
 type weekdayShows func(donghua bool) []animeschedule.ShowEntry
 
-func roleExistsInGuild(g *discordgo.Guild, roleID string) bool {
-	if g == nil || roleID == "" {
-		return false
+// rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
+type rolePresence int
+
+const (
+	// roleUnknown means the state cannot tell: the guild is missing (e.g. removed during an outage), is an
+	// unavailable stub, or has no roles loaded. A configured role must not be cleared on it.
+	roleUnknown rolePresence = iota
+	rolePresent
+	// roleAbsent means the guild is available with its roles loaded and the role is not among them.
+	roleAbsent
+)
+
+func (p rolePresence) String() string {
+	switch p {
+	case rolePresent:
+		return "present"
+	case roleAbsent:
+		return "absent"
+	default:
+		return "unknown"
+	}
+}
+
+// guildRolePresence reports whether roleID is among g's roles. g is nil when the guild is not in the state.
+func guildRolePresence(g *discordgo.Guild, roleID string) rolePresence {
+	if g == nil || g.Unavailable || len(g.Roles) == 0 {
+		return roleUnknown
 	}
 	for _, r := range g.Roles {
 		if r != nil && r.ID == roleID {
-			return true
+			return rolePresent
 		}
 	}
-	return false
+	return roleAbsent
 }
 
 func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
@@ -593,7 +643,8 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	}
 	channelID := ap.ID
 	roleID := ap.RoleID
-	if roleID != "" && !d.GuildHasRole(guildID, roleID) {
+	// Only a role the state definitely lacks is cleared: an unknown answer (guild missing or unavailable) keeps it.
+	if roleID != "" && d.GuildRole(guildID, roleID) == roleAbsent {
 		if err := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
 			logger.For("animesubs").Error("clear invalid role failed", "guild_id", guildID, "role_id", roleID, "err", err)
 		} else {
@@ -690,27 +741,29 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 			logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
 			continue
 		}
-		sendErr := res.Err
 		if ctx.Err() != nil {
 			return
 		}
-		if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
-			_ = st.DeleteAnimeSubs(ctx, channelID)
-			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-				logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-			}
-			d.InvalidateChannelWebhook(guildID, channelID)
-			return
-		}
-		if discord.IsChannelNotText(sendErr) {
-			_ = st.DeleteAnimeSubs(ctx, channelID)
-			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-				logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-			}
-			d.InvalidateChannelWebhook(guildID, channelID)
-			logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
-			return
-		}
+		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
 		return
 	}
+}
+
+// handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
+// inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
+// (including missing permissions) leaves both in place.
+func handleNewEpisodesRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, err error) {
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	default:
+		return
+	}
+	_ = st.DeleteAnimeSubs(ctx, channelID)
+	if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+		logger.For("animesubs").Error(reason.String()+", failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
+	} else if reason == discord.ChannelNotText {
+		logger.For("animesubs").Warn(reason.String()+", cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
+	}
+	d.InvalidateChannelWebhook(guildID, channelID)
 }
