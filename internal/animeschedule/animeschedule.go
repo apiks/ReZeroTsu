@@ -55,8 +55,11 @@ func (e ShowEntry) ImageURL() string {
 	return ImageBaseURL + e.ImageVersionRoute
 }
 
+// newClient builds the HTTP client for timetable fetches (overridable in tests).
+var newClient = httpclient.Default
+
 var (
-	apiKeyMu       sync.RWMutex
+	apiKeyMu      sync.RWMutex
 	apiKey         string
 	cacheMu        sync.RWMutex
 	cache          = make(map[int][]ShowEntry) // weekday 0=Sunday .. 6=Saturday
@@ -129,14 +132,15 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 	req.Header.Set("User-Agent", httpclient.GetUserAgent())
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	client := httpclient.Default()
+	client := newClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		setFetchErr(err)
 		logger.For("animeschedule").Error("Do failed", "err", err)
 		return
 	}
-	defer resp.Body.Close()
+	// Close whichever response is current when we return (the retry replaces resp).
+	defer func() { resp.Body.Close() }()
 
 	// Rate limit: if 429 or remaining 0, wait until reset then retry once
 	if resp.StatusCode == http.StatusTooManyRequests || resp.Header.Get("X-RateLimit-Remaining") == "0" {
@@ -170,12 +174,13 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 			}
 			req2.Header.Set("User-Agent", httpclient.GetUserAgent())
 			req2.Header.Set("Authorization", "Bearer "+key)
-			resp, err = client.Do(req2)
+			retryResp, err := client.Do(req2)
 			if err != nil {
 				setFetchErr(err)
 				logger.For("animeschedule").Error("Do retry failed", "err", err)
 				return
 			}
+			resp = retryResp
 		}
 	}
 
@@ -224,7 +229,7 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 			continue
 		}
 
-		weekday := int(a.EpisodeDate.Weekday())
+		weekday := int(a.EpisodeDate.UTC().Weekday())
 		episodeStr := fmt.Sprintf("Ep %d", a.EpisodeNumber)
 		if a.Episodes > 0 && a.EpisodeNumber >= a.Episodes {
 			episodeStr = fmt.Sprintf("Ep %dF", a.EpisodeNumber)
