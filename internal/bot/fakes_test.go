@@ -62,6 +62,8 @@ type fakeDiscord struct {
 	// Configuration.
 	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
 	Roles       map[string]bool // roleID -> exists
+	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
+	RolePresence map[string]rolePresence
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
@@ -178,7 +180,15 @@ func (f *fakeDiscord) InvalidateChannelWebhook(guildID, channelID string) {
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }
 
-func (f *fakeDiscord) GuildHasRole(_, roleID string) bool { return f.Roles[roleID] }
+func (f *fakeDiscord) GuildRole(_, roleID string) rolePresence {
+	if p, ok := f.RolePresence[roleID]; ok {
+		return p
+	}
+	if f.Roles[roleID] {
+		return rolePresent
+	}
+	return roleAbsent
+}
 
 func (f *fakeDiscord) PinReplacing(channelID, messageID, _ string) {
 	f.mu.Lock()

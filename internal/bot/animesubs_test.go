@@ -9,7 +9,65 @@ import (
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/guilds"
+
+	"github.com/bwmarrin/discordgo"
 )
+
+func TestGuildRolePresence(t *testing.T) {
+	role := func(id string) *discordgo.Role { return &discordgo.Role{ID: id} }
+	tests := []struct {
+		name string
+		g    *discordgo.Guild
+		want rolePresence
+	}{
+		{name: "guild missing from state", g: nil, want: roleUnknown},
+		{name: "unavailable guild stub", g: &discordgo.Guild{ID: "g1", Unavailable: true}, want: roleUnknown},
+		{name: "unavailable guild with stale roles", g: &discordgo.Guild{ID: "g1", Unavailable: true, Roles: []*discordgo.Role{role("x")}}, want: roleUnknown},
+		{name: "available guild without roles loaded", g: &discordgo.Guild{ID: "g1"}, want: roleUnknown},
+		{name: "role present", g: &discordgo.Guild{ID: "g1", Roles: []*discordgo.Role{role("x"), role("r1")}}, want: rolePresent},
+		{name: "role absent", g: &discordgo.Guild{ID: "g1", Roles: []*discordgo.Role{role("x"), nil}}, want: roleAbsent},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := guildRolePresence(tc.g, "r1"); got != tc.want {
+				t.Errorf("guildRolePresence = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProcessGuildNewEpisodesRolePing(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	shows := []animeschedule.ShowEntry{{Name: "Aired", Route: "aired", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
+	tests := []struct {
+		name        string
+		presence    rolePresence
+		wantContent string
+		wantRoleID  string
+	}{
+		{name: "role present pings and keeps it", presence: rolePresent, wantContent: "<@&r1>", wantRoleID: "r1"},
+		{name: "role unknown (guild missing or unavailable) keeps the configured role", presence: roleUnknown, wantContent: "<@&r1>", wantRoleID: "r1"},
+		{name: "role definitely absent clears it", presence: roleAbsent, wantContent: "", wantRoleID: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeSentState()
+			st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1", RoleID: "r1"}
+			st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{{Show: "Aired", Guild: true}}}
+			d := newFakeDiscord()
+			d.RolePresence = map[string]rolePresence{"r1": tc.presence}
+			processGuildNewEpisodes(context.Background(), d, st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
+			got := d.deliveredTo("c1")
+			if len(got) != 1 || got[0].Msg.Content != tc.wantContent {
+				t.Fatalf("delivered = %+v, want one message with content %q", got, tc.wantContent)
+			}
+			ap, _ := st.GetAutopost(context.Background(), "g1", postTypeNewEpisodes)
+			if ap == nil || ap.RoleID != tc.wantRoleID {
+				t.Errorf("autopost = %+v, want role %q", ap, tc.wantRoleID)
+			}
+		})
+	}
+}
 
 func TestProcessGuildNewEpisodes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()

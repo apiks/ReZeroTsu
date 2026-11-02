@@ -53,8 +53,8 @@ type DiscordPort interface {
 	InvalidateChannelWebhook(guildID, channelID string)
 	// CanSend reports whether the bot may post embeds to the channel.
 	CanSend(channelID string) bool
-	// GuildHasRole reports whether the role still exists in the guild.
-	GuildHasRole(guildID, roleID string) bool
+	// GuildRole reports whether the role still exists in the guild, or that the state cannot tell.
+	GuildRole(guildID, roleID string) rolePresence
 	// PinReplacing pins messageID, first unpinning the bot's older pins for the same subreddit.
 	PinReplacing(channelID, messageID, subreddit string)
 	// ShardID is used for log attribution only.
@@ -180,12 +180,19 @@ func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }
 
-func (p *discordgoPort) GuildHasRole(guildID, roleID string) bool {
+func (p *discordgoPort) GuildRole(guildID, roleID string) rolePresence {
+	if p.s.State == nil {
+		return roleUnknown
+	}
 	g, err := p.s.State.Guild(guildID)
 	if err != nil {
-		return false
+		// Not in the state (e.g. removed by an unavailable GUILD_DELETE): unknown, not absent.
+		return roleUnknown
 	}
-	return roleExistsInGuild(g, roleID)
+	// The guild struct is owned by the state cache; read it under the state lock.
+	p.s.State.RLock()
+	defer p.s.State.RUnlock()
+	return guildRolePresence(g, roleID)
 }
 
 func (p *discordgoPort) PinReplacing(channelID, messageID, subreddit string) {

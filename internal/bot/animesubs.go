@@ -219,16 +219,40 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 // weekdayShows returns the shows for a weekday, optionally including donghua.
 type weekdayShows func(donghua bool) []animeschedule.ShowEntry
 
-func roleExistsInGuild(g *discordgo.Guild, roleID string) bool {
-	if g == nil || roleID == "" {
-		return false
+// rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
+type rolePresence int
+
+const (
+	// roleUnknown means the state cannot tell: the guild is missing (e.g. removed during an outage), is an
+	// unavailable stub, or has no roles loaded. A configured role must not be cleared on it.
+	roleUnknown rolePresence = iota
+	rolePresent
+	// roleAbsent means the guild is available with its roles loaded and the role is not among them.
+	roleAbsent
+)
+
+func (p rolePresence) String() string {
+	switch p {
+	case rolePresent:
+		return "present"
+	case roleAbsent:
+		return "absent"
+	default:
+		return "unknown"
+	}
+}
+
+// guildRolePresence reports whether roleID is among g's roles. g is nil when the guild is not in the state.
+func guildRolePresence(g *discordgo.Guild, roleID string) rolePresence {
+	if g == nil || g.Unavailable || len(g.Roles) == 0 {
+		return roleUnknown
 	}
 	for _, r := range g.Roles {
 		if r != nil && r.ID == roleID {
-			return true
+			return rolePresent
 		}
 	}
-	return false
+	return roleAbsent
 }
 
 func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
@@ -593,7 +617,8 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	}
 	channelID := ap.ID
 	roleID := ap.RoleID
-	if roleID != "" && !d.GuildHasRole(guildID, roleID) {
+	// Only a role the state definitely lacks is cleared: an unknown answer (guild missing or unavailable) keeps it.
+	if roleID != "" && d.GuildRole(guildID, roleID) == roleAbsent {
 		if err := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
 			logger.For("animesubs").Error("clear invalid role failed", "guild_id", guildID, "role_id", roleID, "err", err)
 		} else {
