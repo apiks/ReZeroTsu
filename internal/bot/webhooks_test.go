@@ -35,8 +35,8 @@ func avoidEntryExists(key string) bool {
 	return ok
 }
 
-// The avoid map must not only grow: invalidating a channel (deleted-channel handling) forgets its avoid entry,
-// and setting a new entry prunes the expired ones.
+// The avoid map must not only grow: invalidating a channel keeps that channel's live avoid entry (and prunes expired
+// ones), invalidating a guild clears its entries, and setting a new entry prunes the expired ones.
 func TestChannelWebhookAvoidEntriesAreForgotten(t *testing.T) {
 	t0 := time.Now()
 	tests := []struct {
