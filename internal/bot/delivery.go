@@ -64,6 +64,10 @@ type DiscordPort interface {
 type SentState interface {
 	GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
 	SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error
+	// SeedAnimeSubs fully rewrites the document, stamping seedDate (YYYY-MM-DD, UTC) as its last seed date.
+	SeedAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error
+	// AppendAnimeSubShows adds shows to an existing document without touching its other entries or seed date.
+	AppendAnimeSubShows(ctx context.Context, id string, shows []*anime_subs.ShowSub) error
 	DeleteAnimeSubs(ctx context.Context, id string) error
 
 	GetAutopost(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
@@ -171,6 +175,14 @@ func (m *mongoSentState) GetAnimeSubs(ctx context.Context, id string) (*anime_su
 
 func (m *mongoSentState) SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error {
 	return m.db.AnimeSubs().Set(ctx, id, isGuild, shows)
+}
+
+func (m *mongoSentState) SeedAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error {
+	return m.db.AnimeSubs().Seed(ctx, id, isGuild, shows, seedDate)
+}
+
+func (m *mongoSentState) AppendAnimeSubShows(ctx context.Context, id string, shows []*anime_subs.ShowSub) error {
+	return m.db.AnimeSubs().AppendShows(ctx, id, shows)
 }
 
 func (m *mongoSentState) DeleteAnimeSubs(ctx context.Context, id string) error {

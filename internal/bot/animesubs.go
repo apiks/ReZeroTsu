@@ -253,7 +253,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 				guildIDs = append(guildIDs, g.ID)
 			}
 		}
-		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows)
+		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows, now)
 		lastGuildSeedWeekdayMu.Lock()
 		lastGuildSeedWeekdayByShard[s.ShardID] = weekday
 		lastGuildSeedWeekdayMu.Unlock()
@@ -473,8 +473,8 @@ func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
-func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows) {
-	today := time.Now().UTC().Format("2006-01-02")
+func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows, now time.Time) {
+	today := now.UTC().Format("2006-01-02")
 
 	for _, guildID := range guildIDs {
 		select {
@@ -505,34 +505,60 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 
-		// Determine if this is a new day (reset all) or mid-day update (preserve states)
-		isNewDay := existing == nil || existing.LastSeedDate != today
-
-		existingStates := make(map[string]bool)
-		if !isNewDay && existing != nil {
-			for _, show := range existing.Shows {
-				existingStates[show.Show] = show.Notified
+		if existing == nil || existing.LastSeedDate != today {
+			// No document yet: start aired shows as notified (no repost on re-enable).
+			// Stale document: new UTC day, reset everything to not notified (catch-up is intentional).
+			showSubs := newGuildShowSubs(dayShows)
+			if existing == nil {
+				showSubs = seedGuildShowSubs(dayShows, now)
 			}
+			if err := st.SeedAnimeSubs(ctx, ap.ID, true, showSubs, today); err != nil {
+				logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
+			}
+			continue
 		}
 
-		showSubs := make([]*anime_subs.ShowSub, 0, len(dayShows))
+		// Same-day document: append newly listed shows, never rewrite existing entries.
+		known := make(map[string]struct{}, len(existing.Shows))
+		for _, sub := range existing.Shows {
+			if sub != nil {
+				known[strings.ToLower(sub.Show)] = struct{}{}
+			}
+		}
+		var added []*anime_subs.ShowSub
 		for _, show := range dayShows {
-			notified := false
-			if !isNewDay {
-				// Preserve state for mid-day updates, defaults to false for new shows
-				notified = existingStates[show.Name]
+			key := strings.ToLower(show.Name)
+			if _, ok := known[key]; ok {
+				continue
 			}
-			showSubs = append(showSubs, &anime_subs.ShowSub{
-				Show:     show.Name,
-				Notified: notified,
-				Guild:    true,
-			})
+			known[key] = struct{}{}
+			added = append(added, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
 		}
-
-		if err := st.SetAnimeSubs(ctx, ap.ID, true, showSubs); err != nil {
-			logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
+		if err := st.AppendAnimeSubShows(ctx, ap.ID, added); err != nil {
+			logger.For("animesubs").Error("Append guild channel shows failed", "channel_id", ap.ID, "err", err)
 		}
 	}
+}
+
+// newGuildShowSubs returns a guild show list with every show not yet notified.
+func newGuildShowSubs(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
+	subs := make([]*anime_subs.ShowSub, 0, len(dayShows))
+	for _, show := range dayShows {
+		subs = append(subs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
+	}
+	return subs
+}
+
+// seedGuildShowSubs returns the show list for a newly created guild document: shows that have
+// already aired and are not delayed start as notified so enabling or moving the autopost does not repost them.
+func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*anime_subs.ShowSub {
+	subs := newGuildShowSubs(dayShows)
+	for i, show := range dayShows {
+		if show.Delayed == "" && show.AirTimeUnix <= now.Unix() {
+			subs[i].Notified = true
+		}
+	}
+	return subs
 }
 
 func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, guildID string, shows weekdayShows, now time.Time) {
@@ -568,11 +594,8 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		return
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		showSubs := make([]*anime_subs.ShowSub, 0, len(todayShowsGuild))
-		for _, show := range todayShowsGuild {
-			showSubs = append(showSubs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
-		}
-		if err := st.SetAnimeSubs(ctx, channelID, true, showSubs); err != nil {
+		showSubs := seedGuildShowSubs(todayShowsGuild, now)
+		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubs, now.UTC().Format("2006-01-02")); err != nil {
 			logger.For("animesubs").Error("Set guild channel seed failed", "channel_id", channelID, "err", err)
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
