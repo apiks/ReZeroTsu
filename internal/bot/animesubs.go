@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -159,7 +158,7 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 }
 
 // backfillUserSubs sets the last notified air time on notified user shows that lack one, one show at a time,
-// and returns how many user documents were changed. aired maps lower-cased show names to their latest air time.
+// and returns how many user documents were changed. aired maps anime_subs.MatchKey show names to their latest air time.
 func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]int64) (int, error) {
 	var updatedUsers int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
@@ -176,7 +175,7 @@ func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]in
 			if sub == nil || sub.Guild || sub.LastNotifiedAirUnix != 0 || !sub.Notified {
 				continue
 			}
-			key := strings.ToLower(strings.TrimSpace(sub.Show))
+			key := anime_subs.MatchKey(sub.Show)
 			if key == "" {
 				continue
 			}
@@ -210,7 +209,7 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 			if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
 				continue
 			}
-			key := strings.ToLower(strings.TrimSpace(show.Name))
+			key := anime_subs.MatchKey(show.Name)
 			if key == "" {
 				continue
 			}
@@ -545,12 +544,12 @@ func userShowAlreadyNotified(sub *anime_subs.ShowSub, show animeschedule.ShowEnt
 func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.ShowSub) bool {
 	daySet := make(map[string]struct{}, len(dayShows))
 	for _, show := range dayShows {
-		daySet[strings.ToLower(show.Name)] = struct{}{}
+		daySet[anime_subs.MatchKey(show.Name)] = struct{}{}
 	}
 	subSet := make(map[string]struct{}, len(subs))
 	for _, sub := range subs {
 		if sub != nil {
-			subSet[strings.ToLower(sub.Show)] = struct{}{}
+			subSet[anime_subs.MatchKey(sub.Show)] = struct{}{}
 		}
 	}
 	if len(daySet) != len(subSet) {
@@ -614,12 +613,12 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		known := make(map[string]struct{}, len(existing.Shows))
 		for _, sub := range existing.Shows {
 			if sub != nil {
-				known[strings.ToLower(sub.Show)] = struct{}{}
+				known[anime_subs.MatchKey(sub.Show)] = struct{}{}
 			}
 		}
 		var added []*anime_subs.ShowSub
 		for _, show := range dayShows {
-			key := strings.ToLower(show.Name)
+			key := anime_subs.MatchKey(show.Name)
 			if _, ok := known[key]; ok {
 				continue
 			}
