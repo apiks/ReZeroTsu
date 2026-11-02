@@ -16,6 +16,8 @@ type RemindMe struct {
 	CommandChannel string    `bson:"command_channel"`
 	RemindID       int       `bson:"remind_id"`
 	CreatedAt      time.Time `bson:"created_at,omitempty"`
+	// FailingSince is when Discord first rejected delivering this reminder; zero while it has not failed.
+	FailingSince time.Time `bson:"failing_since,omitempty"`
 }
 
 // RemindMeSlice is a reminders document; key field is id (user or guild ID).
@@ -125,6 +127,24 @@ func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) er
 		return nil
 	}
 	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRefs", id, pullRefsCondition(refs))
+}
+
+// MarkFailingSince atomically sets failing_since to since on each reminder matching both remind_id and date of a
+// ref, unless it is already set: the first failure's time is kept across later failures.
+func (r *Repo) MarkFailingSince(ctx context.Context, id string, refs []RemindRef, since time.Time) error {
+	for _, ref := range refs {
+		filter := bson.M{"id": id}
+		update := bson.M{"$set": bson.M{"reminders.$[r].failing_since": since}}
+		opts := options.UpdateOne().SetArrayFilters([]any{bson.M{
+			"r.remind_id":     ref.RemindID,
+			"r.date":          ref.Date,
+			"r.failing_since": bson.M{"$exists": false},
+		}})
+		if _, err := r.coll.UpdateOne(ctx, filter, update, opts); err != nil {
+			return fmt.Errorf("MarkFailingSince: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *Repo) EnsureIndexes(ctx context.Context) error {

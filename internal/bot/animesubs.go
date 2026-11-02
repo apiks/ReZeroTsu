@@ -100,7 +100,13 @@ type userSubsStore interface {
 // cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
 // duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
 // returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
+// airing holds the airing schedule names in any case-folded form (GetAiringShowNames lowercases them); they are
+// re-keyed with anime_subs.MatchKey so a show counts as airing exactly when the notifier can match it.
 func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
+	airingKeys := make(map[string]struct{}, len(airing))
+	for name := range airing {
+		airingKeys[anime_subs.MatchKey(name)] = struct{}{}
+	}
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
 		if doc == nil {
@@ -120,7 +126,7 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 				needsCollapse = true
 				continue
 			}
-			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
+			if _, ok := airingKeys[anime_subs.MatchKey(sub.Show)]; !ok {
 				finished = append(finished, sub.Show)
 				continue
 			}
@@ -687,11 +693,18 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
+	// Shows are matched like the user path (anime_subs.MatchKey). Among duplicate entries a notified one wins, so
+	// a show any duplicate marks as notified is never reposted; the entry chosen is the one marked after sending.
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
-		if sub != nil {
-			subByShow[strings.ToLower(sub.Show)] = sub
+		if sub == nil {
+			continue
 		}
+		key := anime_subs.MatchKey(sub.Show)
+		if cur, ok := subByShow[key]; ok && (cur.Notified || !sub.Notified) {
+			continue
+		}
+		subByShow[key] = sub
 	}
 	type dueEntry struct {
 		show animeschedule.ShowEntry
@@ -709,7 +722,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		if !donghua && show.Donghua {
 			continue
 		}
-		sub, ok := subByShow[strings.ToLower(show.Name)]
+		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
 		if !ok || sub.Notified {
 			continue
 		}
