@@ -74,11 +74,11 @@ func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
 	airing := map[string]struct{}{"frieren": {}, "dandadan": {}}
 	sub := func(name string) *anime_subs.ShowSub { return &anime_subs.ShowSub{Show: name} }
 	tests := []struct {
-		name         string
-		shows        []*anime_subs.ShowSub
-		wantRemoved  []string
-		wantOps      []string
-		wantUpdated  int
+		name        string
+		shows       []*anime_subs.ShowSub
+		wantRemoved []string
+		wantOps     []string
+		wantUpdated int
 	}{
 		{name: "clean document is untouched", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("Dandadan")}, wantUpdated: 0},
 		{name: "case-insensitive duplicate is collapsed", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("frieren")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},

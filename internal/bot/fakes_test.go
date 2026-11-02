@@ -62,11 +62,12 @@ type fakeDiscord struct {
 	// Configuration.
 	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
 	Roles       map[string]bool // roleID -> exists
-	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
-	RolePresence map[string]rolePresence
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
+
+	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
+	RolePresence map[string]rolePresence
 
 	Invalidated []string // "guild:channel"
 	Pinned      []string // "channel:message"
@@ -222,10 +223,11 @@ type fakeSentState struct {
 	Autoposts   map[string]*guilds.Autopost // key guildID+"/"+postType
 	Settings    map[string]*guilds.GuildSettings
 	FeedChecks  []feed_checks.FeedCheck
-	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
-	FeedCheckWrites []int
 	Reminders   map[string]*reminders.RemindMeSlice
 	FeedsPurged []string // "guild:channel"
+
+	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
+	FeedCheckWrites []int
 }
 
 func newFakeSentState() *fakeSentState {
