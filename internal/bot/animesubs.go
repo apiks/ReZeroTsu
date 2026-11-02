@@ -701,7 +701,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	if len(due) == 0 {
 		return
 	}
-	webhook := d.ChannelWebhook(guildID, channelID)
+	sender := newChannelSender(d, guildID, channelID)
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
 		if ctx.Err() != nil {
 			return
@@ -723,11 +723,8 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 				return
 			}
 		}
-		res := sendWithRules(ctx, d, guildID, channelID, webhook, OutgoingMessage{Content: content, Embeds: embeds})
-		if res.WebhookGone {
-			// The webhook was invalidated: later chunks go through the bot account instead of failing on it again.
-			webhook = nil
-		}
+		// After a rejected webhook the sender sends later chunks through the bot account.
+		res, _ := sender.send(ctx, OutgoingMessage{Content: content, Embeds: embeds})
 		if res.Delivered {
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.

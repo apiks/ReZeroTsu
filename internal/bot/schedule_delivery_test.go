@@ -129,6 +129,19 @@ func TestDailyScheduleWebhookGoneFallsBackOnce(t *testing.T) {
 	}
 }
 
+// The retry of a verifiably missing post does not go back to a webhook that was already rejected in this run.
+func TestDailyScheduleRetrySkipsRejectedWebhook(t *testing.T) {
+	h := newScheduleHarness(rejectWith(discordgo.ErrCodeMissingAccess), timeoutWithoutDelivery(), succeed())
+	h.fd.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
+	_ = h.run(context.Background())
+	if h.fd.WebhookSends != 1 {
+		t.Errorf("webhook sends = %d, want 1", h.fd.WebhookSends)
+	}
+	if got := h.fd.deliveredTo("sch"); len(got) != 1 || got[0].Webhook != nil {
+		t.Fatalf("want one bot-account delivery, got %+v", got)
+	}
+}
+
 func TestDailyScheduleStaleSameTitleMessageDoesNotCountAsPosted(t *testing.T) {
 	h := newScheduleHarness(timeoutWithoutDelivery())
 	// Same embed (title, description) posted yesterday by the bot: must not satisfy verification.

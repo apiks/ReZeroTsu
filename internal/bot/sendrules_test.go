@@ -7,10 +7,9 @@ import (
 	"time"
 )
 
-// A context error returned by Send after cancellation means the request was never made (production Send only
-// observes ctx while waiting for a send limiter), so it is not delivered, not verified and never falls back,
-// whatever the presume-on-verify-failure policy.
-func TestDeliverWithRulesContextErrorFromSendIsNotSent(t *testing.T) {
+// A Send that reports it never made the request (the send-limiter wait in SendBatchToChannel ended by shutdown)
+// is not delivered, not verified and never falls back, whatever the presume-on-verify-failure policy.
+func TestDeliverWithRulesNotAttemptedSendIsNotSent(t *testing.T) {
 	tests := []struct {
 		name    string
 		webhook *WebhookTarget
@@ -44,15 +43,79 @@ func TestDeliverWithRulesContextErrorFromSendIsNotSent(t *testing.T) {
 	}
 }
 
-// A context error while the run context is still live (a client-side request timeout) may hide a delivered
-// message and is still verified.
-func TestDeliverWithRulesLiveContextTimeoutIsVerified(t *testing.T) {
-	d := newFakeDiscord(timeoutAfterDelivery())
-	res, _ := deliverWithRules(context.Background(), d, "g1", "c1", nil, OutgoingMessage{Content: "x"}, matchRecentMessage, false, "test send")
-	if !res.Delivered {
-		t.Fatalf("result = %+v, want delivered after verification", res)
+// Once the bot account delivered a message the webhook was rejected for, the channel's webhook is dropped, so the
+// next send (a later run that looks the webhook up again) does not spend another rejected request on it.
+func TestDeliverWithRulesRejectedWebhookNotOfferedAfterFallback(t *testing.T) {
+	tests := []struct {
+		name   string
+		reject int
+	}{
+		{name: "missing access (50001)", reject: 50001},
+		{name: "missing permissions (50013)", reject: 50013},
+		{name: "unknown webhook (10015)", reject: 10015},
+		{name: "invalid webhook token (50027)", reject: 50027},
 	}
-	if d.RecentCalls != 1 {
-		t.Errorf("verification reads = %d, want 1", d.RecentCalls)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newFakeDiscord(rejectWith(tc.reject), succeed())
+			d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+			for run := 1; run <= 2; run++ {
+				res, _ := deliverWithRules(context.Background(), d, "g1", "c1", d.ChannelWebhook("g1", "c1"),
+					OutgoingMessage{Content: "x"}, matchRecentMessage, true, "test send")
+				if !res.Delivered {
+					t.Fatalf("run %d: result = %+v, want delivered", run, res)
+				}
+			}
+			if d.WebhookSends != 1 {
+				t.Errorf("webhook sends = %d, want 1 (the rejected webhook must not be used again)", d.WebhookSends)
+			}
+			if d.SendCalls != 3 {
+				t.Errorf("send calls = %d, want 3 (webhook, fallback, then bot account)", d.SendCalls)
+			}
+		})
+	}
+}
+
+// A webhook rejection whose bot-account fallback is not delivered leaves the webhook to the caller's terminal
+// handling: it is not dropped for being channel-terminal alone.
+func TestDeliverWithRulesTerminalWebhookRejectionKeptWhenFallbackFails(t *testing.T) {
+	d := newFakeDiscord(rejectWith(50001), rejectWith(99999))
+	d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+	res, _ := deliverWithRules(context.Background(), d, "g1", "c1", d.Webhook, OutgoingMessage{Content: "x"}, matchRecentMessage, true, "test send")
+	if res.Delivered {
+		t.Fatalf("result = %+v, want not delivered", res)
+	}
+	if len(d.Avoided) != 0 || len(d.Invalidated) != 0 {
+		t.Errorf("avoided = %v, invalidated = %v, want none", d.Avoided, d.Invalidated)
+	}
+}
+
+// A client-side request timeout may hide a delivered message, so it is verified (on the detached context),
+// whether or not the run is shutting down when it fires.
+func TestDeliverWithRulesClientTimeoutIsVerified(t *testing.T) {
+	tests := []struct {
+		name     string
+		step     step
+		shutdown bool
+	}{
+		{name: "live run context", step: timeoutAfterDelivery()},
+		{name: "in-flight timeout during shutdown", step: inFlightTimeoutAtShutdown(), shutdown: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newFakeDiscord(tc.step)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.shutdown {
+				time.AfterFunc(20*time.Millisecond, cancel)
+			}
+			res, _ := deliverWithRules(ctx, d, "g1", "c1", nil, OutgoingMessage{Content: "x"}, matchRecentMessage, false, "test send")
+			if !res.Delivered {
+				t.Fatalf("result = %+v, want delivered after verification", res)
+			}
+			if d.RecentCalls != 1 {
+				t.Errorf("verification reads = %d, want 1", d.RecentCalls)
+			}
+		})
 	}
 }

@@ -17,6 +17,11 @@ func feedSend(ctx context.Context, d DiscordPort, guildID, channelID string, web
 	return deliverWithRules(ctx, d, guildID, channelID, webhook, msg, feedMessageInRecent, false, "feed send")
 }
 
+// newFeedChannelSender returns a channelSender for chunked feed sends to channelID, with the feedSend policy.
+func newFeedChannelSender(d DiscordPort, guildID, channelID string) *channelSender {
+	return newChannelSender(d, guildID, channelID).withPolicy(feedMessageInRecent, false, "feed send")
+}
+
 // feedMessageInRecent finds a message by the bot (or the webhook used) that contains every wanted embed,
 // matched on the embed author URL (author name when the item has no link).
 func feedMessageInRecent(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {

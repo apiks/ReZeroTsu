@@ -18,13 +18,14 @@ import (
 type stepKind int
 
 const (
-	stepSucceed           stepKind = iota // deliver and return nil
-	stepReject                            // do not deliver, return a REST 4xx with Code
-	stepTimeoutDelivered                  // deliver, then return a deadline error
-	stepTimeoutUndelivered                // do not deliver, return a deadline error
-	stepBlock                             // do not deliver, block until ctx is cancelled
-	stepServerError                       // do not deliver, return a REST 500
-	stepServerErrorDelivered              // deliver, then return a REST 500
+	stepSucceed              stepKind = iota // deliver and return nil
+	stepReject                               // do not deliver, return a REST 4xx with Code
+	stepTimeoutDelivered                     // deliver, then return a deadline error
+	stepTimeoutUndelivered                   // do not deliver, return a deadline error
+	stepBlock                                // do not deliver, block until ctx is cancelled
+	stepServerError                          // do not deliver, return a REST 500
+	stepServerErrorDelivered                 // deliver, then return a REST 500
+	stepInFlightAtShutdown                   // block until ctx is cancelled, deliver, then return a client deadline error
 )
 
 type step struct {
@@ -32,13 +33,14 @@ type step struct {
 	code int // REST error code for stepReject
 }
 
-func succeed() step                 { return step{kind: stepSucceed} }
-func rejectWith(code int) step      { return step{kind: stepReject, code: code} }
-func timeoutAfterDelivery() step    { return step{kind: stepTimeoutDelivered} }
-func timeoutWithoutDelivery() step  { return step{kind: stepTimeoutUndelivered} }
-func blockUntilCancelled() step     { return step{kind: stepBlock} }
-func serverError() step             { return step{kind: stepServerError} }
-func serverErrorAfterDelivery() step { return step{kind: stepServerErrorDelivered} }
+func succeed() step                   { return step{kind: stepSucceed} }
+func rejectWith(code int) step        { return step{kind: stepReject, code: code} }
+func timeoutAfterDelivery() step      { return step{kind: stepTimeoutDelivered} }
+func timeoutWithoutDelivery() step    { return step{kind: stepTimeoutUndelivered} }
+func blockUntilCancelled() step       { return step{kind: stepBlock} }
+func serverError() step               { return step{kind: stepServerError} }
+func serverErrorAfterDelivery() step  { return step{kind: stepServerErrorDelivered} }
+func inFlightTimeoutAtShutdown() step { return step{kind: stepInFlightAtShutdown} }
 
 // delivered is one message that "reached Discord".
 type delivered struct {
@@ -70,7 +72,14 @@ type fakeDiscord struct {
 	RolePresence map[string]rolePresence
 
 	Invalidated []string // "guild:channel"
+	Avoided     []string // "guild:channel"
 	Pinned      []string // "channel:message"
+
+	// WebhookLookups counts ChannelWebhook calls.
+	WebhookLookups int
+	// dropped holds the "guild:channel" keys whose webhook was invalidated or avoided: like the production cache,
+	// a later lookup does not offer the old webhook again.
+	dropped map[string]bool
 }
 
 func newFakeDiscord(script ...step) *fakeDiscord {
@@ -119,10 +128,19 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 			Response: &http.Response{StatusCode: rejectStatus(st.code)},
 			Message:  &discordgo.APIErrorMessage{Code: st.code, Message: "rejected"},
 		}
-	default: // stepBlock
+	case stepInFlightAtShutdown:
+		// An in-flight REST call whose http.Client timeout fires while the run is shutting down: the message
+		// still reached Discord.
 		f.mu.Unlock()
 		<-ctx.Done()
-		return "", ctx.Err()
+		f.mu.Lock()
+		deliver()
+		f.mu.Unlock()
+		return "", context.DeadlineExceeded
+	default: // stepBlock: waiting for a send limiter, the request is never made
+		f.mu.Unlock()
+		<-ctx.Done()
+		return "", notAttempted(ctx.Err())
 	}
 }
 
@@ -171,12 +189,36 @@ func (f *fakeDiscord) RecentMessages(_ context.Context, channelID string, limit 
 	return out, nil
 }
 
-func (f *fakeDiscord) ChannelWebhook(_, _ string) *WebhookTarget { return f.Webhook }
+func (f *fakeDiscord) ChannelWebhook(guildID, channelID string) *WebhookTarget {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.WebhookLookups++
+	if f.dropped[guildID+":"+channelID] {
+		return nil
+	}
+	return f.Webhook
+}
 
 func (f *fakeDiscord) InvalidateChannelWebhook(guildID, channelID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Invalidated = append(f.Invalidated, guildID+":"+channelID)
+	f.drop(guildID, channelID)
+}
+
+func (f *fakeDiscord) AvoidChannelWebhook(guildID, channelID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Avoided = append(f.Avoided, guildID+":"+channelID)
+	f.drop(guildID, channelID)
+}
+
+// drop must be called with f.mu held.
+func (f *fakeDiscord) drop(guildID, channelID string) {
+	if f.dropped == nil {
+		f.dropped = map[string]bool{}
+	}
+	f.dropped[guildID+":"+channelID] = true
 }
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }
