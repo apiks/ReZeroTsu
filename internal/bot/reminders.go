@@ -52,12 +52,12 @@ func RunReminderLoop(ctx context.Context, db *database.Client, session *discordg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runReminderCheck(ctx, db, session, ops, senders)
+			runReminderCheck(ctx, db, ops, senders)
 		}
 	}
 }
 
-func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Session, d RunOperations, senders *channelSenderFactory) {
+func runReminderCheck(ctx context.Context, db *database.Client, d RunOperations, senders *channelSenderFactory) {
 	deliverDueReminders(ctx, d, senders, newMongoSentState(db), time.Now())
 }
 

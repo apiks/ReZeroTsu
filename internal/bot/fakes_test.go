@@ -46,7 +46,7 @@ func inFlightTimeoutAtShutdown() step { return step{kind: stepInFlightAtShutdown
 // webhook cache and a fake clock. Runs that must share webhook state across calls reuse the returned factory.
 func newTestSendersWithClock(raw RawDiscord) (*channelSenderFactory, *fakeClock) {
 	clk := newFakeClock()
-	return newChannelSenderFactory(raw, newWebhookCache(clk), clk), clk
+	return newChannelSenderFactory(raw, newWebhookCache(clk)), clk
 }
 
 // newTestSenders is newTestSendersWithClock for tests that never move the clock.
@@ -84,6 +84,8 @@ type fakeDiscord struct {
 	Webhook     *WebhookTarget  // returned by ResolveWebhook; nil means no webhook available
 	Roles       map[string]bool // roleID -> exists
 	NoSendPerms map[string]bool // channelID -> CanSend false
+	// WebhookUnusable marks channels whose state says the bot lacks the permissions a webhook needs.
+	WebhookUnusable map[string]bool
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
 	// OnBlock, when set, runs as a blocking step starts waiting. Tests cancel the run from it, so shutdown tests
@@ -100,7 +102,7 @@ type fakeDiscord struct {
 }
 
 func newFakeDiscord(script ...step) *fakeDiscord {
-	return &fakeDiscord{script: script, Roles: map[string]bool{}, NoSendPerms: map[string]bool{}}
+	return &fakeDiscord{script: script, Roles: map[string]bool{}, NoSendPerms: map[string]bool{}, WebhookUnusable: map[string]bool{}}
 }
 
 func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
@@ -214,6 +216,13 @@ func (f *fakeDiscord) ResolveWebhook(_, _ string) *WebhookTarget {
 	defer f.mu.Unlock()
 	f.ResolveCalls++
 	return f.Webhook
+}
+
+// WebhookUsable is true unless the channel is marked in WebhookUnusable.
+func (f *fakeDiscord) WebhookUsable(channelID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.WebhookUnusable[channelID]
 }
 
 func (f *fakeDiscord) CanSend(channelID string) bool { return !f.NoSendPerms[channelID] }
@@ -424,7 +433,7 @@ func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, ch
 var (
 	_ RunOperations = (*fakeDiscord)(nil)
 	_ RawDiscord    = (*fakeDiscord)(nil)
-	_ SentState   = (*fakeSentState)(nil)
+	_ SentState     = (*fakeSentState)(nil)
 )
 
 // blocked runs OnBlock, if set, as a blocking step starts waiting. The caller must not hold f.mu.

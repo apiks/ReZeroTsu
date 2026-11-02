@@ -413,7 +413,7 @@ func flushChannelBatches(ctx context.Context, d RunOperations, senders *channelS
 
 // persistFeedChunk records the items of a delivered chunk in one write. The write is detached from shutdown so
 // that a delivered item is never re-sent on the next run.
-func persistFeedChunk(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, chunk []sendItem) {
+func persistFeedChunk(ctx context.Context, d RunOperations, st SentState, guildID string, chunk []sendItem) {
 	now := time.Now()
 	fcs := make([]feed_checks.FeedCheck, 0, len(chunk))
 	for _, it := range chunk {
@@ -467,7 +467,7 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return
 		}
-		persistFeedChunk(ctx, d, senders, st, guildID, items[i:end])
+		persistFeedChunk(ctx, d, st, guildID, items[i:end])
 		if !waitFeedCtx(ctx, feedWebhookThrottle) {
 			return
 		}
@@ -488,7 +488,7 @@ func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderF
 		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res.Err)
 		return
 	}
-	persistFeedChunk(ctx, d, senders, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}})
+	persistFeedChunk(ctx, d, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}})
 	if msgID != "" {
 		d.PinReplacing(feed.ChannelID, msgID, feed.Subreddit)
 	}

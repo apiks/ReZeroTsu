@@ -155,7 +155,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		logger.For("bot").Info("shard ready", "shard_id", s.ShardID)
 		// One raw adapter and channel sender factory per shard, handed to that shard's delivery loops.
 		raw := newDiscordgoPort(s)
-		ops, senders := RunOperations(raw), newChannelSenderFactory(raw, cache, realClock{})
+		ops, senders := RunOperations(raw), newChannelSenderFactory(raw, cache)
 		if n := atomic.AddInt32(&readyCount, 1); n == int32(mgr.ShardCount) {
 			logger.PrintAlways("all shards ready")
 			startTopGGOnce.Do(func() {
@@ -241,7 +241,7 @@ func onGuildCreate(ctx context.Context, db *database.Client, cfg *config.Config)
 	}
 }
 
-// onGuildDelete logs leave and invalidates webhook cache for the guild.
+// onGuildDelete logs the leave and purges the guild's entries from the webhook cache.
 func onGuildDelete(cache *webhookCache) func(*discordgo.Session, *discordgo.GuildDelete) {
 	return func(_ *discordgo.Session, g *discordgo.GuildDelete) {
 		cache.PurgeGuild(g.ID)

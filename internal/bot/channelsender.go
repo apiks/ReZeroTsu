@@ -93,16 +93,15 @@ type channelSender struct {
 	policy             sendPolicy
 }
 
-// channelSenderFactory opens channel senders over one shard's raw Discord adapter, the webhook cache shared by all
-// shards and the clock. It is built once per shard.
+// channelSenderFactory opens channel senders over one shard's raw Discord adapter and the webhook cache shared by
+// all shards. It is built once per shard. The cache owns time (it holds the injected clock), so the factory has none.
 type channelSenderFactory struct {
 	raw   RawDiscord
 	cache *webhookCache
-	clock clock
 }
 
-func newChannelSenderFactory(raw RawDiscord, cache *webhookCache, clk clock) *channelSenderFactory {
-	return &channelSenderFactory{raw: raw, cache: cache, clock: clk}
+func newChannelSenderFactory(raw RawDiscord, cache *webhookCache) *channelSenderFactory {
+	return &channelSenderFactory{raw: raw, cache: cache}
 }
 
 // open opens a channel sender for channelID (guildID is empty for a DM) under policy.
@@ -127,6 +126,11 @@ func (c *channelSender) selectWebhook() *WebhookTarget {
 		return nil
 	}
 	if w := c.cache.Lookup(c.guildID, c.channelID); w != nil {
+		// A webhook send keeps working after the bot lost its permissions, so check the state before using the
+		// cached webhook. The entry stays cached; the bot account posts meanwhile.
+		if !c.d.WebhookUsable(c.channelID) {
+			return nil
+		}
 		return w
 	}
 	w := c.d.ResolveWebhook(c.guildID, c.channelID)
@@ -150,7 +154,7 @@ func (c *channelSender) post(ctx context.Context, msg OutgoingMessage) PostResul
 	return out.PostResult
 }
 
-// deliver is the send structure: cancel check, never-attempted check, outcome classification, rejected-webhook
+// deliver makes one post: cancel check, never-attempted check, outcome classification, rejected-webhook
 // fallback, Unknown verification and unrecognised-rejection logging.
 func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOutcome {
 	if err := ctx.Err(); err != nil {

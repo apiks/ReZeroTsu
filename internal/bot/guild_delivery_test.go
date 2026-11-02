@@ -223,6 +223,36 @@ func TestGuildNewEpisodesAvoidedChannelSkipsWebhookUntilAvoidPeriodPasses(t *tes
 	}
 }
 
+// A webhook cached by one run is not used once the state says the bot lost the permissions webhook delivery needs: the
+// next run posts through the bot account. When the permissions come back the cached webhook is used again, without a
+// new resolve.
+func TestGuildNewEpisodesCachedWebhookNotUsedWhileStateLacksPermissions(t *testing.T) {
+	h := newGuildHarness(1)
+	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+	h.run(context.Background())
+	if h.d.WebhookSends != 1 || h.d.ResolveCalls != 1 {
+		t.Fatalf("run 1: webhook sends = %d, resolves = %d, want 1 and 1", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+
+	h.d.WebhookUnusable["c1"] = true
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.WebhookSends != 1 {
+		t.Errorf("run 2 (permissions lost): webhook sends = %d, want 1 (no new webhook send)", h.d.WebhookSends)
+	}
+	got := h.d.deliveredTo("c1")
+	if len(got) != 2 || got[1].Webhook != nil {
+		t.Fatalf("delivered = %+v, want the second message through the bot account", got)
+	}
+
+	delete(h.d.WebhookUnusable, "c1")
+	h.markAllDue()
+	h.run(context.Background())
+	if h.d.WebhookSends != 2 || h.d.ResolveCalls != 1 {
+		t.Errorf("run 3 (permissions back): webhook sends = %d, resolves = %d, want 2 and 1", h.d.WebhookSends, h.d.ResolveCalls)
+	}
+}
+
 // A webhook rejected with a channel-terminal code (for example missing access on a private thread) is retried
 // once through the bot account; the channel's autopost is only cleared when that attempt is rejected too.
 func TestGuildNewEpisodesTerminalWebhookRejectionTriesBotAccount(t *testing.T) {

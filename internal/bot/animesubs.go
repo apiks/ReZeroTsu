@@ -754,7 +754,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 			}
 		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
-		res := sender.post(ctx,OutgoingMessage{Content: content, Embeds: embeds})
+		res := sender.post(ctx, OutgoingMessage{Content: content, Embeds: embeds})
 		if res.Delivered {
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.
