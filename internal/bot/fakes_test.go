@@ -68,6 +68,9 @@ type fakeDiscord struct {
 	NoSendPerms map[string]bool // channelID -> CanSend false
 	DMError     error           // returned by OpenDM when set
 	RecentErr   error           // returned by RecentMessages when set
+	// OnBlock, when set, runs as a blocking step starts waiting. Tests cancel the run from it, so shutdown tests
+	// need no timers.
+	OnBlock func()
 
 	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
 	RolePresence map[string]rolePresence
@@ -134,6 +137,7 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 		// An in-flight REST call whose http.Client timeout fires while the run is shutting down: the message
 		// still reached Discord.
 		f.mu.Unlock()
+		f.blocked()
 		<-ctx.Done()
 		f.mu.Lock()
 		deliver()
@@ -141,6 +145,7 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 		return "", context.DeadlineExceeded
 	default: // stepBlock: waiting for a send limiter, the request is never made
 		f.mu.Unlock()
+		f.blocked()
 		<-ctx.Done()
 		return "", notAttempted(ctx.Err())
 	}
@@ -430,3 +435,10 @@ var (
 	_ DiscordPort = (*fakeDiscord)(nil)
 	_ SentState   = (*fakeSentState)(nil)
 )
+
+// blocked runs OnBlock, if set, as a blocking step starts waiting. The caller must not hold f.mu.
+func (f *fakeDiscord) blocked() {
+	if f.OnBlock != nil {
+		f.OnBlock()
+	}
+}

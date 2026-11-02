@@ -22,10 +22,12 @@ var backfillLastNotifiedOnce sync.Once
 
 const (
 	animeSubRunInterval             = 15 * time.Second
-	animeSubThrottlePerUser         = 100 * time.Millisecond
 	animeSubFinishedCleanupInterval = 24 * time.Hour
 	postTypeNewEpisodes             = "newepisodes"
 )
+
+// animeSubThrottlePerUser pauses between the DMs of one user; a variable so tests can zero it.
+var animeSubThrottlePerUser = 100 * time.Millisecond
 
 var (
 	lastGuildSeedWeekdayByShard = make(map[int]int)

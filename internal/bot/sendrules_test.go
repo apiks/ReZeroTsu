@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
 // A Send that reports it never made the request (the send-limiter wait in SendBatchToChannel ended by shutdown)
@@ -25,7 +24,7 @@ func TestDeliverWithRulesNotAttemptedSendIsNotSent(t *testing.T) {
 			// A failing verification read would make the presume policy report it delivered.
 			d.RecentErr = errors.New("read failed")
 			ctx, cancel := context.WithCancel(context.Background())
-			time.AfterFunc(20*time.Millisecond, cancel)
+			d.OnBlock = cancel
 			res, _ := deliverWithRules(ctx, d, "g1", "c1", tc.webhook, OutgoingMessage{Content: "x"}, matchRecentMessage, tc.presume, "test send")
 			if res.Delivered || res.Presumed {
 				t.Errorf("result = %+v, want not delivered", res)
@@ -147,7 +146,7 @@ func TestDeliverWithRulesClientTimeoutIsVerified(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if tc.shutdown {
-				time.AfterFunc(20*time.Millisecond, cancel)
+				d.OnBlock = cancel
 			}
 			res, _ := deliverWithRules(ctx, d, "g1", "c1", nil, OutgoingMessage{Content: "x"}, matchRecentMessage, false, "test send")
 			if !res.Delivered {

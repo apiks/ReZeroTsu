@@ -17,12 +17,16 @@ import (
 )
 
 const (
-	reminderThrottlePerUser    = 200 * time.Millisecond
-	reminderThrottlePerMessage = 150 * time.Millisecond
 	reminderRunInterval        = 15 * time.Second
 	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
 	// user-undeliverable ones: once it has been failing this long since its first rejection it is dropped.
 	reminderGiveUpAfter = 24 * time.Hour
+)
+
+// The pauses between the reminder DMs of one user and between users; variables so tests can set them.
+var (
+	reminderThrottlePerUser    = 200 * time.Millisecond
+	reminderThrottlePerMessage = 150 * time.Millisecond
 )
 
 // reminderGivenUp reports whether a reminder rejected by Discord has been failing too long to keep retrying.

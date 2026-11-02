@@ -104,7 +104,7 @@ func TestProcessAnimeSubUser(t *testing.T) {
 				st := newState(&anime_subs.ShowSub{Show: "Show A"}, &anime_subs.ShowSub{Show: "Show B"})
 				shows := []animeschedule.ShowEntry{ep("Show A", "show-a", "Episode 1", aired), ep("Show B", "show-b", "Episode 1", aired)}
 				ctx, cancel := context.WithCancel(bg)
-				time.AfterFunc(400*time.Millisecond, cancel)
+				d.OnBlock = cancel
 				err := run(ctx, d, st, shows...)
 				if err == nil || !errors.Is(err, context.Canceled) {
 					t.Logf("run err = %v", err)

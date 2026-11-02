@@ -99,10 +99,7 @@ func TestDailyScheduleNoSendAfterCancel(t *testing.T) {
 func TestDailyScheduleShutdownDuringSendDoesNotRetry(t *testing.T) {
 	h := newScheduleHarness(blockUntilCancelled())
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
+	h.fd.OnBlock = cancel
 	_ = h.run(ctx)
 	if h.fd.SendCalls != 1 {
 		t.Fatalf("send calls = %d, want 1", h.fd.SendCalls)
