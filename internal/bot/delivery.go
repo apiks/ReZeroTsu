@@ -93,6 +93,13 @@ type SentState interface {
 
 	// MarkSchedulePosted sets last_posted_date (UTC YYYY-MM-DD) on the guild's daily-schedule autopost entry.
 	MarkSchedulePosted(ctx context.Context, guildID, date string) error
+
+
+	// --- ticket #7 (user DMs) ---
+
+	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
+	// key, in a single-statement update (matched by show name).
+	MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error
 }
 
 // --- production wiring: discordgo ---
@@ -242,4 +249,8 @@ func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *re
 
 func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {
 	return m.db.Guilds().MarkAutopostPosted(ctx, guildID, postTypeDailySchedule, date)
+}
+
+func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
+	return m.db.AnimeSubs().MarkShowNotified(ctx, id, showName, airUnix, episodeKey)
 }

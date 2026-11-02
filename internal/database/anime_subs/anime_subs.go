@@ -15,6 +15,8 @@ type ShowSub struct {
 	Notified            bool   `bson:"notified"`
 	Guild               bool   `bson:"guild"`
 	LastNotifiedAirUnix int64  `bson:"last_notified_air_unix,omitempty"`
+	// LastNotifiedEpisode is the show route plus episode label last DMed; optional (legacy documents lack it).
+	LastNotifiedEpisode string `bson:"last_notified_episode,omitempty"`
 }
 
 // AnimeSubs is an anime_subs document; key field is id (not _id).
@@ -102,6 +104,21 @@ func (r *Repo) MarkShowsNotified(ctx context.Context, id string, showNames []str
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": bson.M{"$in": showNames}}})
 	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
 		return fmt.Errorf("MarkShowsNotified: %w", err)
+	}
+	return nil
+}
+
+// MarkShowNotified records one show of the document as notified, with its air time and episode key,
+// in a single update statement. The show is matched by exact name.
+func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
+	update := bson.M{"$set": bson.M{
+		"shows.$[s].notified":               true,
+		"shows.$[s].last_notified_air_unix": airUnix,
+		"shows.$[s].last_notified_episode":  episodeKey,
+	}}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("MarkShowNotified: %w", err)
 	}
 	return nil
 }
