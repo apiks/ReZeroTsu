@@ -16,6 +16,8 @@ type RemindMe struct {
 	CommandChannel string    `bson:"command_channel"`
 	RemindID       int       `bson:"remind_id"`
 	CreatedAt      time.Time `bson:"created_at,omitempty"`
+	// FailingSince is when Discord first rejected delivering this reminder; zero while it has not failed.
+	FailingSince time.Time `bson:"failing_since,omitempty"`
 }
 
 // RemindMeSlice is a reminders document; key field is id (user or guild ID).
@@ -35,7 +37,7 @@ func NewRepo(coll *mongo.Collection) *Repo {
 }
 
 // ListDue returns all reminders documents that have at least one reminder with date <= asOf.
-// Uses the index on reminders.date. Caller should split each doc into due vs remaining and Save remaining.
+// Uses the index on reminders.date. Callers remove the reminders they delivered with RemoveByRefs.
 func (r *Repo) ListDue(ctx context.Context, asOf time.Time) ([]*RemindMeSlice, error) {
 	cursor, err := r.coll.Find(ctx, bson.M{"reminders.date": bson.M{"$lte": asOf}})
 	if err != nil {
@@ -66,21 +68,87 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*RemindMeSlice, error) {
 	return &doc, nil
 }
 
-// Save upserts a reminders document by id. If slice is nil or has no reminders, the document is deleted.
-func (r *Repo) Save(ctx context.Context, id string, slice *RemindMeSlice) error {
-	if slice == nil || len(slice.Reminders) == 0 {
-		_, err := r.coll.DeleteOne(ctx, bson.M{"id": id})
-		if err != nil {
-			return fmt.Errorf("Save: %w", err)
-		}
+// Append atomically adds rm to the user's document, creating it when missing (is_guild is only set on creation).
+// It never rewrites other reminders, so concurrent removals and appends are not lost. Two simultaneous
+// appends by the same user may compute the same RemindID; that rare collision is accepted.
+func (r *Repo) Append(ctx context.Context, id string, isGuild bool, rm RemindMe) error {
+	update := bson.M{
+		"$push":        bson.M{"reminders": rm},
+		"$setOnInsert": bson.M{"is_guild": isGuild, "premium": false},
+	}
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, options.UpdateOne().SetUpsert(true)); err != nil {
+		return fmt.Errorf("Append: %w", err)
+	}
+	return nil
+}
+
+// RemoveByRemindIDs atomically pulls the reminders with the given remind_ids from the user's document, then
+// deletes the document if it has no reminders left. Reminders not named are left untouched.
+func (r *Repo) RemoveByRemindIDs(ctx context.Context, id string, remindIDs []int) error {
+	if len(remindIDs) == 0 {
 		return nil
 	}
-	slice.ID = id
-	filter := bson.M{"id": id}
-	update := bson.M{"$set": slice}
-	_, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
-	if err != nil {
-		return fmt.Errorf("Save: %w", err)
+	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRemindIDs", id, bson.M{"remind_id": bson.M{"$in": remindIDs}})
+}
+
+// pullThenDeleteIfEmpty pulls the reminders matching cond from the user's document in one update, then deletes
+// the document if it has no reminders left. op prefixes returned errors.
+func (r *Repo) pullThenDeleteIfEmpty(ctx context.Context, op, id string, cond bson.M) error {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$pull": bson.M{"reminders": cond}}); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if _, err := r.coll.DeleteOne(ctx, bson.M{"id": id, "reminders": bson.M{"$size": 0}}); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// RemindRef identifies one reminder by its ID and due time. remind_id alone is not enough: IDs are max+1 and are
+// reused after a deletion, so the due time tells the listed reminder apart from a newer one that took its ID.
+type RemindRef struct {
+	RemindID int
+	Date     time.Time
+}
+
+// pullRefsCondition is the $pull condition matching only reminders whose remind_id and date both equal a ref's.
+func pullRefsCondition(refs []RemindRef) bson.M {
+	conds := make([]bson.M, 0, len(refs))
+	for _, ref := range refs {
+		conds = append(conds, bson.M{"remind_id": ref.RemindID, "date": ref.Date})
+	}
+	return bson.M{"$or": conds}
+}
+
+// RemoveByRefs atomically pulls the reminders matching both remind_id and date of the given refs from the user's
+// document, then deletes the document if it has no reminders left. A newer reminder that re-used a removed ID
+// (different date) and all other reminders are left untouched.
+func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRefs", id, pullRefsCondition(refs))
+}
+
+// markFailingFilter is the array filter (identifier r) matching reminders whose remind_id and date both equal a
+// ref's and whose failing_since is unset. A null equality matches both a missing and a null field.
+func markFailingFilter(refs []RemindRef) bson.M {
+	conds := make([]bson.M, 0, len(refs))
+	for _, ref := range refs {
+		conds = append(conds, bson.M{"r.remind_id": ref.RemindID, "r.date": ref.Date})
+	}
+	return bson.M{"$or": conds, "r.failing_since": nil}
+}
+
+// MarkFailingSince sets failing_since to since, in one update, on each reminder matching both remind_id and date
+// of a ref, unless it is already set: the first failure's time is kept across later failures.
+func (r *Repo) MarkFailingSince(ctx context.Context, id string, refs []RemindRef, since time.Time) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	update := bson.M{"$set": bson.M{"reminders.$[r].failing_since": since}}
+	opts := options.UpdateOne().SetArrayFilters([]any{markFailingFilter(refs)})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("MarkFailingSince: %w", err)
 	}
 	return nil
 }

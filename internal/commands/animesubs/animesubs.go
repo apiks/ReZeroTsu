@@ -78,7 +78,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := clearsubsCore(ctx, db, m.Author.ID)
+			desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), m.Author.ID)
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -92,7 +92,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := subCore(ctx, db, m.Author.ID, strings.TrimSpace(args))
+			desc, logErr := subCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -106,7 +106,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := unsubCore(ctx, db, m.Author.ID, strings.TrimSpace(args))
+			desc, logErr := unsubCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -193,69 +193,86 @@ func subsFirstPageContent(list []*anime_subs.ShowSub, uid string) (desc string, 
 	return desc, components
 }
 
-// findShowByName returns the first ShowEntry matching name (case-insensitive), or zero value and false if none.
-func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	nameLower := strings.ToLower(strings.TrimSpace(name))
-	if nameLower == "" {
+// findShowIn returns the first show whose name matches input under anime_subs.MatchKey (case-insensitive and
+// trimmed like the notifier matches names), or the zero value and false if none.
+func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
+	key := anime_subs.MatchKey(input)
+	if key == "" {
 		return animeschedule.ShowEntry{}, false
 	}
-	for day := 0; day <= 6; day++ {
-		shows := animeschedule.GetDayShows(day, true)
-		for _, show := range shows {
-			if strings.ToLower(show.Name) == nameLower {
-				return show, true
-			}
+	for _, show := range shows {
+		if anime_subs.MatchKey(show.Name) == key {
+			return show, true
 		}
 	}
 	return animeschedule.ShowEntry{}, false
 }
 
-func subCore(ctx context.Context, db *database.Client, uid, animeInput string) (responseDesc string, logErr error) {
+// findShowByName returns the first airing ShowEntry matching name, or zero value and false if none.
+func findShowByName(name string) (animeschedule.ShowEntry, bool) {
+	for day := 0; day <= 6; day++ {
+		if show, ok := findShowIn(animeschedule.GetDayShows(day, true), name); ok {
+			return show, true
+		}
+	}
+	return animeschedule.ShowEntry{}, false
+}
+
+// subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
+// whole-document rewrite: every change is a single-statement operation.
+type subsStore interface {
+	GetByID(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
+	AddShowIfAbsent(ctx context.Context, id string, sub *anime_subs.ShowSub) (bool, error)
+	RemoveShows(ctx context.Context, id string, showNames []string) error
+	ClearShows(ctx context.Context, id string) error
+}
+
+// showLookup resolves user input to an airing show; replaced in tests.
+var showLookup = findShowByName
+
+func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name (exact romaji from /schedule or AnimeSchedule.net).", nil
 	}
-	show, ok := findShowByName(animeInput)
+	show, ok := showLookup(animeInput)
 	if !ok {
 		return "That is not a valid airing show name. Use the exact romaji title from `/schedule` or AnimeSchedule.net.", nil
 	}
 	showName := show.Name
 
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
-	if doc == nil {
-		doc = &anime_subs.AnimeSubs{ID: uid, IsGuild: false, Shows: nil}
-	}
-	for _, sub := range doc.Shows {
-		if sub != nil && strings.EqualFold(sub.Show, showName) {
-			return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+	if doc != nil {
+		for _, sub := range doc.Shows {
+			if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(showName) {
+				return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+			}
 		}
 	}
-	if len(doc.Shows) >= maxUserSubscriptions {
+	if doc != nil && len(doc.Shows) >= maxUserSubscriptions {
 		return fmt.Sprintf("You've reached the maximum number of subscriptions (%d). Unsubscribe from some shows to add more.", maxUserSubscriptions), nil
 	}
 
 	now := time.Now().UTC()
+	var airedToday animeschedule.ShowEntry
 	hasAiredToday := false
 	if weekday := int(now.Weekday()); weekday >= 0 && weekday <= 6 {
-		todayShows := animeschedule.GetDayShows(weekday, true)
-		for _, e := range todayShows {
-			if strings.EqualFold(e.Name, showName) && e.AirTimeUnix <= now.Unix() {
-				hasAiredToday = true
-				break
-			}
-		}
+		airedToday, hasAiredToday = airedTodayEntry(animeschedule.GetDayShows(weekday, true), showName, now.Unix())
 	}
 
 	newSub := &anime_subs.ShowSub{Show: showName, Notified: hasAiredToday, Guild: false}
 	if hasAiredToday {
-		newSub.LastNotifiedAirUnix = show.AirTimeUnix
+		newSub.LastNotifiedAirUnix = airedToday.AirTimeUnix
 	}
-	doc.Shows = append(doc.Shows, newSub)
-	if err := db.AnimeSubs().Set(ctx, uid, false, doc.Shows); err != nil {
+	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
+	if err != nil {
 		return "Could not save subscription.", err
+	}
+	if !added {
+		return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
 	}
 	return fmt.Sprintf("Success! You have subscribed to DM notifications for `%s`.", showName), nil
 }
@@ -267,19 +284,19 @@ func handleSub(ctx context.Context, db *database.Client, s *discordgo.Session, i
 	if opt != nil {
 		animeInput = opt.StringValue()
 	}
-	desc, logErr := subCore(ctx, db, commands.UserID(i), animeInput)
+	desc, logErr := subCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}
 	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
 }
 
-func unsubCore(ctx context.Context, db *database.Client, uid, animeInput string) (responseDesc string, logErr error) {
+func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name to unsubscribe from.", nil
 	}
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
@@ -287,23 +304,18 @@ func unsubCore(ctx context.Context, db *database.Client, uid, animeInput string)
 		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
 	}
 
-	var newShows []*anime_subs.ShowSub
-	found := false
+	// Resolve the stored titles (exact case) the input names, then remove exactly those.
+	var stored []string
 	for _, sub := range doc.Shows {
-		if sub == nil {
-			continue
+		if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(animeInput) {
+			stored = append(stored, sub.Show)
 		}
-		if strings.EqualFold(sub.Show, animeInput) {
-			found = true
-			continue
-		}
-		newShows = append(newShows, sub)
 	}
-	if !found {
+	if len(stored) == 0 {
 		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
 	}
 
-	if err := db.AnimeSubs().Set(ctx, uid, false, newShows); err != nil {
+	if err := store.RemoveShows(ctx, uid, stored); err != nil {
 		return "Could not update subscriptions.", err
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
@@ -316,29 +328,29 @@ func handleUnsub(ctx context.Context, db *database.Client, s *discordgo.Session,
 	if opt != nil {
 		animeInput = opt.StringValue()
 	}
-	desc, logErr := unsubCore(ctx, db, commands.UserID(i), animeInput)
+	desc, logErr := unsubCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}
 	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
 }
 
-func clearsubsCore(ctx context.Context, db *database.Client, uid string) (responseDesc string, logErr error) {
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDesc string, logErr error) {
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
 	if doc == nil || len(doc.Shows) == 0 {
 		return "You have no active anime subscriptions.", nil
 	}
-	if err := db.AnimeSubs().Set(ctx, uid, false, nil); err != nil {
+	if err := store.ClearShows(ctx, uid); err != nil {
 		return "Could not clear subscriptions.", err
 	}
 	return "Success! All your anime subscriptions have been cleared.", nil
 }
 
 func handleClearsubs(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	desc, logErr := clearsubsCore(ctx, db, commands.UserID(i))
+	desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), commands.UserID(i))
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}
@@ -413,4 +425,17 @@ func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Sessi
 			Components: components,
 		},
 	})
+}
+
+// airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched
+// with anime_subs.MatchKey like the notifier does, and the entry is today's own, so the seeded air time is today's
+// even for a show the schedule lists on several weekdays.
+func airedTodayEntry(todayShows []animeschedule.ShowEntry, showName string, nowUnix int64) (animeschedule.ShowEntry, bool) {
+	key := anime_subs.MatchKey(showName)
+	for _, e := range todayShows {
+		if anime_subs.MatchKey(e.Name) == key && e.AirTimeUnix <= nowUnix {
+			return e, true
+		}
+	}
+	return animeschedule.ShowEntry{}, false
 }

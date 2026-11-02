@@ -210,29 +210,23 @@ func addRemindCore(ctx context.Context, db *database.Client, uid, guildID, chann
 	if err != nil {
 		return "Could not load your reminders.", err
 	}
-	if slice == nil {
-		slice = &reminders.RemindMeSlice{
-			ID:        uid,
-			IsGuild:   guildID != "",
-			Reminders: nil,
-			Premium:   false,
-		}
-	}
 	maxID := 0
-	for _, r := range slice.Reminders {
-		if r.RemindID > maxID {
-			maxID = r.RemindID
+	if slice != nil {
+		for _, r := range slice.Reminders {
+			if r.RemindID > maxID {
+				maxID = r.RemindID
+			}
 		}
 	}
 	maxID++
-	slice.Reminders = append(slice.Reminders, reminders.RemindMe{
+	// Atomic append: never rewrites the document, so a concurrent delivery run's removals are not lost.
+	if err := db.Reminders().Append(ctx, uid, guildID != "", reminders.RemindMe{
 		Message:        msg,
 		Date:           targetTime,
 		CommandChannel: channelID,
 		RemindID:       maxID,
 		CreatedAt:      time.Now(),
-	})
-	if err := db.Reminders().Save(ctx, uid, slice); err != nil {
+	}); err != nil {
 		return "Could not save reminder.", err
 	}
 	return fmt.Sprintf("Success! You will be reminded of the message <t:%d:R>. Make sure your DMs are open.", targetTime.UTC().Unix()), nil
@@ -268,28 +262,17 @@ func removeRemindCore(ctx context.Context, db *database.Client, uid string, id i
 	if slice == nil || len(slice.Reminders) == 0 {
 		return "No saved reminders for you found.", nil
 	}
-	var remaining []reminders.RemindMe
 	found := false
 	for _, r := range slice.Reminders {
 		if r.RemindID == id {
 			found = true
-			continue
+			break
 		}
-		remaining = append(remaining, r)
 	}
 	if !found {
 		return "No reminder found with that ID.", nil
 	}
-	var toSave *reminders.RemindMeSlice
-	if len(remaining) > 0 {
-		toSave = &reminders.RemindMeSlice{
-			ID:        slice.ID,
-			IsGuild:   slice.IsGuild,
-			Reminders: remaining,
-			Premium:   slice.Premium,
-		}
-	}
-	if err := db.Reminders().Save(ctx, uid, toSave); err != nil {
+	if err := db.Reminders().RemoveByRemindIDs(ctx, uid, []int{id}); err != nil {
 		return "Could not remove reminder.", err
 	}
 	return fmt.Sprintf("Success! Deleted reminder with ID `%d`.", id), nil

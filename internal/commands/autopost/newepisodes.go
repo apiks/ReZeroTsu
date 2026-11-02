@@ -104,6 +104,12 @@ func handleNewEpisodes(ctx context.Context, db *database.Client, s *discordgo.Se
 				commands.RespondEmbed(s, i, embedTitleNewEp, "Please choose a text or thread channel.")
 				return
 			}
+			if ap.ID != "" && ap.ID != ch.ID {
+				// Channel changed: drop the previous channel's subscription document.
+				if err := db.AnimeSubs().DeleteByID(ctx, ap.ID); err != nil {
+					logger.For("commands").Error("delete previous new-episodes doc failed", "guild_id", i.GuildID, "channel_id", ap.ID, "err", err)
+				}
+			}
 			ap.Name = ch.Name
 			ap.ID = ch.ID
 		}

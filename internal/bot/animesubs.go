@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,33 +73,7 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			if len(airing) == 0 {
 				continue
 			}
-			var updated int
-			err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-				if len(doc.Shows) == 0 {
-					return nil
-				}
-				var kept []*anime_subs.ShowSub
-				seen := make(map[string]struct{})
-				for _, sub := range doc.Shows {
-					if sub != nil {
-						key := strings.ToLower(strings.TrimSpace(sub.Show))
-						if _, ok := airing[key]; ok {
-							if _, dup := seen[key]; !dup {
-								seen[key] = struct{}{}
-								kept = append(kept, sub)
-							}
-						}
-					}
-				}
-				if len(kept) < len(doc.Shows) {
-					if err := db.AnimeSubs().Set(ctx, doc.ID, false, kept); err != nil {
-						logger.For("animesubs").Error("finished cleanup Set failed", "channel_id", doc.ID, "err", err)
-						return nil
-					}
-					updated++
-				}
-				return nil
-			})
+			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), airing)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.For("animesubs").Error("finished cleanup IterateUserSubs failed", "err", err)
 			}
@@ -109,6 +82,119 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			}
 		}
 	}
+}
+
+// userSubsStore is the narrow persistence surface of the user-subscription maintenance jobs. It has no
+// whole-document rewrite: each change is a single-statement operation on named shows.
+type userSubsStore interface {
+	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
+	RemoveShows(ctx context.Context, id string, showNames []string) error
+	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
+	// CollapseDuplicateShows drops null and nameless entries and keeps one entry per anime_subs.CollapseKey (the
+	// one with the latest last-notified air time, ties going to the later entry), in a single update statement.
+	// It reports whether the document was modified.
+	CollapseDuplicateShows(ctx context.Context, id string) (bool, error)
+}
+
+// cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
+// duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
+// returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
+// airing holds the airing schedule names in any case-folded form (GetAiringShowNames lowercases them); they are
+// re-keyed with anime_subs.MatchKey so a show counts as airing exactly when the notifier can match it.
+func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
+	airingKeys := make(map[string]struct{}, len(airing))
+	for name := range airing {
+		airingKeys[anime_subs.MatchKey(name)] = struct{}{}
+	}
+	var updated int
+	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		if doc == nil {
+			return nil
+		}
+		var finished []string
+		needsCollapse := false
+		seen := make(map[string]struct{}, len(doc.Shows))
+		for _, sub := range doc.Shows {
+			// The duplicate key must be the one the Mongo collapse computes, or a document could be flagged
+			// forever with Mongo changing nothing. Entries without a name are removed by the collapse, like nulls.
+			var dupKey string
+			if sub != nil {
+				dupKey = anime_subs.CollapseKey(sub.Show)
+			}
+			if dupKey == "" {
+				needsCollapse = true
+				continue
+			}
+			if _, ok := airingKeys[anime_subs.MatchKey(sub.Show)]; !ok {
+				finished = append(finished, sub.Show)
+				continue
+			}
+			if _, dup := seen[dupKey]; dup {
+				needsCollapse = true
+			}
+			seen[dupKey] = struct{}{}
+		}
+		changed := false
+		if len(finished) > 0 {
+			if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
+				logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
+				return nil
+			}
+			changed = true
+		}
+		if needsCollapse {
+			if modified, err := st.CollapseDuplicateShows(ctx, doc.ID); err != nil {
+				logger.For("animesubs").Error("finished cleanup CollapseDuplicateShows failed", "user_id", doc.ID, "err", err)
+			} else if modified {
+				changed = true
+			}
+		}
+		if changed {
+			updated++
+		}
+		return nil
+	})
+	return updated, err
+}
+
+// backfillUserSubs sets the last notified air time on notified user shows that lack one, one show at a time,
+// and returns how many user documents were changed. aired maps anime_subs.MatchKey show names to their latest air time.
+func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]int64) (int, error) {
+	var updatedUsers int
+	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if doc == nil {
+			return nil
+		}
+		updated := false
+		for _, sub := range doc.Shows {
+			if sub == nil || sub.Guild || sub.LastNotifiedAirUnix != 0 || !sub.Notified {
+				continue
+			}
+			key := anime_subs.MatchKey(sub.Show)
+			if key == "" {
+				continue
+			}
+			t, ok := aired[key]
+			if !ok || t <= 0 {
+				continue
+			}
+			if err := st.SetShowAirUnix(ctx, doc.ID, sub.Show, t); err != nil {
+				logger.For("animesubs").Error("backfill SetShowAirUnix failed", "user_id", doc.ID, "err", err)
+				continue
+			}
+			updated = true
+		}
+		if updated {
+			updatedUsers++
+		}
+		return nil
+	})
+	return updatedUsers, err
 }
 
 func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now time.Time) error {
@@ -123,7 +209,7 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 			if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
 				continue
 			}
-			key := strings.ToLower(strings.TrimSpace(show.Name))
+			key := anime_subs.MatchKey(show.Name)
 			if key == "" {
 				continue
 			}
@@ -132,46 +218,7 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 			}
 		}
 	}
-	var updatedUsers int
-	err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if doc == nil || len(doc.Shows) == 0 {
-			return nil
-		}
-		updated := false
-		for _, sub := range doc.Shows {
-			if sub == nil || sub.Guild {
-				continue
-			}
-			if sub.LastNotifiedAirUnix != 0 {
-				continue
-			}
-			if !sub.Notified {
-				continue
-			}
-			key := strings.ToLower(strings.TrimSpace(sub.Show))
-			if key == "" {
-				continue
-			}
-			if t, ok := shows[key]; ok && t > 0 {
-				sub.LastNotifiedAirUnix = t
-				updated = true
-			}
-		}
-		if !updated {
-			return nil
-		}
-		if err := db.AnimeSubs().Set(ctx, doc.ID, false, doc.Shows); err != nil {
-			logger.For("animesubs").Error("backfill LastNotifiedAirUnix Set failed", "user_id", doc.ID, "err", err)
-			return nil
-		}
-		updatedUsers++
-		return nil
-	})
+	updatedUsers, err := backfillUserSubs(ctx, db.AnimeSubs(), shows)
 	if err != nil {
 		return err
 	}
@@ -206,24 +253,43 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	return emb
 }
 
-// sendEpisodeNotification sends the episode embed to the channel (DM or guild new-episodes).
-func sendEpisodeNotification(s *discordgo.Session, channelID string, emb *discordgo.MessageEmbed) error {
-	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Embeds: []*discordgo.MessageEmbed{emb},
-	})
-	return err
+// weekdayShows returns the shows for a weekday, optionally including donghua.
+type weekdayShows func(donghua bool) []animeschedule.ShowEntry
+
+// rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
+type rolePresence int
+
+const (
+	// roleUnknown means the state cannot tell: the guild is missing (e.g. removed during an outage), is an
+	// unavailable stub, or has no roles loaded. A configured role must not be cleared on it.
+	roleUnknown rolePresence = iota
+	rolePresent
+	// roleAbsent means the guild is available with its roles loaded and the role is not among them.
+	roleAbsent
+)
+
+func (p rolePresence) String() string {
+	switch p {
+	case rolePresent:
+		return "present"
+	case roleAbsent:
+		return "absent"
+	default:
+		return "unknown"
+	}
 }
 
-func roleExistsInGuild(g *discordgo.Guild, roleID string) bool {
-	if g == nil || roleID == "" {
-		return false
+// guildRolePresence reports whether roleID is among g's roles. g is nil when the guild is not in the state.
+func guildRolePresence(g *discordgo.Guild, roleID string) rolePresence {
+	if g == nil || g.Unavailable || len(g.Roles) == 0 {
+		return roleUnknown
 	}
 	for _, r := range g.Roles {
 		if r != nil && r.ID == roleID {
-			return true
+			return rolePresent
 		}
 	}
-	return false
+	return roleAbsent
 }
 
 func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session) {
@@ -236,6 +302,9 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if len(todayShows) == 0 {
 		return
 	}
+	d := newDiscordgoPort(s)
+	st := newMongoSentState(db)
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 
 	// Per-shard guild seed for current weekday (once per day); missing shard entry = not yet seeded.
 	lastGuildSeedWeekdayMu.RLock()
@@ -243,7 +312,13 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	needGuildSeed := !seeded || lastSeen != weekday
 	lastGuildSeedWeekdayMu.RUnlock()
 	if needGuildSeed {
-		seedGuildNewEpisodesForShard(ctx, db, s, weekday)
+		guildIDs := make([]string, 0, len(s.State.Guilds))
+		for _, g := range s.State.Guilds {
+			if g != nil && g.ID != "" {
+				guildIDs = append(guildIDs, g.ID)
+			}
+		}
+		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows, now)
 		lastGuildSeedWeekdayMu.Lock()
 		lastGuildSeedWeekdayByShard[s.ShardID] = weekday
 		lastGuildSeedWeekdayMu.Unlock()
@@ -261,7 +336,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					if doc == nil {
 						continue
 					}
-					if err := processAnimeSubUser(ctx, db, s, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
+					if err := processAnimeSubUser(ctx, d, st, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
 						logger.For("animesubs").Error("processAnimeSubUser failed", "user_id", doc.ID, "err", err)
 					}
 				}
@@ -320,7 +395,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					return
 				default:
 				}
-				processGuildNewEpisodes(ctx, db, s, g, weekday, now)
+				processGuildNewEpisodes(ctx, d, st, g.ID, dayShows, now)
 			}
 		}()
 	}
@@ -337,22 +412,28 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	gwg.Wait()
 }
 
-func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.Session, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
+func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
 	userID := doc.ID
 
+	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
+	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
-		if sub != nil {
-			subByShow[strings.ToLower(sub.Show)] = sub
+		if sub == nil {
+			continue
 		}
+		key := anime_subs.MatchKey(sub.Show)
+		if cur, ok := subByShow[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
+			continue
+		}
+		subByShow[key] = sub
 	}
 
-	var dm *discordgo.Channel
+	var dmID string
 	var err error
-	updated := false
 	throttleTimer := time.NewTimer(animeSubThrottlePerUser)
 	defer throttleTimer.Stop()
 
@@ -368,17 +449,22 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		sub, ok := subByShow[strings.ToLower(show.Name)]
+		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
 		if !ok {
 			continue
 		}
-		if show.AirTimeUnix <= sub.LastNotifiedAirUnix {
+		epKey := episodeKey(show)
+		if userShowAlreadyNotified(sub, show, epKey) {
 			continue
 		}
 
-		if dm == nil {
-			dm, err = s.UserChannelCreate(userID)
+		if dmID == "" {
+			dmID, err = d.OpenDM(ctx, userID)
 			if err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					// Shutdown aborted the request: nothing to report.
+					return cerr
+				}
 				logger.For("animesubs").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 				throttle := time.NewTimer(animeSubThrottlePerUser)
 				defer throttle.Stop()
@@ -397,25 +483,32 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 				return acqErr
 			}
 		}
-		if err := sendEpisodeNotification(s, dm.ID, emb); err != nil {
-			args := append(discord.RESTAttrs(err), "user_id", userID, "err", err)
-			if discord.IsCannotDMUser(err) {
-				logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
-			} else {
-				logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
+		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		if !res.Delivered {
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
+			args := append(discord.RESTAttrs(res.Err), "user_id", userID, "err", res.Err)
+			logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
 			continue
 		}
+		// Record this one show right away, on a context that survives shutdown.
+		if markErr := detachedWrite(ctx, func(wctx context.Context) error {
+			return st.MarkUserShowNotified(wctx, userID, sub.Show, show.AirTimeUnix, epKey)
+		}); markErr != nil {
+			logger.For("animesubs").Error("mark user show notified failed", "user_id", userID, "title", show.Name, "err", markErr)
+		}
 		sub.LastNotifiedAirUnix = show.AirTimeUnix
+		sub.LastNotifiedEpisode = epKey
 		sub.Notified = true
 		logger.For("animesubs").Debug(
 			"episode notification sent",
 			"user_id", userID,
 			"title", show.Name,
 			"air_time_unix", show.AirTimeUnix,
-			"last_notified_air_unix", sub.LastNotifiedAirUnix,
+			"episode_key", epKey,
+			"presumed", res.Presumed,
 		)
-		updated = true
 
 		if !throttleTimer.Stop() {
 			select {
@@ -430,25 +523,33 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 		case <-throttleTimer.C:
 		}
 	}
-
-	if updated {
-		if err := db.AnimeSubs().Set(ctx, userID, false, doc.Shows); err != nil {
-			logger.For("animesubs").Error("Set user subs failed", "user_id", userID, "err", err)
-		}
-	}
 	return nil
+}
+
+// episodeKey identifies one episode of a show: the show route plus the episode label.
+func episodeKey(show animeschedule.ShowEntry) string {
+	return show.Route + "|" + show.Episode
+}
+
+// userShowAlreadyNotified reports whether the subscriber was already notified of this episode: either the
+// stored episode key matches, or (legacy documents) the air time is not later than the last-notified one.
+func userShowAlreadyNotified(sub *anime_subs.ShowSub, show animeschedule.ShowEntry, epKey string) bool {
+	if sub.LastNotifiedEpisode != "" && sub.LastNotifiedEpisode == epKey {
+		return true
+	}
+	return show.AirTimeUnix <= sub.LastNotifiedAirUnix
 }
 
 // guildShowNamesMatch reports whether dayShows and subs have the same show names (case-insensitive); used to preserve Notified across restarts.
 func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.ShowSub) bool {
 	daySet := make(map[string]struct{}, len(dayShows))
 	for _, show := range dayShows {
-		daySet[strings.ToLower(show.Name)] = struct{}{}
+		daySet[anime_subs.MatchKey(show.Name)] = struct{}{}
 	}
 	subSet := make(map[string]struct{}, len(subs))
 	for _, sub := range subs {
 		if sub != nil {
-			subSet[strings.ToLower(sub.Show)] = struct{}{}
+			subSet[anime_subs.MatchKey(sub.Show)] = struct{}{}
 		}
 	}
 	if len(daySet) != len(subSet) {
@@ -463,29 +564,29 @@ func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
-func seedGuildNewEpisodesForShard(ctx context.Context, db *database.Client, s *discordgo.Session, weekday int) {
-	today := time.Now().UTC().Format("2006-01-02")
+func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows, now time.Time) {
+	today := now.UTC().Format("2006-01-02")
 
-	for _, g := range s.State.Guilds {
+	for _, guildID := range guildIDs {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		if g == nil || g.ID == "" {
+		if guildID == "" {
 			continue
 		}
-		ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, postTypeNewEpisodes)
+		ap, err := st.GetAutopost(ctx, guildID, postTypeNewEpisodes)
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		settings, _ := db.Guilds().GetGuildSettings(ctx, g.ID)
+		settings, _ := st.GetGuildSettings(ctx, guildID)
 		donghua := true
 		if settings != nil {
 			donghua = settings.Donghua
 		}
-		dayShows := animeschedule.GetDayShows(weekday, donghua)
-		existing, err := db.AnimeSubs().GetByID(ctx, ap.ID)
+		dayShows := shows(donghua)
+		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
 			logger.For("animesubs").Error("GetByID seed check failed", "channel_id", ap.ID, "err", err)
 			continue
@@ -495,41 +596,67 @@ func seedGuildNewEpisodesForShard(ctx context.Context, db *database.Client, s *d
 			continue
 		}
 
-		// Determine if this is a new day (reset all) or mid-day update (preserve states)
-		isNewDay := existing == nil || existing.LastSeedDate != today
-
-		existingStates := make(map[string]bool)
-		if !isNewDay && existing != nil {
-			for _, show := range existing.Shows {
-				existingStates[show.Show] = show.Notified
+		if existing == nil || existing.LastSeedDate != today {
+			// No document yet: start aired shows as notified (no repost on re-enable).
+			// Stale document: new UTC day, reset everything to not notified (catch-up is intentional).
+			showSubs := newGuildShowSubs(dayShows)
+			if existing == nil {
+				showSubs = seedGuildShowSubs(dayShows, now)
 			}
+			if err := st.SeedAnimeSubs(ctx, ap.ID, true, showSubs, today); err != nil {
+				logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
+			}
+			continue
 		}
 
-		showSubs := make([]*anime_subs.ShowSub, 0, len(dayShows))
+		// Same-day document: append newly listed shows, never rewrite existing entries.
+		known := make(map[string]struct{}, len(existing.Shows))
+		for _, sub := range existing.Shows {
+			if sub != nil {
+				known[anime_subs.MatchKey(sub.Show)] = struct{}{}
+			}
+		}
+		var added []*anime_subs.ShowSub
 		for _, show := range dayShows {
-			notified := false
-			if !isNewDay {
-				// Preserve state for mid-day updates, defaults to false for new shows
-				notified = existingStates[show.Name]
+			key := anime_subs.MatchKey(show.Name)
+			if _, ok := known[key]; ok {
+				continue
 			}
-			showSubs = append(showSubs, &anime_subs.ShowSub{
-				Show:     show.Name,
-				Notified: notified,
-				Guild:    true,
-			})
+			known[key] = struct{}{}
+			added = append(added, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
 		}
-
-		if err := db.AnimeSubs().Set(ctx, ap.ID, true, showSubs); err != nil {
-			logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
+		if err := st.AppendAnimeSubShows(ctx, ap.ID, added); err != nil {
+			logger.For("animesubs").Error("Append guild channel shows failed", "channel_id", ap.ID, "err", err)
 		}
 	}
 }
 
-func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discordgo.Session, g *discordgo.Guild, weekday int, now time.Time) {
-	if g == nil || g.ID == "" {
+// newGuildShowSubs returns a guild show list with every show not yet notified.
+func newGuildShowSubs(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
+	subs := make([]*anime_subs.ShowSub, 0, len(dayShows))
+	for _, show := range dayShows {
+		subs = append(subs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
+	}
+	return subs
+}
+
+// seedGuildShowSubs returns the show list for a newly created guild document: shows that have
+// already aired and are not delayed start as notified so enabling or moving the autopost does not repost them.
+func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*anime_subs.ShowSub {
+	subs := newGuildShowSubs(dayShows)
+	for i, show := range dayShows {
+		if show.Delayed == "" && show.AirTimeUnix <= now.Unix() {
+			subs[i].Notified = true
+		}
+	}
+	return subs
+}
+
+func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, guildID string, shows weekdayShows, now time.Time) {
+	if guildID == "" {
 		return
 	}
-	ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, postTypeNewEpisodes)
+	ap, err := st.GetAutopost(ctx, guildID, postTypeNewEpisodes)
 	if err != nil {
 		return
 	}
@@ -538,40 +665,45 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 	}
 	channelID := ap.ID
 	roleID := ap.RoleID
-	if roleID != "" && !roleExistsInGuild(g, roleID) {
-		if err := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
-			logger.For("animesubs").Error("clear invalid role failed", "guild_id", g.ID, "role_id", roleID, "err", err)
+	// Only a role the state definitely lacks is cleared: an unknown answer (guild missing or unavailable) keeps it.
+	if roleID != "" && d.GuildRole(guildID, roleID) == roleAbsent {
+		if err := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
+			logger.For("animesubs").Error("clear invalid role failed", "guild_id", guildID, "role_id", roleID, "err", err)
 		} else {
-			logger.For("animesubs").Warn("role no longer exists, cleared from new-episodes autopost", "guild_id", g.ID, "role_id", roleID)
+			logger.For("animesubs").Warn("role no longer exists, cleared from new-episodes autopost", "guild_id", guildID, "role_id", roleID)
 		}
 		roleID = ""
 	}
-	settings, _ := db.Guilds().GetGuildSettings(ctx, g.ID)
+	settings, _ := st.GetGuildSettings(ctx, guildID)
 	donghua := true
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	todayShowsGuild := animeschedule.GetDayShows(weekday, donghua)
-	doc, err := db.AnimeSubs().GetByID(ctx, channelID)
+	todayShowsGuild := shows(donghua)
+	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
 		logger.For("animesubs").Error("GetByID failed", "channel_id", channelID, "err", err)
 		return
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		showSubs := make([]*anime_subs.ShowSub, 0, len(todayShowsGuild))
-		for _, show := range todayShowsGuild {
-			showSubs = append(showSubs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
-		}
-		if err := db.AnimeSubs().Set(ctx, channelID, true, showSubs); err != nil {
+		showSubs := seedGuildShowSubs(todayShowsGuild, now)
+		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubs, now.UTC().Format("2006-01-02")); err != nil {
 			logger.For("animesubs").Error("Set guild channel seed failed", "channel_id", channelID, "err", err)
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
+	// Shows are matched like the user path (anime_subs.MatchKey). Among duplicate entries a notified one wins, so
+	// a show any duplicate marks as notified is never reposted; the entry chosen is the one marked after sending.
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
-		if sub != nil {
-			subByShow[strings.ToLower(sub.Show)] = sub
+		if sub == nil {
+			continue
 		}
+		key := anime_subs.MatchKey(sub.Show)
+		if cur, ok := subByShow[key]; ok && (cur.Notified || !sub.Notified) {
+			continue
+		}
+		subByShow[key] = sub
 	}
 	type dueEntry struct {
 		show animeschedule.ShowEntry
@@ -589,7 +721,7 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 		if !donghua && show.Donghua {
 			continue
 		}
-		sub, ok := subByShow[strings.ToLower(show.Name)]
+		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
 		if !ok || sub.Notified {
 			continue
 		}
@@ -598,19 +730,18 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 	if len(due) == 0 {
 		return
 	}
-	w, threadID, webhookOK := getOrCreateChannelWebhook(s, g.ID, channelID)
-	updated := false
+	sender := newChannelSender(d, guildID, channelID)
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 		end := min(i+discord.MaxEmbedsPerMessage, len(due))
 		batch := due[i:end]
 		embeds := make([]*discordgo.MessageEmbed, len(batch))
+		names := make([]string, len(batch))
 		for j, e := range batch {
 			embeds[j] = e.emb
+			names[j] = e.sub.Show
 		}
 		content := ""
 		if i == 0 && roleID != "" {
@@ -621,51 +752,44 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 				return
 			}
 		}
-		usedWebhook := webhookOK && w != nil
-		sendErr := SendBatchToChannel(ctx, s, w, threadID, channelID, content, embeds, usedWebhook)
-		if sendErr != nil && usedWebhook && !discord.IsUnknownChannel(sendErr) {
-			invalidateChannelWebhook(g.ID, channelID)
+		// After a rejected webhook the sender sends later chunks through the bot account.
+		res, _ := sender.send(ctx, OutgoingMessage{Content: content, Embeds: embeds})
+		if res.Delivered {
+			// A batch we cannot confirm as recorded would be resent next run, so record it right away
+			// on a context that survives shutdown.
+			markErr := detachedWrite(ctx, func(wctx context.Context) error {
+				return st.MarkShowsNotified(wctx, channelID, names)
+			})
+			if markErr != nil {
+				logger.For("animesubs").Error("mark shows notified failed", "channel_id", channelID, "err", markErr)
+				return
+			}
+			logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
+			continue
 		}
-		if sendErr != nil {
-			sendErr = SendBatchToChannel(ctx, s, nil, "", channelID, content, embeds, false)
-		}
-		if sendErr != nil {
-			if updated {
-				if err := db.AnimeSubs().Set(ctx, channelID, true, doc.Shows); err != nil {
-					logger.For("animesubs").Error("Set guild before break failed", "channel_id", channelID, "err", err)
-				}
-			}
-			if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
-				_ = db.AnimeSubs().DeleteByID(ctx, channelID)
-				if setErr := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", g.ID, "channel_id", channelID, "err", setErr)
-				}
-				invalidateChannelWebhook(g.ID, channelID)
-				return
-			}
-			if discord.IsChannelNotText(sendErr) {
-				_ = db.AnimeSubs().DeleteByID(ctx, channelID)
-				if setErr := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", g.ID, "channel_id", channelID, "err", setErr)
-				}
-				invalidateChannelWebhook(g.ID, channelID)
-				logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", g.ID, "channel_id", channelID)
-				return
-			}
-			if discord.IsMissingPermissions(sendErr) {
-				return
-			}
+		if ctx.Err() != nil {
 			return
 		}
-		logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", g.ID, "channel_id", channelID, "count", len(batch))
-		for _, e := range batch {
-			e.sub.Notified = true
-		}
-		updated = true
+		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
+		return
 	}
-	if updated {
-		if err := db.AnimeSubs().Set(ctx, channelID, true, doc.Shows); err != nil {
-			logger.For("animesubs").Error("Set guild failed", "channel_id", channelID, "err", err)
-		}
+}
+
+// handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
+// inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
+// (including missing permissions) leaves both in place.
+func handleNewEpisodesRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, err error) {
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	default:
+		return
 	}
+	_ = st.DeleteAnimeSubs(ctx, channelID)
+	if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+		logger.For("animesubs").Error(reason.String()+", failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
+	} else if reason == discord.ChannelNotText {
+		logger.For("animesubs").Warn(reason.String()+", cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
+	}
+	d.InvalidateChannelWebhook(guildID, channelID)
 }

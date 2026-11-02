@@ -18,6 +18,7 @@ import (
 
 const (
 	dailyScheduleStaggerPerShard = 10 * time.Second
+	postTypeDailySchedule        = "dailyschedule"
 )
 
 // runScheduleLoop refreshes AnimeSchedule cache every 15 min until ctx is cancelled.
@@ -87,6 +88,9 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 		return
 	}
 	weekday := int(time.Now().UTC().Weekday())
+	d := newDiscordgoPort(s)
+	st := newMongoSentState(db)
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
@@ -110,7 +114,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 				if g == nil || g.ID == "" {
 					continue
 				}
-				if err := processDailyScheduleForGuild(ctx, db, s, g, weekday); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processDailyScheduleForGuild(ctx, d, st, g.ID, weekday, dayShows, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("schedule").Error("processDailyScheduleForGuild failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
 				}
 			}
@@ -130,122 +134,136 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	wg.Wait()
 }
 
-func processDailyScheduleForGuild(ctx context.Context, db *database.Client, s *discordgo.Session, g *discordgo.Guild, weekday int) error {
-	if g == nil || g.ID == "" {
+// scheduleRetryWait is the pause before the single retry of a verifiably missing schedule post.
+var scheduleRetryWait = 3 * time.Second
+
+// processDailyScheduleForGuild posts the daily schedule to one guild at most once per UTC day: one attempt
+// following the shared send rules, then at most one retry when the post is verifiably missing (or verification
+// itself failed, which is the opposite of the default policy). Rejected outcomes are never retried.
+func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentState, guildID string, weekday int, dayShows weekdayShows, now time.Time) error {
+	if guildID == "" {
 		return nil
 	}
-	ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, "dailyschedule")
+	shardID := d.ShardID()
+	today := now.UTC().Format("2006-01-02")
+	ap, err := st.GetAutopost(ctx, guildID, postTypeDailySchedule)
 	if err != nil || ap == nil || ap.ID == "" {
 		return nil
 	}
-	if !canSendToChannel(s, ap.ID) {
+	if ap.LastPostedDate == today {
 		return nil
 	}
-	settings, err := db.Guilds().GetGuildSettings(ctx, g.ID)
+	if !d.CanSend(ap.ID) {
+		return nil
+	}
+	settings, err := st.GetGuildSettings(ctx, guildID)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
-			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
+			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", shardID, "guild_id", guildID, "err", err)
 		}
 	}
 	donghua := true
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	shows := animeschedule.GetDayShows(weekday, donghua)
-	emb := schedule.BuildScheduleEmbed(weekday, shows)
-	chunk := []*discordgo.MessageEmbed{emb}
+	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
+	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
+	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
+	sender := newChannelSender(d, guildID, ap.ID).withPolicy(scheduleMatcher(emb.Title, now), false, "schedule send")
 
-	const maxAttempts = 3
-	backoff := []time.Duration{0, time.Second, 2 * time.Second}
-	backoffTimer := time.NewTimer(backoff[1])
-	defer backoffTimer.Stop()
-	var sendErr error
-	for attempt := range maxAttempts {
+	var res SendResult
+	for attempt := range 2 {
 		if attempt > 0 {
-			if !backoffTimer.Stop() {
-				select {
-				case <-backoffTimer.C:
-				default:
-				}
-			}
-			backoffTimer.Reset(backoff[attempt])
+			t := time.NewTimer(scheduleRetryWait)
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return ctx.Err()
-			case <-backoffTimer.C:
+			case <-t.C:
 			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
 		}
 		if globalSendLimiter != nil {
 			if err := globalSendLimiter.Acquire(ctx, PrioritySchedule); err != nil {
 				return err
 			}
 		}
-		w, threadID, webhookOK := getOrCreateChannelWebhook(s, g.ID, ap.ID)
-		usedWebhook := webhookOK && w != nil
-		sendErr = SendBatchToChannel(ctx, s, w, threadID, ap.ID, "", chunk, usedWebhook)
-		if sendErr != nil && usedWebhook && !discord.IsUnknownChannel(sendErr) {
-			invalidateChannelWebhook(g.ID, ap.ID)
-		}
-		if sendErr != nil {
-			sendErr = SendBatchToChannel(ctx, s, nil, "", ap.ID, "", chunk, false)
-		}
-		if sendErr == nil {
-			logger.For("schedule").Debug("daily schedule sent", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
+		res, _ = sender.send(ctx, msg)
+		if res.Delivered {
 			break
 		}
-		if discord.IsUnknownChannel(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel deleted, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
-			} else {
-				logger.For("schedule").Warn("channel deleted (10003), cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
-			}
-			invalidateChannelWebhook(g.ID, ap.ID)
-			break
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-		if discord.IsChannelNotText(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel non-text, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
-			} else {
-				logger.For("schedule").Warn("channel is non-text, cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
-			}
-			invalidateChannelWebhook(g.ID, ap.ID)
-			break
-		}
-		if discord.IsChannelUnavailable(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel inaccessible, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
-			} else {
-				logger.For("schedule").Warn("channel inaccessible (10003/50001), cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
-			}
-			invalidateChannelWebhook(g.ID, ap.ID)
-			break
-		}
-		if discord.IsMissingPermissions(sendErr) {
-			break
-		}
-		if attempt == maxAttempts-1 {
-			logger.For("schedule").Error("DailySchedule post failed", "shard_id", s.ShardID, "channel_id", ap.ID, "err", sendErr)
-			break
+		if discord.ClassifySend(res.Err) == discord.Rejected {
+			handleScheduleRejection(ctx, d, st, guildID, ap.ID, shardID, res.Err)
+			return nil
 		}
 	}
+	if !res.Delivered {
+		logger.For("schedule").Error("DailySchedule post failed", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", res.Err)
+		return nil
+	}
+	if err := detachedWrite(ctx, func(wctx context.Context) error { return st.MarkSchedulePosted(wctx, guildID, today) }); err != nil {
+		logger.For("schedule").Error("failed to record last_posted_date", "shard_id", shardID, "guild_id", guildID, "err", err)
+	}
+	logger.For("schedule").Debug("daily schedule sent", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID)
 	return nil
+}
+
+// handleScheduleRejection applies the terminal handling for a Rejected schedule post: a deleted, non-text or
+// inaccessible channel clears the autopost; other rejections are only logged.
+func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, shardID int, err error) {
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	case discord.ChannelMissingPermissions:
+		return
+	default:
+		logger.For("schedule").Error("DailySchedule post rejected", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", err)
+		return
+	}
+	if setErr := st.SetAutopost(ctx, guildID, postTypeDailySchedule, nil); setErr != nil {
+		logger.For("schedule").Error(reason.String()+", failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", setErr)
+	} else {
+		logger.For("schedule").Warn(reason.String()+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
+	}
+	d.InvalidateChannelWebhook(guildID, channelID)
+}
+
+// channelInfo is the part of a channel the send paths read.
+type channelInfo struct {
+	Type     discordgo.ChannelType
+	ParentID string
+}
+
+// channelStateFirst looks the channel up in the gateway state cache only. There is no REST fallback: its callers
+// then compute permissions from the state, which fails for a channel the state lacks. A cached channel's fields
+// are read under the state lock (discordgo's ChannelAdd overwrites the cached struct in place).
+func channelStateFirst(s *discordgo.Session, channelID string) (channelInfo, error) {
+	if s.State == nil {
+		return channelInfo{}, errors.New("no state cache")
+	}
+	ch, err := s.State.Channel(channelID)
+	if err != nil {
+		return channelInfo{}, err
+	}
+	return stateChannelInfo(s.State, ch), nil
+}
+
+// stateChannelInfo reads ch, owned by st, under st's read lock.
+func stateChannelInfo(st *discordgo.State, ch *discordgo.Channel) channelInfo {
+	st.RLock()
+	defer st.RUnlock()
+	return channelInfo{Type: ch.Type, ParentID: ch.ParentID}
 }
 
 // canSendToChannel reports whether the bot can send messages and embeds (View Channel, Send Messages, Embed Links; threads: Send in Threads).
 func canSendToChannel(s *discordgo.Session, channelID string) bool {
-	ch, err := s.Channel(channelID)
-	if err != nil {
-		ch, err = s.State.Channel(channelID)
-	}
-	if err != nil || ch == nil {
+	if s.State == nil || s.State.User == nil {
 		return false
 	}
-	if s.State.User == nil {
+	ch, err := channelStateFirst(s, channelID)
+	if err != nil {
 		return false
 	}
 	perms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)

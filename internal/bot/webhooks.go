@@ -12,9 +12,17 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const webhookCreateThrottle = 150 * time.Millisecond
+const (
+	webhookCreateThrottle = 150 * time.Millisecond
+	// webhookAvoidTTL is how long a channel whose webhook Discord rejected (while the bot account could post)
+	// is sent to through the bot account only.
+	webhookAvoidTTL = 15 * time.Minute
+)
 
 var (
+	// channelWebhookAvoidUntil maps a channel's webhook key to the time until which no webhook is offered for it.
+	channelWebhookAvoidUntil = make(map[string]time.Time)
+
 	channelWebhookMu  sync.RWMutex
 	channelWebhookMap = make(map[string]*struct {
 		Webhook   *discordgo.Webhook
@@ -28,7 +36,8 @@ func SendBatchToChannel(ctx context.Context, s *discordgo.Session, w *discordgo.
 	if useWebhook && w != nil {
 		if globalWebhookLimiter != nil {
 			if err := globalWebhookLimiter.Acquire(ctx); err != nil {
-				return err
+				// The wait ended before any request was made.
+				return notAttempted(err)
 			}
 		}
 		params := &discordgo.WebhookParams{Content: content, Embeds: embeds}
@@ -52,14 +61,16 @@ func channelWebhookKey(guildID, channelID string) string {
 
 // getOrCreateChannelWebhook returns webhook for guild+channel (channel may be thread). Invalidates cache if channel changed.
 func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) (*discordgo.Webhook, string, bool) {
-	ch, err := s.Channel(channelID)
-	if err != nil {
-		ch, err = s.State.Channel(channelID)
-	}
-	if err != nil || ch == nil {
+	key := channelWebhookKey(guildID, channelID)
+	// An avoided channel needs no channel or permission work.
+	if channelWebhookAvoided(key, time.Now()) {
 		return nil, "", false
 	}
-	if s.State.User == nil {
+	if s.State == nil || s.State.User == nil {
+		return nil, "", false
+	}
+	ch, err := channelStateFirst(s, channelID)
+	if err != nil {
 		return nil, "", false
 	}
 	webhookChannelID := channelID
@@ -85,7 +96,6 @@ func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) 
 		}
 	}
 
-	key := channelWebhookKey(guildID, channelID)
 	channelWebhookMu.Lock()
 	entry := channelWebhookMap[key]
 	if entry != nil && entry.ChannelID != channelID {
@@ -145,10 +155,48 @@ func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) 
 	return w, threadID, true
 }
 
+// invalidateChannelWebhook drops the channel's cached webhook (e.g. the channel was deleted). An avoid entry is kept so a
+// bot-account rejection does not un-avoid a rejected webhook; it expires by TTL. Avoid entries that have already
+// expired are pruned for every channel, so entries of channels that are never looked up again do not pile up.
 func invalidateChannelWebhook(guildID, channelID string) {
+	defer pruneExpiredAvoid(time.Now())
+	key := channelWebhookKey(guildID, channelID)
 	channelWebhookMu.Lock()
-	delete(channelWebhookMap, channelWebhookKey(guildID, channelID))
+	delete(channelWebhookMap, key)
 	channelWebhookMu.Unlock()
+}
+
+// avoidChannelWebhook drops the channel's cached webhook and makes getOrCreateChannelWebhook offer none for it
+// until webhookAvoidTTL has passed. Re-resolving would usually find the same bot-owned webhook, which Discord
+// would reject again; the bot account is used meanwhile. Expired avoid entries are pruned on the way.
+func avoidChannelWebhook(guildID, channelID string, now time.Time) {
+	key := channelWebhookKey(guildID, channelID)
+	channelWebhookMu.Lock()
+	pruneExpiredAvoidLocked(now)
+	delete(channelWebhookMap, key)
+	channelWebhookAvoidUntil[key] = now.Add(webhookAvoidTTL)
+	channelWebhookMu.Unlock()
+}
+
+// channelWebhookAvoided reports whether the channel's webhook is being avoided at now. It reads under the read
+// lock and takes the write lock only to forget an expired entry.
+func channelWebhookAvoided(key string, now time.Time) bool {
+	channelWebhookMu.RLock()
+	until, ok := channelWebhookAvoidUntil[key]
+	channelWebhookMu.RUnlock()
+	if !ok {
+		return false
+	}
+	if now.Before(until) {
+		return true
+	}
+	channelWebhookMu.Lock()
+	// Re-check: the entry may have been renewed since the read.
+	if until, ok := channelWebhookAvoidUntil[key]; ok && !now.Before(until) {
+		delete(channelWebhookAvoidUntil, key)
+	}
+	channelWebhookMu.Unlock()
+	return false
 }
 
 func invalidateGuildWebhooks(guildID string) {
@@ -159,5 +207,26 @@ func invalidateGuildWebhooks(guildID string) {
 			delete(channelWebhookMap, key)
 		}
 	}
+	for key := range channelWebhookAvoidUntil {
+		if strings.HasPrefix(key, prefix) {
+			delete(channelWebhookAvoidUntil, key)
+		}
+	}
+	channelWebhookMu.Unlock()
+}
+
+// pruneExpiredAvoidLocked forgets the avoid entries that have expired at now. The caller holds channelWebhookMu.
+func pruneExpiredAvoidLocked(now time.Time) {
+	for k, until := range channelWebhookAvoidUntil {
+		if !now.Before(until) {
+			delete(channelWebhookAvoidUntil, k)
+		}
+	}
+}
+
+// pruneExpiredAvoid forgets the avoid entries that have expired at now.
+func pruneExpiredAvoid(now time.Time) {
+	channelWebhookMu.Lock()
+	pruneExpiredAvoidLocked(now)
 	channelWebhookMu.Unlock()
 }
