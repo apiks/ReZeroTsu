@@ -153,6 +153,9 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 			logger.For("bot").Info("slash commands registered", "guild_id", slashCommandGuildID, "count", len(createdCommands))
 		})
 		logger.For("bot").Info("shard ready", "shard_id", s.ShardID)
+		// One raw adapter and channel sender factory per shard, handed to that shard's delivery loops.
+		raw := newDiscordgoPort(s, cache)
+		ops, senders := RunOperations(raw), newChannelSenderFactory(raw)
 		if n := atomic.AddInt32(&readyCount, 1); n == int32(mgr.ShardCount) {
 			logger.PrintAlways("all shards ready")
 			startTopGGOnce.Do(func() {
@@ -162,7 +165,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 			})
 		}
 		startRemindersOnce.Do(func() {
-			go RunReminderLoop(ctx, db, s, cache, 15*time.Second)
+			go RunReminderLoop(ctx, db, s, ops, senders, 15*time.Second)
 		})
 		backfillLastNotifiedOnce.Do(func() {
 			go func() {
@@ -178,15 +181,15 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		onceVal, _ := shardLoopsOnce.LoadOrStore(s.ShardID, &sync.Once{})
 		onceVal.(*sync.Once).Do(func() {
-			go RunFeedLoop(ctx, db, s, cache, 0)
+			go RunFeedLoop(ctx, db, s, ops, senders, 0)
 			if cfg.AnimeScheduleAPIKey != "" {
 				animeschedule.SetAPIKey(cfg.AnimeScheduleAPIKey)
 				animeschedule.UpdateAnimeSchedule(ctx, cfg.AnimeScheduleAPIKey)
 				startScheduleLoopOnce.Do(func() {
 					go runScheduleLoop(ctx, cfg.AnimeScheduleAPIKey)
 				})
-				go RunDailyScheduleLoop(ctx, db, s, cache, cfg.AnimeScheduleAPIKey, getShardCount)
-				go RunAnimeSubLoop(ctx, db, s, cache, 15*time.Second, getShardCount)
+				go RunDailyScheduleLoop(ctx, db, s, ops, senders, cfg.AnimeScheduleAPIKey, getShardCount)
+				go RunAnimeSubLoop(ctx, db, s, ops, senders, 15*time.Second, getShardCount)
 				startAnimeSubCleanupOnce.Do(func() {
 					go RunAnimeSubFinishedCleanupLoop(ctx, db, 24*time.Hour)
 				})

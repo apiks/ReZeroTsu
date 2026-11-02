@@ -36,7 +36,7 @@ var (
 )
 
 // RunAnimeSubLoop runs the anime-sub check loop for this shard (round-robin). Exits when ctx is cancelled.
-func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordgo.Session, cache *webhookCache, interval time.Duration, getShardCount func() int) {
+func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordgo.Session, ops RunOperations, senders *channelSenderFactory, interval time.Duration, getShardCount func() int) {
 	if interval <= 0 {
 		interval = animeSubRunInterval
 	}
@@ -48,7 +48,7 @@ func RunAnimeSubLoop(ctx context.Context, db *database.Client, session *discordg
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !animeSubRoundRobin.RunWithTurn(session, getShardCount, func() { runAnimeSubCheck(ctx, db, session, cache) }) {
+			if !animeSubRoundRobin.RunWithTurn(session, getShardCount, func() { runAnimeSubCheck(ctx, db, session, ops, senders) }) {
 				continue
 			}
 		}
@@ -294,7 +294,7 @@ func guildRolePresence(g *discordgo.Guild, roleID string) rolePresence {
 	return roleAbsent
 }
 
-func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session, cache *webhookCache) {
+func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Session, d RunOperations, senders *channelSenderFactory) {
 	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 		return
 	}
@@ -304,7 +304,6 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if len(todayShows) == 0 {
 		return
 	}
-	d := newDiscordgoPort(s, cache)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 
@@ -338,7 +337,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					if doc == nil {
 						continue
 					}
-					if err := processAnimeSubUser(ctx, d, st, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
+					if err := processAnimeSubUser(ctx, d, senders, st, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
 						logger.For("animesubs").Error("processAnimeSubUser failed", "user_id", doc.ID, "err", err)
 					}
 				}
@@ -397,7 +396,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					return
 				default:
 				}
-				processGuildNewEpisodes(ctx, d, st, g.ID, dayShows, now)
+				processGuildNewEpisodes(ctx, d, senders, st, g.ID, dayShows, now)
 			}
 		}()
 	}
@@ -414,7 +413,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	gwg.Wait()
 }
 
-func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
+func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
@@ -485,7 +484,7 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 				return acqErr
 			}
 		}
-		res := newChannelSender(d, "", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		if !res.Delivered {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -654,7 +653,7 @@ func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*ani
 	return subs
 }
 
-func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, guildID string, shows weekdayShows, now time.Time) {
+func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows weekdayShows, now time.Time) {
 	if guildID == "" {
 		return
 	}
@@ -732,7 +731,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	if len(due) == 0 {
 		return
 	}
-	sender := newChannelSender(d, guildID, channelID, newEpisodesPolicy())
+	sender := senders.open(guildID, channelID, newEpisodesPolicy())
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
 		if ctx.Err() != nil {
 			return
@@ -772,7 +771,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		if ctx.Err() != nil {
 			return
 		}
-		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
+		handleNewEpisodesRejection(ctx, d, senders, st, guildID, channelID, res.Err)
 		return
 	}
 }
@@ -780,7 +779,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 // handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
 // inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
 // (including missing permissions) leaves both in place.
-func handleNewEpisodesRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, err error) {
+func handleNewEpisodesRejection(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID, channelID string, err error) {
 	reason := discord.ClassifyChannelTerminal(err)
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
@@ -793,5 +792,5 @@ func handleNewEpisodesRejection(ctx context.Context, d DiscordPort, st SentState
 	} else if reason == discord.ChannelNotText {
 		logger.For("animesubs").Warn(reason.String()+", cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
 	}
-	d.InvalidateChannelWebhook(guildID, channelID)
+	senders.invalidateWebhook(guildID, channelID)
 }
