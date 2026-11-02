@@ -439,16 +439,13 @@ func handleFeedSendFailure(ctx context.Context, d DiscordPort, st SentState, gui
 	if ctx.Err() != nil {
 		return
 	}
-	switch {
-	case discord.IsUnknownChannel(err):
+	switch reason := discord.ClassifyChannelTerminal(err); reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible:
 		d.InvalidateChannelWebhook(guildID, channelID)
-		removeFeedsForChannel(ctx, st, guildID, channelID, "channel deleted (10003)")
-	case discord.IsChannelUnavailable(err):
-		d.InvalidateChannelWebhook(guildID, channelID)
-		removeFeedsForChannel(ctx, st, guildID, channelID, "channel inaccessible (missing access)")
-	case discord.IsChannelNotText(err):
-		removeFeedsForChannel(ctx, st, guildID, channelID, "channel is non-text (50008)")
-	case discord.IsMissingPermissions(err):
+		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
+	case discord.ChannelNotText:
+		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
+	case discord.ChannelMissingPermissions:
 		d.InvalidateChannelWebhook(guildID, channelID)
 	default:
 		logger.For("feeds").Warn("feed send failed", "shard_id", d.ShardID(), "channel_id", channelID, "err", err)

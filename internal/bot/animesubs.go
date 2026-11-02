@@ -690,27 +690,29 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 			logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
 			continue
 		}
-		sendErr := res.Err
 		if ctx.Err() != nil {
 			return
 		}
-		if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
-			_ = st.DeleteAnimeSubs(ctx, channelID)
-			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-				logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-			}
-			d.InvalidateChannelWebhook(guildID, channelID)
-			return
-		}
-		if discord.IsChannelNotText(sendErr) {
-			_ = st.DeleteAnimeSubs(ctx, channelID)
-			if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
-				logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
-			}
-			d.InvalidateChannelWebhook(guildID, channelID)
-			logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
-			return
-		}
+		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
 		return
 	}
+}
+
+// handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
+// inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
+// (including missing permissions) leaves both in place.
+func handleNewEpisodesRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, err error) {
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	default:
+		return
+	}
+	_ = st.DeleteAnimeSubs(ctx, channelID)
+	if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+		logger.For("animesubs").Error(reason.String()+", failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
+	} else if reason == discord.ChannelNotText {
+		logger.For("animesubs").Warn(reason.String()+", cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
+	}
+	d.InvalidateChannelWebhook(guildID, channelID)
 }

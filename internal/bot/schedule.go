@@ -215,24 +215,19 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 // handleScheduleRejection applies the terminal handling for a Rejected schedule post: a deleted, non-text or
 // inaccessible channel clears the autopost; other rejections are only logged.
 func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, guildID, channelID string, shardID int, err error) {
-	var reason string
-	switch {
-	case discord.IsUnknownChannel(err):
-		reason = "channel deleted (10003)"
-	case discord.IsChannelNotText(err):
-		reason = "channel is non-text"
-	case discord.IsChannelUnavailable(err):
-		reason = "channel inaccessible (10003/50001)"
-	case discord.IsMissingPermissions(err):
+	reason := discord.ClassifyChannelTerminal(err)
+	switch reason {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+	case discord.ChannelMissingPermissions:
 		return
 	default:
 		logger.For("schedule").Error("DailySchedule post rejected", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", err)
 		return
 	}
 	if setErr := st.SetAutopost(ctx, guildID, postTypeDailySchedule, nil); setErr != nil {
-		logger.For("schedule").Error(reason+", failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", setErr)
+		logger.For("schedule").Error(reason.String()+", failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID, "err", setErr)
 	} else {
-		logger.For("schedule").Warn(reason+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
+		logger.For("schedule").Warn(reason.String()+", cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", channelID)
 	}
 	d.InvalidateChannelWebhook(guildID, channelID)
 }
