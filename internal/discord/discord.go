@@ -24,90 +24,60 @@ const (
 // IsUserUndeliverable reports whether err means the user can never be DMed: DMs closed or blocked (50007) or
 // the user no longer exists (10013). Every other rejection may be transient or bot-side and must not drop data.
 func IsUserUndeliverable(err error) bool {
+	return IsCannotDMUser(err) || hasCode(err, UnknownUserCode)
+}
+
+// restCode returns the Discord error code of the REST error wrapped in err, if any.
+func restCode(err error) (int, bool) {
 	var restErr *discordgo.RESTError
 	if !errors.As(err, &restErr) || restErr.Message == nil {
+		return 0, false
+	}
+	return restErr.Message.Code, true
+}
+
+// hasCode reports whether err wraps a REST error carrying one of codes.
+func hasCode(err error, codes ...int) bool {
+	code, ok := restCode(err)
+	if !ok {
 		return false
 	}
-	return restErr.Message.Code == CannotDMUserCode || restErr.Message.Code == UnknownUserCode
+	for _, c := range codes {
+		if code == c {
+			return true
+		}
+	}
+	return false
 }
 
 // IsWebhookGone reports whether err says the webhook is unknown (10015) or its token invalid (50027).
-func IsWebhookGone(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == UnknownWebhookCode || restErr.Message.Code == InvalidWebhookTokenCode
-}
+func IsWebhookGone(err error) bool { return hasCode(err, UnknownWebhookCode, InvalidWebhookTokenCode) }
 
 // IsUnknownChannel reports whether err is channel-deleted (10003). Use when clearing stored channel IDs.
-func IsUnknownChannel(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == UnknownChannelCode
-}
+func IsUnknownChannel(err error) bool { return hasCode(err, UnknownChannelCode) }
 
 // IsUnknownMessage reports whether err is message-deleted or unknown (10008).
-func IsUnknownMessage(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == UnknownMessageCode
-}
+func IsUnknownMessage(err error) bool { return hasCode(err, UnknownMessageCode) }
 
 // IsUnknownRole reports whether err is role-deleted (10011).
-func IsUnknownRole(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == UnknownRoleCode
-}
+func IsUnknownRole(err error) bool { return hasCode(err, UnknownRoleCode) }
 
 // IsChannelUnavailable reports whether the channel is unusable (deleted or no access). For clearing stored IDs use IsUnknownChannel.
-func IsChannelUnavailable(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	code := restErr.Message.Code
-	return code == UnknownChannelCode || code == MissingAccessCode
-}
+func IsChannelUnavailable(err error) bool { return hasCode(err, UnknownChannelCode, MissingAccessCode) }
 
 // IsCannotDMUser reports whether the user cannot receive DMs (50007).
-func IsCannotDMUser(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == CannotDMUserCode
-}
+func IsCannotDMUser(err error) bool { return hasCode(err, CannotDMUserCode) }
 
 // IsChannelNotText reports whether the channel is not text (50008). Use when clearing new-episodes autopost.
-func IsChannelNotText(err error) bool {
-	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) || restErr.Message == nil {
-		return false
-	}
-	return restErr.Message.Code == ChannelNotTextCode
-}
+func IsChannelNotText(err error) bool { return hasCode(err, ChannelNotTextCode) }
 
 // IsMissingPermissions reports whether the bot lacks permission (50013 or Response 403). True even when Message is nil (e.g. webhook 403).
 func IsMissingPermissions(err error) bool {
+	if hasCode(err, MissingPermissionsCode) {
+		return true
+	}
 	var restErr *discordgo.RESTError
-	if !errors.As(err, &restErr) {
-		return false
-	}
-	if restErr.Message != nil && restErr.Message.Code == MissingPermissionsCode {
-		return true
-	}
-	if restErr.Response != nil && restErr.Response.StatusCode == 403 {
-		return true
-	}
-	return false
+	return errors.As(err, &restErr) && restErr.Response != nil && restErr.Response.StatusCode == 403
 }
 
 // RESTAttrs returns slog-style key-value pairs (code, message) for a REST error, or nil.

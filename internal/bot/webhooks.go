@@ -62,7 +62,7 @@ func channelWebhookKey(guildID, channelID string) string {
 // getOrCreateChannelWebhook returns webhook for guild+channel (channel may be thread). Invalidates cache if channel changed.
 func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) (*discordgo.Webhook, string, bool) {
 	ch, err := channelStateFirst(s, channelID)
-	if err != nil || ch == nil {
+	if err != nil {
 		return nil, "", false
 	}
 	if s.State.User == nil {

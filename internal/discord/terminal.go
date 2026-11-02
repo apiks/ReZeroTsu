@@ -25,7 +25,7 @@ func (r ChannelTerminalReason) String() string {
 	case ChannelNotText:
 		return "channel is non-text (50008)"
 	case ChannelMissingPermissions:
-		return "missing permissions (50013)"
+		return "missing permissions (403)"
 	default:
 		return "not terminal"
 	}
