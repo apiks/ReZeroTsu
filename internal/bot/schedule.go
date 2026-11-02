@@ -231,13 +231,32 @@ func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, g
 }
 
 // channelStateFirst looks the channel up in the gateway state cache and only falls back to REST on a miss.
+// A cached channel is returned as a private copy taken under the state lock (discordgo's ChannelAdd overwrites
+// the cached struct in place); REST results are already private.
 func channelStateFirst(s *discordgo.Session, channelID string) (*discordgo.Channel, error) {
 	if s.State != nil {
 		if ch, err := s.State.Channel(channelID); err == nil && ch != nil {
-			return ch, nil
+			return copyStateChannel(s.State, ch), nil
 		}
 	}
 	return s.Channel(channelID)
+}
+
+// copyStateChannel copies ch, owned by st, under st's read lock, including its permission overwrites.
+func copyStateChannel(st *discordgo.State, ch *discordgo.Channel) *discordgo.Channel {
+	st.RLock()
+	defer st.RUnlock()
+	c := *ch
+	if ch.PermissionOverwrites != nil {
+		c.PermissionOverwrites = make([]*discordgo.PermissionOverwrite, len(ch.PermissionOverwrites))
+		for i, ow := range ch.PermissionOverwrites {
+			if ow != nil {
+				owCopy := *ow
+				c.PermissionOverwrites[i] = &owCopy
+			}
+		}
+	}
+	return &c
 }
 
 // canSendToChannel reports whether the bot can send messages and embeds (View Channel, Send Messages, Embed Links; threads: Send in Threads).
