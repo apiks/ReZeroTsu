@@ -51,4 +51,4 @@ This application is the next version of [ZeroTsu](https://github.com/apiks/ZeroT
 
 * **Build:** `go build` (e.g. `go build -o zerotsu.exe`).
 
-* **Run:** From the same directory as `config.json`, run the binary (e.g. `.\zerotsu.exe`). The bot uses Discord sharding; no extra configuration needed.
+* **Run:** From the same directory as `config.json`, run the binary (e.g. `.\zerotsu.exe`). The bot uses Discord sharding; no extra configuration needed. Run exactly one bot instance against a given database.
