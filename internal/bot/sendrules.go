@@ -35,41 +35,67 @@ type SendResult struct {
 	Err error
 	// Presumed is true when Delivered was assumed because verification failed.
 	Presumed bool
+	// WebhookGone is true when the webhook turned out to be gone (and was invalidated), whatever the final
+	// outcome. Callers sending further chunks to the same channel must stop passing that webhook.
+	WebhookGone bool
 }
 
 // sendWithRules sends msg to channelID (through webhook when non-nil) applying the shared send rules.
 // On a non-delivered result the caller maps Err to its own terminal handling (deleted channel, no permission, ...).
 func sendWithRules(ctx context.Context, d DiscordPort, guildID, channelID string, webhook *WebhookTarget, msg OutgoingMessage) SendResult {
+	res, _ := deliverWithRules(ctx, d, guildID, channelID, webhook, msg, matchRecentMessage, true, "send")
+	return res
+}
+
+// recentMatcher finds the message that an Unknown send produced among the channel's recent messages and
+// returns its ID when known.
+type recentMatcher func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (id string, ok bool)
+
+// matchRecentMessage is the default matcher: embed URL and description (content for embed-less messages).
+func matchRecentMessage(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {
+	return "", messageInRecent(recent, botUserID, webhook, msg)
+}
+
+// deliverWithRules is the shared send structure behind sendWithRules and feedSend: cancel check, webhook-gone
+// fallback, Unknown classification and unrecognised-rejection logging. The callers differ only in how an Unknown
+// send is matched (match), whether a failed verification counts as delivered (presumeOnVerifyFailure) and in the
+// log label. It also returns the delivered message ID when known (bot-account sends and matched messages).
+func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID string, webhook *WebhookTarget, msg OutgoingMessage,
+	match recentMatcher, presumeOnVerifyFailure bool, label string) (SendResult, string) {
 	if err := ctx.Err(); err != nil {
-		return SendResult{Err: err}
+		return SendResult{Err: err}, ""
 	}
-	_, err := d.Send(ctx, channelID, webhook, msg)
+	id, err := d.Send(ctx, channelID, webhook, msg)
 	switch discord.ClassifySend(err) {
 	case discord.Sent:
-		return SendResult{Delivered: true}
+		return SendResult{Delivered: true}, id
 	case discord.Unknown:
-		return verifyUnknownSend(ctx, d, channelID, webhook, msg, err)
+		return verifyUnknownSend(ctx, d, channelID, webhook, msg, err, match, presumeOnVerifyFailure, label)
 	}
 
 	// Rejected: nothing was delivered.
+	gone := false
 	if webhook != nil && discord.IsWebhookGone(err) {
+		gone = true
 		d.InvalidateChannelWebhook(guildID, channelID)
 		if cerr := ctx.Err(); cerr != nil {
-			return SendResult{Err: cerr}
+			return SendResult{Err: cerr, WebhookGone: true}, ""
 		}
-		_, err = d.Send(ctx, channelID, nil, msg)
+		id, err = d.Send(ctx, channelID, nil, msg)
 		switch discord.ClassifySend(err) {
 		case discord.Sent:
-			return SendResult{Delivered: true}
+			return SendResult{Delivered: true, WebhookGone: true}, id
 		case discord.Unknown:
-			return verifyUnknownSend(ctx, d, channelID, nil, msg, err)
+			res, vid := verifyUnknownSend(ctx, d, channelID, nil, msg, err, match, presumeOnVerifyFailure, label)
+			res.WebhookGone = true
+			return res, vid
 		}
 	}
 	if !isKnownRejection(err) {
-		logger.For("delivery").Warn("send rejected with unrecognised code, not retrying",
+		logger.For("delivery").Warn(label+" rejected with unrecognised code, not retrying",
 			append([]any{"guild_id", guildID, "channel_id", channelID}, discord.RESTAttrs(err)...)...)
 	}
-	return SendResult{Err: err}
+	return SendResult{Err: err, WebhookGone: gone}, ""
 }
 
 // isKnownRejection reports whether err is a Rejected code that callers have terminal handling for.
@@ -81,19 +107,26 @@ func isKnownRejection(err error) bool {
 
 // verifyUnknownSend reads recent channel messages to decide whether an Unknown send actually landed.
 // It runs detached from ctx so that it still works when the send failed because of shutdown.
-func verifyUnknownSend(ctx context.Context, d DiscordPort, channelID string, webhook *WebhookTarget, msg OutgoingMessage, sendErr error) SendResult {
+// When the read itself fails the message is treated as delivered or not per presumeOnVerifyFailure.
+func verifyUnknownSend(ctx context.Context, d DiscordPort, channelID string, webhook *WebhookTarget, msg OutgoingMessage, sendErr error,
+	match recentMatcher, presumeOnVerifyFailure bool, label string) (SendResult, string) {
 	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verifyTimeout)
 	defer cancel()
 	recent, err := d.RecentMessages(vctx, channelID, verifyMessageLimit)
 	if err != nil {
-		logger.For("delivery").Warn("could not verify unknown send, treating as delivered",
+		if presumeOnVerifyFailure {
+			logger.For("delivery").Warn("could not verify unknown "+label+", treating as delivered",
+				"channel_id", channelID, "send_err", sendErr, "err", err)
+			return SendResult{Delivered: true, Presumed: true}, ""
+		}
+		logger.For("delivery").Warn("could not verify unknown "+label+", treating as not delivered",
 			"channel_id", channelID, "send_err", sendErr, "err", err)
-		return SendResult{Delivered: true, Presumed: true}
+		return SendResult{Err: sendErr}, ""
 	}
-	if messageInRecent(recent, d.BotUserID(), webhook, msg) {
-		return SendResult{Delivered: true}
+	if id, ok := match(recent, d.BotUserID(), webhook, msg); ok {
+		return SendResult{Delivered: true}, id
 	}
-	return SendResult{Err: sendErr}
+	return SendResult{Err: sendErr}, ""
 }
 
 // messageInRecent reports whether recent holds a message authored by the bot user (or the webhook used)

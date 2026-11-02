@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -72,13 +71,7 @@ func (r *Repo) IterateUserSubs(ctx context.Context, fn func(*AnimeSubs) error) e
 	return nil
 }
 
-// Set upserts an anime_subs document by id. Pass isGuild and shows; id is set from the argument.
-func (r *Repo) Set(ctx context.Context, id string, isGuild bool, shows []*ShowSub) error {
-	return r.Seed(ctx, id, isGuild, shows, time.Now().UTC().Format("2006-01-02"))
-}
-
-// Seed upserts an anime_subs document by id like Set, stamping last_seed_date with the given
-// seedDate (YYYY-MM-DD, UTC) instead of today's date.
+// Seed upserts an anime_subs document by id, stamping last_seed_date with the given seedDate (YYYY-MM-DD, UTC).
 func (r *Repo) Seed(ctx context.Context, id string, isGuild bool, shows []*ShowSub, today string) error {
 	filter := bson.M{"id": id}
 	update := bson.M{

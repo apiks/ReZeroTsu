@@ -193,6 +193,27 @@ func TestFeedsWebhookFallbackOnlyOnDeadWebhook(t *testing.T) {
 	}
 }
 
+func TestFeedsDeadWebhookIsNotReusedForLaterChunks(t *testing.T) {
+	d, st := newFakeDiscord(rejectWith(discord.UnknownWebhookCode)), newFakeSentState()
+	d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
+	// 11 items handed to one flush make two chunks (10 + 1).
+	var items []sendItem
+	for i := 0; i < 11; i++ {
+		items = append(items, sendItem{
+			embed:         &discordgo.MessageEmbed{Author: &discordgo.MessageEmbedAuthor{Name: fmt.Sprintf("a%d", i), URL: fmt.Sprintf("https://x/%d", i)}},
+			feed:          entry("c1", false),
+			compositeGUID: fmt.Sprintf("g%d", i),
+		})
+	}
+	flushChannel(context.Background(), d, st, "g1", "c1", items)
+	if d.WebhookSends != 1 {
+		t.Errorf("webhook attempts = %d, want 1 (later chunks must not reuse the dead webhook)", d.WebhookSends)
+	}
+	if got := len(d.deliveredTo("c1")); got != 2 {
+		t.Errorf("delivered chunks = %d, want 2", got)
+	}
+}
+
 func TestFeedsDeletedChannelRemovesFeeds(t *testing.T) {
 	d, st := newFakeDiscord(rejectWith(discord.UnknownChannelCode)), newFakeSentState()
 	runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false)}, parsedFor(1))

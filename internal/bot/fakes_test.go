@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/feed_checks"
@@ -55,6 +54,8 @@ type fakeDiscord struct {
 	script    []step
 	Delivered []delivered
 	SendCalls int
+	// WebhookSends counts Send calls made through a webhook, delivered or not.
+	WebhookSends int
 
 	// Configuration.
 	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
@@ -74,6 +75,9 @@ func newFakeDiscord(script ...step) *fakeDiscord {
 func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
 	f.mu.Lock()
 	f.SendCalls++
+	if webhook != nil {
+		f.WebhookSends++
+	}
 	st := succeed()
 	if len(f.script) > 0 {
 		st = f.script[0]
@@ -227,16 +231,6 @@ func (f *fakeSentState) GetAnimeSubs(_ context.Context, id string) (*anime_subs.
 	c := *d
 	c.Shows = copyShows(d.Shows)
 	return &c, nil
-}
-
-func (f *fakeSentState) SetAnimeSubs(_ context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.AnimeSubs[id] = &anime_subs.AnimeSubs{
-		ID: id, IsGuild: isGuild, Shows: copyShows(shows),
-		LastSeedDate: time.Now().UTC().Format("2006-01-02"),
-	}
-	return nil
 }
 
 func (f *fakeSentState) SeedAnimeSubs(_ context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error {

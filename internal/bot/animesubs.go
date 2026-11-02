@@ -673,6 +673,10 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 			}
 		}
 		res := sendWithRules(ctx, d, guildID, channelID, webhook, OutgoingMessage{Content: content, Embeds: embeds})
+		if res.WebhookGone {
+			// The webhook was invalidated: later chunks go through the bot account instead of failing on it again.
+			webhook = nil
+		}
 		if res.Delivered {
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.

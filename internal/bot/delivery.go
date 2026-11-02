@@ -68,7 +68,6 @@ type DiscordPort interface {
 // Production wiring is the Mongo repositories; tests use an in-memory fake.
 type SentState interface {
 	GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
-	SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error
 	// MarkShowsNotified sets notified=true for the named shows in one single-statement update.
 	MarkShowsNotified(ctx context.Context, id string, showNames []string) error
 	// SeedAnimeSubs fully rewrites the document, stamping seedDate (YYYY-MM-DD, UTC) as its last seed date.
@@ -210,10 +209,6 @@ func newMongoSentState(db *database.Client) SentState { return &mongoSentState{d
 
 func (m *mongoSentState) GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error) {
 	return m.db.AnimeSubs().GetByID(ctx, id)
-}
-
-func (m *mongoSentState) SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error {
-	return m.db.AnimeSubs().Set(ctx, id, isGuild, shows)
 }
 
 func (m *mongoSentState) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {

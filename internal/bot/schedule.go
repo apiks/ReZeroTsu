@@ -91,7 +91,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	d := newDiscordgoPort(s)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
-	guilds :=make([]*discordgo.Guild, 0, len(s.State.Guilds))
+	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
 			continue

@@ -3,9 +3,6 @@ package bot
 import (
 	"context"
 
-	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
-
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -17,57 +14,13 @@ import (
 //
 // It also returns the delivered message ID when known (bot-account sends and verified messages), for pinning.
 func feedSend(ctx context.Context, d DiscordPort, guildID, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (SendResult, string) {
-	if err := ctx.Err(); err != nil {
-		return SendResult{Err: err}, ""
-	}
-	id, err := d.Send(ctx, channelID, webhook, msg)
-	switch discord.ClassifySend(err) {
-	case discord.Sent:
-		return SendResult{Delivered: true}, id
-	case discord.Unknown:
-		return verifyFeedSend(ctx, d, channelID, webhook, msg, err)
-	}
-
-	// Rejected: nothing was delivered.
-	if webhook != nil && discord.IsWebhookGone(err) {
-		d.InvalidateChannelWebhook(guildID, channelID)
-		if cerr := ctx.Err(); cerr != nil {
-			return SendResult{Err: cerr}, ""
-		}
-		id, err = d.Send(ctx, channelID, nil, msg)
-		switch discord.ClassifySend(err) {
-		case discord.Sent:
-			return SendResult{Delivered: true}, id
-		case discord.Unknown:
-			return verifyFeedSend(ctx, d, channelID, nil, msg, err)
-		}
-	}
-	if !isKnownRejection(err) {
-		logger.For("delivery").Warn("feed send rejected with unrecognised code, not retrying",
-			append([]any{"guild_id", guildID, "channel_id", channelID}, discord.RESTAttrs(err)...)...)
-	}
-	return SendResult{Err: err}, ""
-}
-
-// verifyFeedSend decides whether an Unknown feed send landed. Verification failure means not delivered.
-func verifyFeedSend(ctx context.Context, d DiscordPort, channelID string, webhook *WebhookTarget, msg OutgoingMessage, sendErr error) (SendResult, string) {
-	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verifyTimeout)
-	defer cancel()
-	recent, err := d.RecentMessages(vctx, channelID, verifyMessageLimit)
-	if err != nil {
-		logger.For("delivery").Warn("could not verify unknown feed send, treating as not delivered",
-			"channel_id", channelID, "send_err", sendErr, "err", err)
-		return SendResult{Err: sendErr}, ""
-	}
-	if id, ok := feedMessageInRecent(recent, d.BotUserID(), webhook, msg.Embeds); ok {
-		return SendResult{Delivered: true}, id
-	}
-	return SendResult{Err: sendErr}, ""
+	return deliverWithRules(ctx, d, guildID, channelID, webhook, msg, feedMessageInRecent, false, "feed send")
 }
 
 // feedMessageInRecent finds a message by the bot (or the webhook used) that contains every wanted embed,
 // matched on the embed author URL (author name when the item has no link).
-func feedMessageInRecent(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, want []*discordgo.MessageEmbed) (string, bool) {
+func feedMessageInRecent(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {
+	want := msg.Embeds
 	if len(want) == 0 {
 		return "", false
 	}
