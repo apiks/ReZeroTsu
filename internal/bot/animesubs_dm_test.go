@@ -153,6 +153,43 @@ func TestProcessAnimeSubUser(t *testing.T) {
 			},
 		},
 		{
+			name: "duplicate entries: an episode recorded on the earlier entry is not DMed again",
+			run: func(t *testing.T) {
+				show := ep("Show A", "show-a", "Episode 1", aired)
+				d := newFakeDiscord()
+				st := newState(
+					&anime_subs.ShowSub{Show: "Show A", Notified: true, LastNotifiedAirUnix: aired, LastNotifiedEpisode: episodeKey(show)},
+					&anime_subs.ShowSub{Show: "show a"},
+				)
+				_ = run(bg, d, st, show)
+				if n := len(d.deliveredTo(dm)); n != 0 {
+					t.Fatalf("DMs = %d, want 0", n)
+				}
+			},
+		},
+		{
+			name: "duplicate entries: the episode is not DMed again after the collapse",
+			run: func(t *testing.T) {
+				show := ep("Show A", "show-a", "Episode 2", aired)
+				d := newFakeDiscord()
+				st := newState(
+					&anime_subs.ShowSub{Show: "Show A", Notified: true, LastNotifiedAirUnix: aired - 7*24*3600},
+					&anime_subs.ShowSub{Show: " show a "},
+					&anime_subs.ShowSub{Show: "SHOW A", Notified: true, LastNotifiedAirUnix: aired - 14*24*3600},
+				)
+				_ = run(bg, d, st, show)
+				st.collapseUserShows(user)
+				_ = run(bg, d, st, show)
+				if n := len(d.deliveredTo(dm)); n != 1 {
+					t.Fatalf("DMs = %d, want 1", n)
+				}
+				doc, _ := st.GetAnimeSubs(bg, user)
+				if len(doc.Shows) != 1 {
+					t.Fatalf("shows after collapse = %d, want 1", len(doc.Shows))
+				}
+			},
+		},
+		{
 			name: "timeout without delivery is not recorded and is retried next run",
 			run: func(t *testing.T) {
 				d, st := newFakeDiscord(timeoutWithoutDelivery()), newState(&anime_subs.ShowSub{Show: "Show A"})

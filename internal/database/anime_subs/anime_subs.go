@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -134,15 +135,12 @@ func (r *Repo) AppendShows(ctx context.Context, id string, shows []*ShowSub) err
 
 // appendedShowsExpr is an aggregation expression yielding the document's shows with the given shows appended.
 // A stored shows of null (written by older versions) or any other non-array counts as empty, which a plain
-// $push would reject. The shows are wrapped in $literal so a name starting with "$" is never read as a field path.
+// $push would reject. The shows array is wrapped in $literal so a name starting with "$" is never read as a
+// field path.
 func appendedShowsExpr(shows []*ShowSub) bson.M {
-	literals := make(bson.A, 0, len(shows))
-	for _, s := range shows {
-		literals = append(literals, bson.M{"$literal": s})
-	}
 	return bson.M{"$concatArrays": bson.A{
 		bson.M{"$cond": bson.A{bson.M{"$isArray": "$shows"}, "$shows", bson.A{}}},
-		literals,
+		bson.M{"$literal": shows},
 	}}
 }
 
@@ -165,8 +163,8 @@ func addShowIfAbsent(ctx context.Context, updateOne updateOneFunc, id string, su
 		}}},
 	}
 	// A pipeline update: it tolerates a stored shows of null and fills the defaults a $setOnInsert would.
+	// No "id" entry: a matched document already has it, and an upsert takes it from the equality filter.
 	update := mongo.Pipeline{{{Key: "$set", Value: bson.M{
-		"id":             bson.M{"$ifNull": bson.A{"$id", id}},
 		"is_guild":       bson.M{"$ifNull": bson.A{"$is_guild", false}},
 		"last_seed_date": bson.M{"$ifNull": bson.A{"$last_seed_date", ""}},
 		"shows":          appendedShowsExpr([]*ShowSub{sub}),
@@ -200,38 +198,106 @@ func (r *Repo) RemoveShows(ctx context.Context, id string, showNames []string) e
 	return nil
 }
 
-// CollapseDuplicateShows removes null (and other non-document) entries and every entry whose show name repeats
-// an earlier one (case-insensitive, surrounding spaces ignored), keeping the first, in one pipeline update.
-// Being a single statement, it cannot lose a concurrent /sub or notification write.
-func (r *Repo) CollapseDuplicateShows(ctx context.Context, id string) error {
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, mongo.Pipeline{
+// CollapseDuplicateShows removes null (and other non-document) entries and entries without a non-blank string
+// show, and keeps one entry per CollapseKey (see collapsedShowsExpr for which), in one pipeline update. It
+// reports whether the document was modified. Being a single statement, it cannot lose a concurrent /sub or
+// notification write.
+func (r *Repo) CollapseDuplicateShows(ctx context.Context, id string) (bool, error) {
+	res, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, mongo.Pipeline{
 		{{Key: "$set", Value: bson.M{"shows": collapsedShowsExpr()}}},
-	}); err != nil {
-		return fmt.Errorf("CollapseDuplicateShows: %w", err)
+	})
+	if err != nil {
+		return false, fmt.Errorf("CollapseDuplicateShows: %w", err)
 	}
-	return nil
+	return res.ModifiedCount > 0, nil
 }
 
-// collapsedShowsExpr is an aggregation expression yielding the document's shows without non-document entries
-// and without later duplicates by normalised name. A stored shows that is not an array counts as empty.
+// mongoTrimSet is the default character set of the $trim aggregation operator (MongoDB documentation).
+const mongoTrimSet = "\x00 \t\n\v\f\r             "
+
+// CollapseKey is the duplicate key of a show name exactly as collapsedShowsExpr computes it in Mongo: trimmed of
+// $trim's default whitespace set, then lowercased ASCII-only like $toLower. An empty key marks an entry the
+// collapse removes. Go code deciding whether a document needs a collapse must use this key, or it may flag a
+// document Mongo leaves unchanged (forever) or miss one Mongo would change.
+func CollapseKey(name string) string {
+	s := strings.Trim(name, mongoTrimSet)
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// MatchKey is the case-insensitive key that matches a subscribed show name to a schedule show name: trimmed like
+// CollapseKey, but lowercased Unicode-aware. Names with the same CollapseKey always have the same MatchKey, so a
+// collapse never merges entries the notifier tells apart.
+func MatchKey(name string) string {
+	return strings.ToLower(strings.Trim(name, mongoTrimSet))
+}
+
+// SupersedesDuplicate reports whether candidate, appearing after current in a document's shows, is the entry to
+// keep for both: the one with the greater last-notified air time, ties going to the later entry. It is the rule
+// collapsedShowsExpr applies, so the entry the notifier reads and updates is the one a collapse keeps.
+func SupersedesDuplicate(current, candidate *ShowSub) bool {
+	return candidate.LastNotifiedAirUnix >= current.LastNotifiedAirUnix
+}
+
+// collapsedShowsExpr is an aggregation expression yielding the document's shows without non-document entries,
+// without entries whose show is missing, not a string or blank (CollapseKey ""), and with one entry per
+// CollapseKey: the one SupersedesDuplicate picks (greatest last_notified_air_unix, missing counting as 0, ties
+// going to the later entry), at the position of the group's first entry. A stored shows that is not an array
+// counts as empty.
 func collapsedShowsExpr() bson.M {
+	// k is the entry's CollapseKey: $trim (default set) then the ASCII-only $toLower, "" for a non-string show.
 	key := bson.M{"$cond": bson.A{
 		bson.M{"$eq": bson.A{bson.M{"$type": "$$this.show"}, "string"}},
 		bson.M{"$toLower": bson.M{"$trim": bson.M{"input": "$$this.show"}}},
 		"",
 	}}
-	keep := bson.M{
-		"keys": bson.M{"$concatArrays": bson.A{"$$value.keys", bson.A{key}}},
+	airUnix := func(entry string) bson.M {
+		return bson.M{"$ifNull": bson.A{entry + ".last_notified_air_unix", 0}}
+	}
+	appendNew := bson.M{
+		"keys": bson.M{"$concatArrays": bson.A{"$$value.keys", bson.A{"$$k"}}},
 		"out":  bson.M{"$concatArrays": bson.A{"$$value.out", bson.A{"$$this"}}},
 	}
-	skip := bson.M{"$or": bson.A{
-		bson.M{"$ne": bson.A{bson.M{"$type": "$$this"}, "object"}},
-		bson.M{"$in": bson.A{key, "$$value.keys"}},
+	// replaceAtI puts this entry in place of the kept duplicate at index i.
+	replaceAtI := bson.M{
+		"keys": "$$value.keys",
+		"out": bson.M{"$map": bson.M{
+			"input": bson.M{"$range": bson.A{0, bson.M{"$size": "$$value.out"}}},
+			"as":    "j",
+			"in": bson.M{"$cond": bson.A{
+				bson.M{"$eq": bson.A{"$$j", "$$i"}}, "$$this", bson.M{"$arrayElemAt": bson.A{"$$value.out", "$$j"}},
+			}},
+		}},
+	}
+	duplicate := bson.M{"$let": bson.M{
+		"vars": bson.M{"kept": bson.M{"$arrayElemAt": bson.A{"$$value.out", "$$i"}}},
+		"in": bson.M{"$cond": bson.A{
+			bson.M{"$gte": bson.A{airUnix("$$this"), airUnix("$$kept")}}, replaceAtI, "$$value",
+		}},
+	}}
+	step := bson.M{"$let": bson.M{
+		"vars": bson.M{"k": key},
+		"in": bson.M{"$cond": bson.A{
+			bson.M{"$or": bson.A{
+				bson.M{"$ne": bson.A{bson.M{"$type": "$$this"}, "object"}},
+				bson.M{"$eq": bson.A{"$$k", ""}},
+			}},
+			"$$value",
+			bson.M{"$let": bson.M{
+				"vars": bson.M{"i": bson.M{"$indexOfArray": bson.A{"$$value.keys", "$$k"}}},
+				"in":   bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$$i", -1}}, appendNew, duplicate}},
+			}},
+		}},
 	}}
 	reduced := bson.M{"$reduce": bson.M{
 		"input":        bson.M{"$cond": bson.A{bson.M{"$isArray": "$shows"}, "$shows", bson.A{}}},
 		"initialValue": bson.M{"keys": bson.A{}, "out": bson.A{}},
-		"in":           bson.M{"$cond": bson.A{skip, "$$value", keep}},
+		"in":           step,
 	}}
 	return bson.M{"$let": bson.M{"vars": bson.M{"r": reduced}, "in": "$$r.out"}}
 }

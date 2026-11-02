@@ -16,12 +16,14 @@ type fakeUserSubs struct {
 	// collapsed lists the IDs CollapseDuplicateShows was called for; ops is "remove:id" / "collapse:id" in order.
 	collapsed []string
 	ops       []string
+	// collapseNoop makes CollapseDuplicateShows report that it modified nothing.
+	collapseNoop bool
 }
 
-func (f *fakeUserSubs) CollapseDuplicateShows(_ context.Context, id string) error {
+func (f *fakeUserSubs) CollapseDuplicateShows(_ context.Context, id string) (bool, error) {
 	f.collapsed = append(f.collapsed, id)
 	f.ops = append(f.ops, "collapse:"+id)
-	return nil
+	return !f.collapseNoop, nil
 }
 
 func newFakeUserSubs(docs ...*anime_subs.AnimeSubs) *fakeUserSubs {
@@ -71,15 +73,25 @@ func TestCleanupFinishedShows(t *testing.T) {
 }
 
 func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
-	airing := map[string]struct{}{"frieren": {}, "dandadan": {}}
+	airing := map[string]struct{}{"frieren": {}, "dandadan": {}, "äbc": {}}
 	sub := func(name string) *anime_subs.ShowSub { return &anime_subs.ShowSub{Show: name} }
 	tests := []struct {
-		name        string
-		shows       []*anime_subs.ShowSub
-		wantRemoved []string
-		wantOps     []string
-		wantUpdated int
+		name         string
+		shows        []*anime_subs.ShowSub
+		collapseNoop bool
+		wantRemoved  []string
+		wantOps      []string
+		wantUpdated  int
 	}{
+		{name: "entry without a show name is pruned", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
+		{name: "whitespace-only show name is pruned", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("  ")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
+		// Mongo's $toLower is ASCII-only and $trim keeps U+3000, so these are not duplicates to the collapse.
+		{name: "names differing in non-ASCII case are not flagged", shows: []*anime_subs.ShowSub{sub("ÄBC"), sub("äbc")}, wantUpdated: 0},
+		{name: "names differing in a space $trim keeps are not flagged", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("　Frieren")}, wantUpdated: 0},
+		{
+			name: "a collapse that modifies nothing is not counted", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("frieren")},
+			collapseNoop: true, wantOps: []string{"collapse:u"}, wantUpdated: 0,
+		},
 		{name: "clean document is untouched", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("Dandadan")}, wantUpdated: 0},
 		{name: "case-insensitive duplicate is collapsed", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("frieren")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
 		{name: "duplicate differing in surrounding spaces is collapsed", shows: []*anime_subs.ShowSub{sub("Frieren"), sub(" FRIEREN ")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
@@ -98,6 +110,7 @@ func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: tc.shows})
+			st.collapseNoop = tc.collapseNoop
 			updated, err := cleanupFinishedShows(context.Background(), st, airing)
 			if err != nil {
 				t.Fatal(err)
