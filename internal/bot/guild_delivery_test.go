@@ -269,18 +269,19 @@ func TestGuildNewEpisodesNoSendAfterCancel(t *testing.T) {
 	}
 }
 
-func TestSendWithRulesCancelledMidSendNeverFallsBack(t *testing.T) {
-	d := newFakeDiscord(blockUntilCancelled())
+func TestGuildNewEpisodesCancelledMidSendNeverFallsBack(t *testing.T) {
+	h := newGuildHarness(1, blockUntilCancelled())
+	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
 	ctx, cancel := context.WithCancel(context.Background())
-	d.OnBlock = cancel
-	res := sendWithRules(ctx, d, "g1", "c1", &WebhookTarget{ID: "wh", Token: "t"}, OutgoingMessage{})
-	if res.Delivered {
+	h.d.OnBlock = cancel
+	h.run(ctx)
+	if h.notifiedCount() != 0 {
 		t.Error("reported delivered for an undelivered message")
 	}
-	if d.SendCalls != 1 {
-		t.Errorf("send calls = %d, want 1 (no fallback on context error)", d.SendCalls)
+	if h.d.SendCalls != 1 {
+		t.Errorf("send calls = %d, want 1 (no fallback on context error)", h.d.SendCalls)
 	}
-	if len(d.Invalidated) != 0 {
-		t.Errorf("webhook invalidated on a context error: %v", d.Invalidated)
+	if len(h.d.Invalidated) != 0 {
+		t.Errorf("webhook invalidated on a context error: %v", h.d.Invalidated)
 	}
 }

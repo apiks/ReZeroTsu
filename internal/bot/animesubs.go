@@ -485,7 +485,7 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 				return acqErr
 			}
 		}
-		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := newChannelSender(d, "", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		if !res.Delivered {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -732,7 +732,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	if len(due) == 0 {
 		return
 	}
-	sender := newChannelSender(d, guildID, channelID)
+	sender := newChannelSender(d, guildID, channelID, newEpisodesPolicy())
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
 		if ctx.Err() != nil {
 			return
@@ -755,7 +755,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 			}
 		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
-		res, _ := sender.send(ctx, OutgoingMessage{Content: content, Embeds: embeds})
+		res := sender.post(ctx,OutgoingMessage{Content: content, Embeds: embeds})
 		if res.Delivered {
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.

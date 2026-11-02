@@ -169,9 +169,9 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
-	sender := newChannelSender(d, guildID, ap.ID).withPolicy(scheduleMatcher(emb.Title, now), false, "schedule send")
+	sender := newChannelSender(d, guildID, ap.ID, schedulePolicy(emb.Title, now))
 
-	var res SendResult
+	var res PostResult
 	for attempt := range 2 {
 		if attempt > 0 {
 			t := time.NewTimer(scheduleRetryWait)
@@ -187,7 +187,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 				return err
 			}
 		}
-		res, _ = sender.send(ctx, msg)
+		res = sender.post(ctx, msg)
 		if res.Delivered {
 			break
 		}
