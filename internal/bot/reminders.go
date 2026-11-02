@@ -220,28 +220,33 @@ func processReminderSlice(ctx context.Context, d RunOperations, senders *channel
 			}
 		}
 		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
-		switch {
-		case res.Delivered:
+		switch res.Outcome {
+		case PostDelivered, PostPresumed:
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
-			logger.For("reminders").Debug("reminder sent", "user_id", userID, "remind_id", r.RemindID, "presumed", res.Presumed)
-		case ctx.Err() != nil:
+			logger.For("reminders").Debug("reminder sent", "user_id", userID, "remind_id", r.RemindID, "presumed", res.Outcome == PostPresumed)
+		case PostCancelled:
 			return ctx.Err()
-		case discord.IsUserUndeliverable(res.Err):
-			// The user can never be DMed (closed DMs, deleted account): drop after this one attempt.
-			logger.For("reminders").Warn("reminder rejected, dropping",
-				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
-			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
-		case discord.ClassifySend(res.Err) == discord.Rejected && reminderGivenUp(r, now):
-			// Rejected with another code for more than reminderGiveUpAfter: it is not going to work.
-			logger.For("reminders").Warn("reminder still rejected long after the first failure, giving up",
-				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
-			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
-		default:
-			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
-			// A rejection starts the give-up window, if this is the reminder's first one.
-			if discord.ClassifySend(res.Err) == discord.Rejected {
+		case PostRejected:
+			switch {
+			case discord.IsUserUndeliverable(res.Err):
+				// The user can never be DMed (closed DMs, deleted account): drop after this one attempt.
+				logger.For("reminders").Warn("reminder rejected, dropping",
+					append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
+				remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+			case reminderGivenUp(r, now):
+				// Rejected with another code for more than reminderGiveUpAfter: it is not going to work.
+				logger.For("reminders").Warn("reminder still rejected long after the first failure, giving up",
+					append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
+				remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+			default:
+				// Any other rejection starts the give-up window, if this is the reminder's first one; keep it for
+				// the next run.
 				rejected = append(rejected, r)
+				logger.For("reminders").Warn("reminder send failed, will retry",
+					append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 			}
+		case PostMissing:
+			// An Unknown outcome verified as not delivered: keep it for the next run without starting the window.
 			logger.For("reminders").Warn("reminder send failed, will retry",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 		}

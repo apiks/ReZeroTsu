@@ -61,14 +61,53 @@ func schedulePolicy(title string, now time.Time) sendPolicy {
 	return sendPolicy{match: scheduleMatcher(title, now), label: "schedule send"}
 }
 
-// PostResult is the outcome of one channelSender.post.
+// PostOutcome is what one channelSender.post concluded about its message. It differs from the discord package's
+// SendOutcome, which classifies the answer to a single Discord call (sent, rejected or unknown): a post may make
+// several calls (webhook, bot-account fallback, verification read) and reports the one conclusion that a delivery
+// run switches on, including a shutdown that the single calls do not describe.
+type PostOutcome int
+
+const (
+	// PostDelivered means the message is confirmed delivered.
+	PostDelivered PostOutcome = iota + 1
+	// PostPresumed means the message is treated as delivered because verifying an unknown outcome failed under a
+	// policy that presumes delivery.
+	PostPresumed
+	// PostRejected means Discord refused the final attempt; nothing was delivered.
+	PostRejected
+	// PostMissing means an unknown outcome was verified as not delivered, or its verification failed under a
+	// policy that does not presume delivery.
+	PostMissing
+	// PostCancelled means the post ended undelivered while shutdown was under way.
+	PostCancelled
+)
+
+func (o PostOutcome) String() string {
+	switch o {
+	case PostDelivered:
+		return "delivered"
+	case PostPresumed:
+		return "presumed"
+	case PostRejected:
+		return "rejected"
+	case PostMissing:
+		return "missing"
+	case PostCancelled:
+		return "cancelled"
+	default:
+		return "invalid"
+	}
+}
+
+// PostResult is the result of one channelSender.post.
 type PostResult struct {
-	// Delivered is true when the message is confirmed, or presumed (verification failed), delivered.
-	Delivered bool
-	// Presumed is true when Delivered was assumed because verification failed.
-	Presumed bool
-	// Err is the error that ended an undelivered post (a Rejected error, the Unknown error verified missing,
-	// or the context error).
+	// Outcome is what the post concluded.
+	Outcome PostOutcome
+	// Terminal is why Discord's final rejection means the channel cannot be posted to; it is
+	// discord.ChannelNotTerminal unless Outcome is PostRejected.
+	Terminal discord.ChannelTerminalReason
+	// Err is the error that ended an undelivered post (the rejection, the unknown error verified missing, or the
+	// context error), kept for logging.
 	Err error
 	// MessageID is the delivered message's ID when known (bot-account sends and matched messages).
 	MessageID string
@@ -146,28 +185,37 @@ func (c *channelSender) post(ctx context.Context, msg OutgoingMessage) PostResul
 	if out.webhookRejected {
 		c.webhook = nil
 	}
-	if !out.Delivered && out.Err != nil && discord.ClassifyChannelTerminal(out.Err) != discord.ChannelNotTerminal {
+	if out.Outcome == PostRejected && out.Terminal != discord.ChannelNotTerminal {
 		// The final attempt was rejected as channel-terminal: drop the channel's cached webhook so the next run
 		// resolves it again (the permission check then fails before any REST call).
 		c.cache.Invalidate(c.guildID, c.channelID)
 	}
+	if (out.Outcome == PostRejected || out.Outcome == PostMissing) && ctx.Err() != nil {
+		// Undelivered while shutdown is under way, whatever the underlying error: no run handles it as a failure.
+		out.PostResult = PostResult{Outcome: PostCancelled, Err: out.Err}
+	}
 	return out.PostResult
+}
+
+// rejectedResult is the result of a post whose final attempt Discord refused with err.
+func rejectedResult(err error) PostResult {
+	return PostResult{Outcome: PostRejected, Terminal: discord.ClassifyChannelTerminal(err), Err: err}
 }
 
 // deliver makes one post: cancel check, never-attempted check, outcome classification, rejected-webhook
 // fallback, Unknown verification and unrecognised-rejection logging.
 func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOutcome {
 	if err := ctx.Err(); err != nil {
-		return sendOutcome{PostResult: PostResult{Err: err}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
 	}
 	webhook := c.webhook
 	id, err := c.d.Send(ctx, c.channelID, webhook, msg)
 	if sendNotAttempted(err) {
-		return sendOutcome{PostResult: PostResult{Err: err}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}}
 	}
 	switch discord.ClassifySend(err) {
 	case discord.Sent:
-		return sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 	case discord.Unknown:
 		return c.verify(ctx, webhook, msg, err)
 	}
@@ -182,19 +230,19 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 			c.cache.Invalidate(c.guildID, c.channelID)
 		}
 		if cerr := ctx.Err(); cerr != nil {
-			return sendOutcome{PostResult: PostResult{Err: cerr}, webhookRejected: true}
+			return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: cerr}, webhookRejected: true}
 		}
 		id, err = c.d.Send(ctx, c.channelID, nil, msg)
 		if sendNotAttempted(err) {
-			return sendOutcome{PostResult: PostResult{Err: err}, webhookRejected: true}
+			return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}, webhookRejected: true}
 		}
 		if outcome := discord.ClassifySend(err); outcome != discord.Rejected {
-			res := sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+			res := sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 			if outcome == discord.Unknown {
 				res = c.verify(ctx, nil, msg, err)
 			}
 			res.webhookRejected = true
-			if res.Delivered && !res.Presumed && !gone {
+			if res.Outcome == PostDelivered && !gone {
 				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
 				// run spends another rejected (401/403) request on it before falling back. A presumed delivery
 				// proves nothing about the bot account, so it does not avoid the webhook.
@@ -203,10 +251,10 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 			return res
 		}
 		c.logUnrecognisedRejection(err)
-		return sendOutcome{PostResult: PostResult{Err: err}, webhookRejected: true}
+		return sendOutcome{PostResult: rejectedResult(err), webhookRejected: true}
 	}
 	c.logUnrecognisedRejection(err)
-	return sendOutcome{PostResult: PostResult{Err: err}}
+	return sendOutcome{PostResult: rejectedResult(err)}
 }
 
 // verify reads recent channel messages to decide whether an Unknown send actually landed. It runs detached from
@@ -220,16 +268,16 @@ func (c *channelSender) verify(ctx context.Context, webhook *WebhookTarget, msg 
 		if c.policy.presumeOnVerifyFailure {
 			logger.For("delivery").Warn("could not verify unknown "+c.policy.label+", treating as delivered",
 				"channel_id", c.channelID, "send_err", sendErr, "err", err)
-			return sendOutcome{PostResult: PostResult{Delivered: true, Presumed: true}}
+			return sendOutcome{PostResult: PostResult{Outcome: PostPresumed}}
 		}
 		logger.For("delivery").Warn("could not verify unknown "+c.policy.label+", treating as not delivered",
 			"channel_id", c.channelID, "send_err", sendErr, "err", err)
-		return sendOutcome{PostResult: PostResult{Err: sendErr}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 	}
 	if id, ok := c.policy.match(recent, c.d.BotUserID(), webhook, msg); ok {
-		return sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 	}
-	return sendOutcome{PostResult: PostResult{Err: sendErr}}
+	return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 }
 
 // logUnrecognisedRejection warns about a Rejected error that callers have no terminal handling for.
