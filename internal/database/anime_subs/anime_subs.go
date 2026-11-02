@@ -71,7 +71,12 @@ func (r *Repo) IterateUserSubs(ctx context.Context, fn func(*AnimeSubs) error) e
 
 // Set upserts an anime_subs document by id. Pass isGuild and shows; id is set from the argument.
 func (r *Repo) Set(ctx context.Context, id string, isGuild bool, shows []*ShowSub) error {
-	today := time.Now().UTC().Format("2006-01-02")
+	return r.Seed(ctx, id, isGuild, shows, time.Now().UTC().Format("2006-01-02"))
+}
+
+// Seed upserts an anime_subs document by id like Set, stamping last_seed_date with the given
+// seedDate (YYYY-MM-DD, UTC) instead of today's date.
+func (r *Repo) Seed(ctx context.Context, id string, isGuild bool, shows []*ShowSub, today string) error {
 	filter := bson.M{"id": id}
 	update := bson.M{
 		"$set": bson.M{
@@ -84,6 +89,19 @@ func (r *Repo) Set(ctx context.Context, id string, isGuild bool, shows []*ShowSu
 	_, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	if err != nil {
 		return fmt.Errorf("Set: %w", err)
+	}
+	return nil
+}
+
+// AppendShows adds shows to an existing document without rewriting its other entries or its seed date.
+// Entries whose show name already exists (case-insensitive) are the caller's responsibility to filter out.
+func (r *Repo) AppendShows(ctx context.Context, id string, shows []*ShowSub) error {
+	if len(shows) == 0 {
+		return nil
+	}
+	_, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$push": bson.M{"shows": bson.M{"$each": shows}}})
+	if err != nil {
+		return fmt.Errorf("AppendShows: %w", err)
 	}
 	return nil
 }

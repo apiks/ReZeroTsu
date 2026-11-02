@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"ReZeroTsu/internal/animeschedule"
+	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/guilds"
 )
 
@@ -24,6 +25,10 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 	newState := func() *fakeSentState {
 		st := newFakeSentState()
 		st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1", RoleID: "r1"}
+		// Document already created by the daily seed with nothing notified yet.
+		st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{
+			{Show: "Aired One", Guild: true}, {Show: "Aired Two", Guild: true}, {Show: "Later", Guild: true}, {Show: "Delayed", Guild: true},
+		}}
 		return st
 	}
 
