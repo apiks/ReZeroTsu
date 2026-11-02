@@ -47,6 +47,19 @@ const (
 	ContextGuildOnly                       // only in guilds
 )
 
+// contextRefusal returns the refusal message when a command with the given
+// allowed context may not run in the channel identified by guildID (empty for
+// DMs), or "" when it may run.
+func contextRefusal(ctx AllowedContext, guildID string) string {
+	switch {
+	case ctx == ContextDMOnly && guildID != "":
+		return "This command can only be used in DMs."
+	case ctx == ContextGuildOnly && guildID == "":
+		return "This command can only be used in a server."
+	}
+	return ""
+}
+
 // Command defines a slash command. Handlers must not ack; the framework defers first.
 type Command struct {
 	Name               string
@@ -125,8 +138,8 @@ func HandleMessageCommand(ctx context.Context, db *database.Client, s *discordgo
 		_, _ = s.ChannelMessageSend(m.ChannelID, "Only the bot owner can use this command.")
 		return true
 	}
-	if cmd.Context == ContextGuildOnly && m.GuildID == "" {
-		_, _ = s.ChannelMessageSend(m.ChannelID, "This command can only be used in a server.")
+	if msg := contextRefusal(cmd.Context, m.GuildID); msg != "" {
+		_, _ = s.ChannelMessageSend(m.ChannelID, msg)
 		return true
 	}
 	func() {
@@ -226,12 +239,8 @@ func Handle(ctx context.Context, db *database.Client, name string, s *discordgo.
 		return err
 	}
 
-	if cmd.Context == ContextDMOnly && i.GuildID != "" {
-		_ = editResponse(s, i, "This command can only be used in DMs.")
-		return nil
-	}
-	if cmd.Context == ContextGuildOnly && i.GuildID == "" {
-		_ = editResponse(s, i, "This command can only be used in a server.")
+	if msg := contextRefusal(cmd.Context, i.GuildID); msg != "" {
+		_ = editResponse(s, i, msg)
 		return nil
 	}
 
