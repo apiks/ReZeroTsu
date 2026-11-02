@@ -62,13 +62,15 @@ func (f *fakeSentState) RemoveReminders(ctx context.Context, id string, refs []r
 	return nil
 }
 
-// MarkRemindersFailing sets FailingSince on the matching reminders that do not have one yet.
+// MarkRemindersFailing sets FailingSince on the matching reminders that do not have one yet. A zero FailingSince
+// (a missing or null field in the store) counts as unset.
 func (f *fakeSentState) MarkRemindersFailing(ctx context.Context, id string, refs []reminders.RemindRef, since time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.MarkFailingCalls++
 	doc, ok := f.Reminders[id]
 	if !ok {
 		return nil

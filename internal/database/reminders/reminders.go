@@ -129,20 +129,26 @@ func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) er
 	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRefs", id, pullRefsCondition(refs))
 }
 
-// MarkFailingSince atomically sets failing_since to since on each reminder matching both remind_id and date of a
-// ref, unless it is already set: the first failure's time is kept across later failures.
-func (r *Repo) MarkFailingSince(ctx context.Context, id string, refs []RemindRef, since time.Time) error {
+// markFailingFilter is the array filter (identifier r) matching reminders whose remind_id and date both equal a
+// ref's and whose failing_since is unset. A null equality matches both a missing and a null field.
+func markFailingFilter(refs []RemindRef) bson.M {
+	conds := make([]bson.M, 0, len(refs))
 	for _, ref := range refs {
-		filter := bson.M{"id": id}
-		update := bson.M{"$set": bson.M{"reminders.$[r].failing_since": since}}
-		opts := options.UpdateOne().SetArrayFilters([]any{bson.M{
-			"r.remind_id":     ref.RemindID,
-			"r.date":          ref.Date,
-			"r.failing_since": bson.M{"$exists": false},
-		}})
-		if _, err := r.coll.UpdateOne(ctx, filter, update, opts); err != nil {
-			return fmt.Errorf("MarkFailingSince: %w", err)
-		}
+		conds = append(conds, bson.M{"r.remind_id": ref.RemindID, "r.date": ref.Date})
+	}
+	return bson.M{"$or": conds, "r.failing_since": nil}
+}
+
+// MarkFailingSince sets failing_since to since, in one update, on each reminder matching both remind_id and date
+// of a ref, unless it is already set: the first failure's time is kept across later failures.
+func (r *Repo) MarkFailingSince(ctx context.Context, id string, refs []RemindRef, since time.Time) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	update := bson.M{"$set": bson.M{"reminders.$[r].failing_since": since}}
+	opts := options.UpdateOne().SetArrayFilters([]any{markFailingFilter(refs)})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("MarkFailingSince: %w", err)
 	}
 	return nil
 }

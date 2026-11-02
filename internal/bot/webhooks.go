@@ -155,12 +155,12 @@ func getOrCreateChannelWebhook(s *discordgo.Session, guildID, channelID string) 
 	return w, threadID, true
 }
 
-// invalidateChannelWebhook drops the channel's cached webhook and its avoid entry (e.g. the channel was deleted).
+// invalidateChannelWebhook drops the channel's cached webhook (e.g. the channel was deleted). An avoid entry is kept so a
+// bot-account rejection does not un-avoid a rejected webhook; it expires by TTL.
 func invalidateChannelWebhook(guildID, channelID string) {
 	key := channelWebhookKey(guildID, channelID)
 	channelWebhookMu.Lock()
 	delete(channelWebhookMap, key)
-	delete(channelWebhookAvoidUntil, key)
 	channelWebhookMu.Unlock()
 }
 

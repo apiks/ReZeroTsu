@@ -23,12 +23,18 @@ const (
 	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
 	// user-undeliverable ones: once it has been failing this long since its first rejection it is dropped.
 	reminderGiveUpAfter = 24 * time.Hour
+	// reminderUnmarkedGiveUpAfter is a backstop for a reminder whose failing_since mark never landed: it is dropped
+	// once it is this far past due, so a failed mark write cannot make it retry forever.
+	reminderUnmarkedGiveUpAfter = 7 * 24 * time.Hour
 )
 
 // reminderGivenUp reports whether a reminder rejected by Discord has been failing too long to keep retrying.
-// A reminder that has not failed before (no failing_since) is never given up on.
+// A reminder with no failing_since is kept unless it is more than reminderUnmarkedGiveUpAfter past due.
 func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
-	return !r.FailingSince.IsZero() && now.Sub(r.FailingSince) > reminderGiveUpAfter
+	if r.FailingSince.IsZero() {
+		return now.Sub(r.Date) > reminderUnmarkedGiveUpAfter
+	}
+	return now.Sub(r.FailingSince) > reminderGiveUpAfter
 }
 
 // RunReminderLoop fetches due reminders, sends DMs, updates DB. Exits when ctx is cancelled.
@@ -181,6 +187,9 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 		}
 		return nil
 	}
+	// The rejected reminders are marked in one write when the loop ends, also when it ends early.
+	var rejected []reminders.RemindMe
+	defer func() { markFailing(rejected...) }()
 	throttleTimer := time.NewTimer(reminderThrottlePerMessage)
 	defer throttleTimer.Stop()
 	for i, r := range due {
@@ -229,7 +238,7 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
 			// A rejection starts the give-up window, if this is the reminder's first one.
 			if discord.ClassifySend(res.Err) == discord.Rejected {
-				markFailing(r)
+				rejected = append(rejected, r)
 			}
 			logger.For("reminders").Warn("reminder send failed, will retry",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
