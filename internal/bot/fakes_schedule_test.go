@@ -40,7 +40,7 @@ func (s *stampedDiscord) RecentMessages(ctx context.Context, channelID string, l
 
 // scheduleHarness is a guild "g1" with a daily-schedule channel "sch".
 type scheduleHarness struct {
-	d   DiscordPort
+	d   fakeDiscordPort
 	fd  *fakeDiscord
 	st  *fakeSentState
 	now time.Time
@@ -60,7 +60,7 @@ func newScheduleHarness(script ...step) *scheduleHarness {
 }
 
 func (h *scheduleHarness) run(ctx context.Context) error {
-	return processDailyScheduleForGuild(ctx, h.d, h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+	return processDailyScheduleForGuild(ctx, h.d, newChannelSenderFactory(h.d), h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
 }
 
 func (h *scheduleHarness) lastPosted() string {

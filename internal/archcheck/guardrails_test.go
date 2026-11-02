@@ -15,7 +15,7 @@ import (
 )
 
 // directSendCalls are the discordgo methods that put a message in front of a user or read the channel to check
-// whether one landed. Notification code reaches Discord only through the DiscordPort in internal/bot/delivery.go,
+// whether one landed. Notification code reaches Discord only through the RawDiscord adapter in internal/bot/delivery.go,
 // so the shared send rules (no send after cancel, fallback, verification, detached "sent" writes) cannot be
 // bypassed by one more copy of the send.
 var directSendCalls = map[string]bool{
@@ -31,7 +31,7 @@ var directSendCalls = map[string]bool{
 // sendAllowedFiles may call those methods directly: the port implementation, and the two files that send
 // one-off replies and logs that are not notifications.
 var sendAllowedFiles = map[string]bool{
-	"delivery.go": true, // DiscordPort implementation
+	"delivery.go": true, // discordgo adapter implementation
 	"webhooks.go": true, // SendBatchToChannel, used by the port
 	"bot.go":      true, // new-guild log message
 	"messages.go": true, // ping replies
@@ -50,7 +50,7 @@ func checkDirectSends(fset *token.FileSet, file *ast.File, name string) []string
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if ok && directSendCalls[sel.Sel.Name] {
-			out = append(out, fmt.Sprintf("%s: .%s called directly; send through DiscordPort (internal/bot/delivery.go) and sendrules.go",
+			out = append(out, fmt.Sprintf("%s: .%s called directly; send through the channel sender (internal/bot/delivery.go) and sendrules.go",
 				fset.Position(call.Pos()), sel.Sel.Name))
 		}
 		return true

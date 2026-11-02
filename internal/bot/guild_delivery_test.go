@@ -39,7 +39,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 }
 
 func (h *guildHarness) run(ctx context.Context) {
-	processGuildNewEpisodes(ctx, h.d, h.st, "g1", h.fn, h.now)
+	processGuildNewEpisodes(ctx, h.d, newChannelSenderFactory(h.d), h.st, "g1", h.fn, h.now)
 }
 
 func (h *guildHarness) notifiedCount() int {

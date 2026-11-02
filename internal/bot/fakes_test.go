@@ -50,7 +50,13 @@ type delivered struct {
 	Msg       OutgoingMessage
 }
 
-// fakeDiscord is an in-memory DiscordPort. Send calls consume script steps in order; once the script is
+// fakeDiscordPort is both interfaces a Discord adapter satisfies.
+type fakeDiscordPort interface {
+	RunOperations
+	RawDiscord
+}
+
+// fakeDiscord is an in-memory Discord adapter (run operations and raw Discord). Send calls consume script steps in order; once the script is
 // exhausted every Send succeeds.
 type fakeDiscord struct {
 	mu        sync.Mutex
@@ -432,7 +438,8 @@ func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, ch
 }
 
 var (
-	_ DiscordPort = (*fakeDiscord)(nil)
+	_ RunOperations = (*fakeDiscord)(nil)
+	_ RawDiscord    = (*fakeDiscord)(nil)
 	_ SentState   = (*fakeSentState)(nil)
 )
 

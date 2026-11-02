@@ -86,14 +86,34 @@ type sendOutcome struct {
 // channel's webhook up once (unless the policy is bot-account only) and stops using it for the rest of the run
 // as soon as Discord rejected it, so no caller has to track that itself.
 type channelSender struct {
-	d                  DiscordPort
+	d                  RawDiscord
 	guildID, channelID string
 	webhook            *WebhookTarget
 	policy             sendPolicy
 }
 
+// channelSenderFactory opens channel senders over one shard's raw Discord adapter. It is built once per shard.
+type channelSenderFactory struct {
+	raw RawDiscord
+}
+
+func newChannelSenderFactory(raw RawDiscord) *channelSenderFactory {
+	return &channelSenderFactory{raw: raw}
+}
+
+// open opens a channel sender for channelID (guildID is empty for a DM) under policy.
+func (f *channelSenderFactory) open(guildID, channelID string, policy sendPolicy) *channelSender {
+	return newChannelSender(f.raw, guildID, channelID, policy)
+}
+
+// invalidateWebhook drops the channel's cached webhook (run terminal handling; moves into the channel sender in a
+// later ticket).
+func (f *channelSenderFactory) invalidateWebhook(guildID, channelID string) {
+	f.raw.InvalidateChannelWebhook(guildID, channelID)
+}
+
 // newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy.
-func newChannelSender(d DiscordPort, guildID, channelID string, policy sendPolicy) *channelSender {
+func newChannelSender(d RawDiscord, guildID, channelID string, policy sendPolicy) *channelSender {
 	c := &channelSender{d: d, guildID: guildID, channelID: channelID, policy: policy}
 	if !policy.botAccountOnly {
 		c.webhook = d.ChannelWebhook(guildID, channelID)
