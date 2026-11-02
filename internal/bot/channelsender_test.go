@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"ReZeroTsu/internal/discord"
 
@@ -110,6 +111,102 @@ func TestChannelSenderPostDeliveredDuringShutdownStaysDelivered(t *testing.T) {
 	res := newTestSenders(raw).open("g1", "c1", newEpisodesPolicy()).post(ctx, OutgoingMessage{Content: "hello"})
 	if res.Outcome != PostDelivered {
 		t.Fatalf("outcome = %v, want delivered", res.Outcome)
+	}
+}
+
+// Each named policy makes its post wait for the shared send budget at the priority its run has.
+func TestChannelSenderPostWaitsAtItsPolicysPriority(t *testing.T) {
+	now := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		policy       sendPolicy
+		wantPriority int
+	}{
+		{"new-episodes", newEpisodesPolicy(), PriorityAnimeSubs},
+		{"episode DM", episodeDMPolicy(), PriorityAnimeSubs},
+		{"reminder", reminderPolicy(), PriorityReminders},
+		{"feed", feedPolicy(), PriorityFeeds},
+		{"feed pin", feedPinPolicy(), PriorityFeeds},
+		{"daily schedule", schedulePolicy("Schedule", now), PrioritySchedule},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			senders, _, lim := newTestSendersWithLimiter(newFakeDiscord(), &recordingLimiter{})
+			res := senders.open("g1", "c1", tc.policy).post(context.Background(), OutgoingMessage{Content: "hello"})
+			if res.Outcome != PostDelivered {
+				t.Fatalf("outcome = %v, want delivered", res.Outcome)
+			}
+			if got := lim.Priorities(); len(got) != 1 || got[0] != tc.wantPriority {
+				t.Errorf("waited at priorities %v, want exactly [%d]", got, tc.wantPriority)
+			}
+		})
+	}
+}
+
+// A rejected webhook and a bot-account fallback that delivers cost one token, not two.
+func TestChannelSenderPostWaitsOnceWhenWebhookRejectedAndFallbackDelivers(t *testing.T) {
+	d := newFakeDiscord(rejectWith(discordgo.ErrCodeMissingAccess), succeed())
+	d.Webhook = testWebhook
+	senders, _, lim := newTestSendersWithLimiter(d, &recordingLimiter{})
+	res := senders.open("g1", "c1", newEpisodesPolicy()).post(context.Background(), OutgoingMessage{Content: "hello"})
+	if res.Outcome != PostDelivered {
+		t.Fatalf("outcome = %v, want delivered", res.Outcome)
+	}
+	if d.SendCalls != 2 || d.WebhookSends != 1 {
+		t.Fatalf("send calls = %d (webhook %d), want a webhook send then a bot-account send", d.SendCalls, d.WebhookSends)
+	}
+	if got := lim.Priorities(); len(got) != 1 {
+		t.Errorf("waits = %v, want exactly one", got)
+	}
+}
+
+// A token wait that ends with an error sends nothing and reports cancelled, whether shutdown ended it or the
+// limiter stopped on its own.
+func TestChannelSenderPostTokenWaitEndedMakesNoSendAndIsCancelled(t *testing.T) {
+	stopped := errors.New("send limiter stopped")
+	tests := []struct {
+		name string
+		hook func(cancel context.CancelFunc) func() error
+	}{
+		{"shutdown", func(cancel context.CancelFunc) func() error {
+			return func() error { cancel(); return context.Canceled }
+		}},
+		{"limiter stopped", func(context.CancelFunc) func() error {
+			return func() error { return stopped }
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			d := newFakeDiscord()
+			senders, _, _ := newTestSendersWithLimiter(d, &recordingLimiter{onAcquire: tc.hook(cancel)})
+			res := senders.open("g1", "c1", newEpisodesPolicy()).post(ctx, OutgoingMessage{Content: "hello"})
+			if res.Outcome != PostCancelled {
+				t.Errorf("outcome = %v, want cancelled", res.Outcome)
+			}
+			if res.Err == nil {
+				t.Error("err = nil, want the wait's error kept for logging")
+			}
+			if d.SendCalls != 0 {
+				t.Errorf("send calls = %d, want none", d.SendCalls)
+			}
+		})
+	}
+}
+
+// Shutdown is checked before the token wait: a post made after shutdown started does not queue for the budget.
+func TestChannelSenderPostAfterShutdownDoesNotWaitForAToken(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := newFakeDiscord()
+	senders, _, lim := newTestSendersWithLimiter(d, &recordingLimiter{})
+	res := senders.open("g1", "c1", feedPolicy()).post(ctx, OutgoingMessage{Content: "hello"})
+	if res.Outcome != PostCancelled {
+		t.Fatalf("outcome = %v, want cancelled", res.Outcome)
+	}
+	if got := lim.Priorities(); len(got) != 0 {
+		t.Errorf("waits = %v, want none", got)
 	}
 }
 

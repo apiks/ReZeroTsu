@@ -10,6 +10,9 @@ import (
 
 // The channel sender is the one way a delivery run posts its messages to a single channel or DM under the send
 // rules (see GLOSSARY.md):
+//   - a post checks for shutdown, then waits for one token of the shared send budget at its policy's priority, then
+//     sends; a failed token wait (shutdown, or the limiter stopping) sends nothing and reports cancelled, and the
+//     bot-account fallback uses the same token;
 //   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; only a
 //     Send that never made the request (errSendNotAttempted: a send-limiter wait ended by the context) skips
 //     verification, while any other context error (e.g. an in-flight client timeout) stays Unknown;
@@ -32,33 +35,42 @@ type sendPolicy struct {
 	label string
 	// botAccountOnly posts through the bot account and never looks up a webhook.
 	botAccountOnly bool
+	// priority is the send priority at which a post waits for the shared send budget.
+	priority int
 }
 
-// newEpisodesPolicy is the policy for new-episodes posts: webhook or bot account, presume delivered.
+// newEpisodesPolicy is the policy for new-episodes posts: webhook or bot account, presume delivered, anime subs
+// priority.
 func newEpisodesPolicy() sendPolicy {
-	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send"}
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", priority: PriorityAnimeSubs}
 }
 
-// dmPolicy is the policy for DMs (episode DMs, reminders): bot account only, presume delivered.
-func dmPolicy() sendPolicy {
-	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true}
+// episodeDMPolicy is the policy for episode DMs: bot account only, presume delivered, anime subs priority.
+func episodeDMPolicy() sendPolicy {
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true, priority: PriorityAnimeSubs}
 }
 
-// feedPolicy is the policy for feed posts: webhook or bot account, a failed verification means not delivered.
+// reminderPolicy is the policy for reminder DMs: bot account only, presume delivered, reminders priority.
+func reminderPolicy() sendPolicy {
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true, priority: PriorityReminders}
+}
+
+// feedPolicy is the policy for feed posts: webhook or bot account, a failed verification means not delivered,
+// feeds priority.
 func feedPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send"}
+	return sendPolicy{match: feedMessageInRecent, label: "feed send", priority: PriorityFeeds}
 }
 
 // feedPinPolicy is the policy for a pinned feed item: bot account only (a message ID is needed to pin), a failed
-// verification means not delivered.
+// verification means not delivered, feeds priority.
 func feedPinPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send", botAccountOnly: true}
+	return sendPolicy{match: feedMessageInRecent, label: "feed send", botAccountOnly: true, priority: PriorityFeeds}
 }
 
 // schedulePolicy is the policy for the daily schedule posted at now: webhook or bot account, matching the
-// schedule title posted on the current UTC day, a failed verification means not delivered.
+// schedule title posted on the current UTC day, a failed verification means not delivered, schedule priority.
 func schedulePolicy(title string, now time.Time) sendPolicy {
-	return sendPolicy{match: scheduleMatcher(title, now), label: "schedule send"}
+	return sendPolicy{match: scheduleMatcher(title, now), label: "schedule send", priority: PrioritySchedule}
 }
 
 // PostOutcome is what one channelSender.post concluded about its message. It differs from the discord package's
@@ -130,29 +142,38 @@ type channelSender struct {
 	guildID, channelID string
 	webhook            *WebhookTarget
 	policy             sendPolicy
+	limiter            sendTokenAcquirer
 }
 
-// channelSenderFactory opens channel senders over one shard's raw Discord adapter and the webhook cache shared by
-// all shards. It is built once per shard. The cache owns time (it holds the injected clock), so the factory has none.
+// sendTokenAcquirer is the shared send budget as the channel sender uses it: one wait for one token at a priority.
+// The real *SendLimiter satisfies it.
+type sendTokenAcquirer interface {
+	Acquire(ctx context.Context, priority int) error
+}
+
+// channelSenderFactory opens channel senders over one shard's raw Discord adapter, the webhook cache shared by
+// all shards and the send limiter shared by all shards. It is built once per shard. The cache owns time (it holds
+// the injected clock), so the factory has none.
 type channelSenderFactory struct {
-	raw   RawDiscord
-	cache *webhookCache
+	raw     RawDiscord
+	cache   *webhookCache
+	limiter sendTokenAcquirer
 }
 
-func newChannelSenderFactory(raw RawDiscord, cache *webhookCache) *channelSenderFactory {
-	return &channelSenderFactory{raw: raw, cache: cache}
+func newChannelSenderFactory(raw RawDiscord, cache *webhookCache, limiter sendTokenAcquirer) *channelSenderFactory {
+	return &channelSenderFactory{raw: raw, cache: cache, limiter: limiter}
 }
 
 // open opens a channel sender for channelID (guildID is empty for a DM) under policy.
 func (f *channelSenderFactory) open(guildID, channelID string, policy sendPolicy) *channelSender {
-	return newChannelSender(f.raw, f.cache, guildID, channelID, policy)
+	return newChannelSender(f.raw, f.cache, f.limiter, guildID, channelID, policy)
 }
 
 // newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy. Unless the policy
 // is bot-account only it picks the channel's webhook once: none for an avoided channel, else the cached webhook,
 // else one resolved through the raw port (and cached).
-func newChannelSender(d RawDiscord, cache *webhookCache, guildID, channelID string, policy sendPolicy) *channelSender {
-	c := &channelSender{d: d, cache: cache, guildID: guildID, channelID: channelID, policy: policy}
+func newChannelSender(d RawDiscord, cache *webhookCache, limiter sendTokenAcquirer, guildID, channelID string, policy sendPolicy) *channelSender {
+	c := &channelSender{d: d, cache: cache, limiter: limiter, guildID: guildID, channelID: channelID, policy: policy}
 	if !policy.botAccountOnly {
 		c.webhook = c.selectWebhook()
 	}
@@ -202,10 +223,15 @@ func rejectedResult(err error) PostResult {
 	return PostResult{Outcome: PostRejected, Terminal: discord.ClassifyChannelTerminal(err), Err: err}
 }
 
-// deliver makes one post: cancel check, never-attempted check, outcome classification, rejected-webhook
+// deliver makes one post: cancel check, token wait, never-attempted check, outcome classification, rejected-webhook
 // fallback, Unknown verification and unrecognised-rejection logging.
 func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOutcome {
 	if err := ctx.Err(); err != nil {
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
+	}
+	// One token per post, taken after the shutdown check and before the first send; the bot-account fallback below
+	// reuses it. A failed wait (shutdown, or the limiter stopping) sends nothing.
+	if err := c.limiter.Acquire(ctx, c.policy.priority); err != nil {
 		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
 	}
 	webhook := c.webhook

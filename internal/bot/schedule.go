@@ -181,11 +181,6 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 			case <-t.C:
 			}
 		}
-		if globalSendLimiter != nil {
-			if err := globalSendLimiter.Acquire(ctx, PrioritySchedule); err != nil {
-				return err
-			}
-		}
 		res = sender.post(ctx, msg)
 		if res.Outcome == PostCancelled {
 			return ctx.Err()
