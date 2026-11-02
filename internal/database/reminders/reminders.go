@@ -86,12 +86,17 @@ func (r *Repo) RemoveByRemindIDs(ctx context.Context, id string, remindIDs []int
 	if len(remindIDs) == 0 {
 		return nil
 	}
-	pull := bson.M{"$pull": bson.M{"reminders": bson.M{"remind_id": bson.M{"$in": remindIDs}}}}
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, pull); err != nil {
-		return fmt.Errorf("RemoveByRemindIDs: %w", err)
+	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRemindIDs", id, bson.M{"remind_id": bson.M{"$in": remindIDs}})
+}
+
+// pullThenDeleteIfEmpty pulls the reminders matching cond from the user's document in one update, then deletes
+// the document if it has no reminders left. op prefixes returned errors.
+func (r *Repo) pullThenDeleteIfEmpty(ctx context.Context, op, id string, cond bson.M) error {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$pull": bson.M{"reminders": cond}}); err != nil {
+		return fmt.Errorf("%s: %w", op, err)
 	}
 	if _, err := r.coll.DeleteOne(ctx, bson.M{"id": id, "reminders": bson.M{"$size": 0}}); err != nil {
-		return fmt.Errorf("RemoveByRemindIDs: %w", err)
+		return fmt.Errorf("%s: %w", op, err)
 	}
 	return nil
 }
@@ -119,14 +124,7 @@ func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) er
 	if len(refs) == 0 {
 		return nil
 	}
-	pull := bson.M{"$pull": bson.M{"reminders": pullRefsCondition(refs)}}
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, pull); err != nil {
-		return fmt.Errorf("RemoveByRefs: %w", err)
-	}
-	if _, err := r.coll.DeleteOne(ctx, bson.M{"id": id, "reminders": bson.M{"$size": 0}}); err != nil {
-		return fmt.Errorf("RemoveByRefs: %w", err)
-	}
-	return nil
+	return r.pullThenDeleteIfEmpty(ctx, "RemoveByRefs", id, pullRefsCondition(refs))
 }
 
 func (r *Repo) EnsureIndexes(ctx context.Context) error {
