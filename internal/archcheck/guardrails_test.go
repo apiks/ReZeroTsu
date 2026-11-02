@@ -15,9 +15,9 @@ import (
 )
 
 // directSendCalls are the discordgo methods that put a message in front of a user or read the channel to check
-// whether one landed. Notification code reaches Discord only through the channel sender (internal/bot/channelsender.go),
-// which uses the RawDiscord adapter in internal/bot/delivery.go, so the shared send rules (no send after cancel, fallback, verification, detached "sent" writes) cannot be
-// bypassed by one more copy of the send.
+// whether one landed. Notification code reaches Discord only through the channel sender (see GLOSSARY.md), which
+// uses the raw Discord adapter, so the shared send rules (no send after cancel, fallback, verification, detached
+// "sent" writes) cannot be bypassed by one more copy of the send.
 var directSendCalls = map[string]bool{
 	"ChannelMessageSend":        true,
 	"ChannelMessageSendComplex": true,
@@ -50,7 +50,7 @@ func checkDirectSends(fset *token.FileSet, file *ast.File, name string) []string
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if ok && directSendCalls[sel.Sel.Name] {
-			out = append(out, fmt.Sprintf("%s: .%s called directly; send through the channel sender (internal/bot/channelsender.go)",
+			out = append(out, fmt.Sprintf("%s: .%s called directly; post through a channel sender (see GLOSSARY.md)",
 				fset.Position(call.Pos()), sel.Sel.Name))
 		}
 		return true

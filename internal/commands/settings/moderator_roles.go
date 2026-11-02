@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	embedTitleModRoles      = "Moderator Roles"
-	hintModRoles            = "Use /add-moderator-role to add, /remove-moderator-role to remove."
-	hintModRolesListRemove  = "Use /moderator-roles to list all, /remove-moderator-role to remove."
-	hintModRolesList        = "Use /moderator-roles to list all."
+	embedTitleModRoles     = "Moderator Roles"
+	hintModRoles           = "Use /add-moderator-role to add, /remove-moderator-role to remove."
+	hintModRolesListRemove = "Use /moderator-roles to list all, /remove-moderator-role to remove."
+	hintModRolesList       = "Use /moderator-roles to list all."
 	hintModRolesAddOne     = "Use /add-moderator-role to add one."
 )
 

@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	embedTitleVoiceRoles   = "Voice Roles"
-	hintVoiceRoles         = "Use /add-voice to add, /remove-voice to remove."
+	embedTitleVoiceRoles  = "Voice Roles"
+	hintVoiceRoles        = "Use /add-voice to add, /remove-voice to remove."
 	hintVoiceRolesRemove  = "Use /remove-voice to remove."
 	hintVoiceRolesListAdd = "Use /voice-roles to list all, /add-voice to add."
 	hintVoiceRolesEmpty   = "Use /add-voice to assign a role to a channel, /remove-voice to remove one."

@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Go files are LF in the working tree so gofmt works on every checkout
+*.go text eol=lf

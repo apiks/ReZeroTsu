@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	reminderRunInterval        = 15 * time.Second
+	reminderRunInterval = 15 * time.Second
 	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
 	// user-undeliverable ones: once it has been failing this long since its first rejection it is dropped.
 	reminderGiveUpAfter = 24 * time.Hour
