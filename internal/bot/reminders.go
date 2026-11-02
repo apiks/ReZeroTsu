@@ -187,6 +187,9 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 		}
 		return nil
 	}
+	// The rejected reminders are marked in one write when the loop ends, also when it ends early.
+	var rejected []reminders.RemindMe
+	defer func() { markFailing(rejected...) }()
 	throttleTimer := time.NewTimer(reminderThrottlePerMessage)
 	defer throttleTimer.Stop()
 	for i, r := range due {
@@ -235,7 +238,7 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
 			// A rejection starts the give-up window, if this is the reminder's first one.
 			if discord.ClassifySend(res.Err) == discord.Rejected {
-				markFailing(r)
+				rejected = append(rejected, r)
 			}
 			logger.For("reminders").Warn("reminder send failed, will retry",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)

@@ -270,6 +270,9 @@ type fakeSentState struct {
 
 	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
 	FeedCheckWrites []int
+
+	// MarkFailingCalls counts MarkRemindersFailing calls.
+	MarkFailingCalls int
 }
 
 func newFakeSentState() *fakeSentState {
