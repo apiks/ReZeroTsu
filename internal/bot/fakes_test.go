@@ -222,6 +222,8 @@ type fakeSentState struct {
 	Autoposts   map[string]*guilds.Autopost // key guildID+"/"+postType
 	Settings    map[string]*guilds.GuildSettings
 	FeedChecks  []feed_checks.FeedCheck
+	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
+	FeedCheckWrites []int
 	Reminders   map[string]*reminders.RemindMeSlice
 	FeedsPurged []string // "guild:channel"
 }
@@ -336,17 +338,21 @@ func (f *fakeSentState) GetGuildSettings(_ context.Context, guildID string) (*gu
 	return f.Settings[guildID], nil
 }
 
-func (f *fakeSentState) SaveFeedCheck(_ context.Context, guildID string, fc feed_checks.FeedCheck) error {
+func (f *fakeSentState) SaveFeedChecks(_ context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	fc.GuildID = guildID
-	for i := range f.FeedChecks {
-		if f.FeedChecks[i].GuildID == guildID && f.FeedChecks[i].GUID == fc.GUID {
-			f.FeedChecks[i] = fc
-			return nil
+	f.FeedCheckWrites = append(f.FeedCheckWrites, len(fcs))
+next:
+	for _, fc := range fcs {
+		fc.GuildID = guildID
+		for i := range f.FeedChecks {
+			if f.FeedChecks[i].GuildID == guildID && f.FeedChecks[i].GUID == fc.GUID {
+				f.FeedChecks[i] = fc
+				continue next
+			}
 		}
+		f.FeedChecks = append(f.FeedChecks, fc)
 	}
-	f.FeedChecks = append(f.FeedChecks, fc)
 	return nil
 }
 

@@ -221,6 +221,43 @@ func TestFeedsDeadWebhookIsNotReusedForLaterChunks(t *testing.T) {
 	}
 }
 
+func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
+	tests := []struct {
+		name       string
+		items      int
+		script     []step
+		wantWrites []int // items per feed-check write, in order
+	}{
+		{name: "one chunk", items: 3, wantWrites: []int{3}},
+		{name: "two chunks", items: 11, wantWrites: []int{10, 1}},
+		{name: "undelivered chunk is not recorded", items: 11, script: []step{succeed(), rejectWith(99999)}, wantWrites: []int{10}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d, st := newFakeDiscord(tc.script...), newFakeSentState()
+			var items []sendItem
+			for i := 0; i < tc.items; i++ {
+				items = append(items, sendItem{
+					embed:         &discordgo.MessageEmbed{Author: &discordgo.MessageEmbedAuthor{Name: fmt.Sprintf("a%d", i), URL: fmt.Sprintf("https://x/%d", i)}},
+					feed:          entry("c1", false),
+					compositeGUID: fmt.Sprintf("g%d", i),
+				})
+			}
+			flushChannel(context.Background(), d, st, "g1", "c1", items)
+			if fmt.Sprint(st.FeedCheckWrites) != fmt.Sprint(tc.wantWrites) {
+				t.Errorf("feed-check writes = %v, want %v", st.FeedCheckWrites, tc.wantWrites)
+			}
+			want := 0
+			for _, n := range tc.wantWrites {
+				want += n
+			}
+			if len(st.FeedChecks) != want {
+				t.Errorf("feed checks stored = %d, want %d", len(st.FeedChecks), want)
+			}
+		})
+	}
+}
+
 func TestFeedsDeletedChannelRemovesFeeds(t *testing.T) {
 	d, st := newFakeDiscord(rejectWith(discord.UnknownChannelCode)), newFakeSentState()
 	runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false)}, parsedFor(1))

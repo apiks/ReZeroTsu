@@ -81,7 +81,8 @@ type SentState interface {
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
 
-	SaveFeedCheck(ctx context.Context, guildID string, fc feed_checks.FeedCheck) error
+	// SaveFeedChecks upserts the feed checks by (guild, GUID) in one round trip.
+	SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error
 	RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error)
 	DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error)
 
@@ -248,8 +249,8 @@ func (m *mongoSentState) GetGuildSettings(ctx context.Context, guildID string) (
 	return m.db.Guilds().GetGuildSettings(ctx, guildID)
 }
 
-func (m *mongoSentState) SaveFeedCheck(ctx context.Context, guildID string, fc feed_checks.FeedCheck) error {
-	return m.db.FeedChecks().Save(ctx, guildID, fc)
+func (m *mongoSentState) SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
+	return m.db.FeedChecks().SaveMany(ctx, guildID, fcs)
 }
 
 func (m *mongoSentState) RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error) {

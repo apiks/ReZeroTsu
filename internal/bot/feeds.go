@@ -412,25 +412,23 @@ func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guild
 	resetBatches()
 }
 
-// persistFeedChunk records the items of a delivered chunk. The write is detached from shutdown so that a
-// delivered item is never re-sent on the next run.
+// persistFeedChunk records the items of a delivered chunk in one write. The write is detached from shutdown so
+// that a delivered item is never re-sent on the next run.
 func persistFeedChunk(ctx context.Context, d DiscordPort, st SentState, guildID string, chunk []sendItem) {
+	now := time.Now()
+	fcs := make([]feed_checks.FeedCheck, 0, len(chunk))
 	for _, it := range chunk {
-		fc := feed_checks.FeedCheck{
+		fcs = append(fcs, feed_checks.FeedCheck{
 			GUID: it.compositeGUID,
 			Feed: feedEntryToFeedChecksFeed(guildID, it.feed),
-			Date: time.Now(),
-		}
-		saveFeedCheckDetached(ctx, d, st, guildID, fc)
+			Date: now,
+		})
 	}
-}
-
-func saveFeedCheckDetached(ctx context.Context, d DiscordPort, st SentState, guildID string, fc feed_checks.FeedCheck) {
 	err := detachedWrite(ctx, func(wctx context.Context) error {
-		return st.SaveFeedCheck(wctx, guildID, fc)
+		return st.SaveFeedChecks(wctx, guildID, fcs)
 	})
 	if err != nil {
-		logger.For("feeds").Error("Save FeedCheck failed", "shard_id", d.ShardID(), "err", err)
+		logger.For("feeds").Error("Save FeedChecks failed", "shard_id", d.ShardID(), "count", len(fcs), "err", err)
 	}
 }
 
@@ -497,11 +495,7 @@ func sendOneAndPin(ctx context.Context, d DiscordPort, st SentState, guildID str
 		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res.Err)
 		return
 	}
-	saveFeedCheckDetached(ctx, d, st, guildID, feed_checks.FeedCheck{
-		GUID: compositeGUID,
-		Feed: feedEntryToFeedChecksFeed(guildID, feed),
-		Date: time.Now(),
-	})
+	persistFeedChunk(ctx, d, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}})
 	if msgID != "" {
 		d.PinReplacing(feed.ChannelID, msgID, feed.Subreddit)
 	}

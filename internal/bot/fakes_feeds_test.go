@@ -33,11 +33,11 @@ type strictWriteState struct {
 	*fakeSentState
 }
 
-func (s strictWriteState) SaveFeedCheck(ctx context.Context, guildID string, fc feed_checks.FeedCheck) error {
+func (s strictWriteState) SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.fakeSentState.SaveFeedCheck(ctx, guildID, fc)
+	return s.fakeSentState.SaveFeedChecks(ctx, guildID, fcs)
 }
 
 // cancelAfterSendPort cancels the run context once its n-th Send has returned (a shutdown mid-flush).
