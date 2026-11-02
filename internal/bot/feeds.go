@@ -432,18 +432,14 @@ func persistFeedChunk(ctx context.Context, d RunOperations, senders *channelSend
 }
 
 // handleFeedSendFailure maps the error of an undelivered feed send to its terminal handling.
-func handleFeedSendFailure(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID, channelID string, err error) {
+func handleFeedSendFailure(ctx context.Context, d RunOperations, st SentState, guildID, channelID string, err error) {
 	if ctx.Err() != nil {
 		return
 	}
 	switch reason := discord.ClassifyChannelTerminal(err); reason {
-	case discord.ChannelDeleted, discord.ChannelInaccessible:
-		senders.invalidateWebhook(guildID, channelID)
-		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
-	case discord.ChannelNotText:
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
 		removeFeedsForChannel(ctx, st, guildID, channelID, reason.String())
 	case discord.ChannelMissingPermissions:
-		senders.invalidateWebhook(guildID, channelID)
 	default:
 		logger.For("feeds").Warn("feed send failed", "shard_id", d.ShardID(), "channel_id", channelID, "err", err)
 	}
@@ -468,7 +464,7 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 		// After a rejected webhook the sender sends later chunks through the bot account.
 		res := sender.post(ctx, OutgoingMessage{Embeds: embeds})
 		if !res.Delivered {
-			handleFeedSendFailure(ctx, d, senders, st, guildID, channelID, res.Err)
+			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return
 		}
 		persistFeedChunk(ctx, d, senders, st, guildID, items[i:end])
@@ -489,7 +485,7 @@ func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderF
 	res := senders.open(guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 	msgID := res.MessageID
 	if !res.Delivered {
-		handleFeedSendFailure(ctx, d, senders, st, guildID, feed.ChannelID, res.Err)
+		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res.Err)
 		return
 	}
 	persistFeedChunk(ctx, d, senders, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}})

@@ -771,7 +771,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if ctx.Err() != nil {
 			return
 		}
-		handleNewEpisodesRejection(ctx, d, senders, st, guildID, channelID, res.Err)
+		handleNewEpisodesRejection(ctx, d, st, guildID, channelID, res.Err)
 		return
 	}
 }
@@ -779,7 +779,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 // handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
 // inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
 // (including missing permissions) leaves both in place.
-func handleNewEpisodesRejection(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID, channelID string, err error) {
+func handleNewEpisodesRejection(ctx context.Context, d RunOperations, st SentState, guildID, channelID string, err error) {
 	reason := discord.ClassifyChannelTerminal(err)
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
@@ -792,5 +792,4 @@ func handleNewEpisodesRejection(ctx context.Context, d RunOperations, senders *c
 	} else if reason == discord.ChannelNotText {
 		logger.For("animesubs").Warn(reason.String()+", cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
 	}
-	senders.invalidateWebhook(guildID, channelID)
 }
