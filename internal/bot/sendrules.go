@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"ReZeroTsu/internal/discord"
@@ -66,6 +67,9 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 		return SendResult{Err: err}, ""
 	}
 	id, err := d.Send(ctx, channelID, webhook, msg)
+	if sendNotAttempted(ctx, err) {
+		return SendResult{Err: err}, ""
+	}
 	switch discord.ClassifySend(err) {
 	case discord.Sent:
 		return SendResult{Delivered: true}, id
@@ -96,6 +100,17 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 			append([]any{"guild_id", guildID, "channel_id", channelID}, discord.RESTAttrs(err)...)...)
 	}
 	return SendResult{Err: err, WebhookGone: gone}, ""
+}
+
+// sendNotAttempted reports whether a Send error is the run context's own cancellation or deadline. Production
+// Send only observes ctx while waiting for a send limiter (the REST call itself is not context-aware), so such
+// an error means the request was never made: it is not verified and never falls back. A context error while ctx
+// is still live comes from a client-side request timeout, which may hide a delivered message, so it stays Unknown.
+func sendNotAttempted(ctx context.Context, err error) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // isKnownRejection reports whether err is a Rejected code that callers have terminal handling for.

@@ -56,6 +56,8 @@ type fakeDiscord struct {
 	SendCalls int
 	// WebhookSends counts Send calls made through a webhook, delivered or not.
 	WebhookSends int
+	// RecentCalls counts RecentMessages calls (verification reads).
+	RecentCalls int
 
 	// Configuration.
 	Webhook     *WebhookTarget  // returned by ChannelWebhook; nil means no webhook available
@@ -131,6 +133,7 @@ func (f *fakeDiscord) OpenDM(_ context.Context, userID string) (string, error) {
 func (f *fakeDiscord) RecentMessages(_ context.Context, channelID string, limit int) ([]ChannelMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.RecentCalls++
 	if f.RecentErr != nil {
 		return nil, f.RecentErr
 	}
