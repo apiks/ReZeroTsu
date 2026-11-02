@@ -46,8 +46,6 @@ const zerotsuBotID = "614495694769618944"
 const slashCommandGuildID = ""
 
 var (
-	globalSendLimiter        *SendLimiter
-	globalSendLimiterOnce    sync.Once
 	globalWebhookLimiter     *WebhookLimiter
 	globalWebhookLimiterOnce sync.Once
 )
@@ -71,8 +69,13 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 
 	runtime := &shardRuntime{mgr: mgr, start: time.Now()}
 
+	// The send limiter lives from before the shards start until shutdown; every shard's channel sender factory
+	// shares it.
+	sendLimiter := NewSendLimiter()
+	sendLimiter.Start()
+
 	cache := newWebhookCache(realClock{})
-	mgr.AddHandler(onReady(ctx, db, cfg, mgr, cache))
+	mgr.AddHandler(onReady(ctx, db, cfg, mgr, cache, sendLimiter))
 	mgr.AddHandler(onGuildCreate(ctx, db, cfg))
 	mgr.AddHandler(onGuildDelete(cache))
 	mgr.AddHandler(OnMessageCreate(ctx, db, cfg.OwnerID, cfg.Prefixes, runtime))
@@ -97,15 +100,14 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 	mgr.RegisterIntent(discordgo.MakeIntent(discordgo.IntentsAllWithoutPrivileged + discordgo.IntentGuildMembers))
 
 	if err := mgr.Start(); err != nil {
+		sendLimiter.Stop()
 		return err
 	}
 	logger.PrintAlways("Discord shards started", "shard_count", mgr.ShardCount)
 
 	<-ctx.Done()
 
-	if globalSendLimiter != nil {
-		globalSendLimiter.Stop()
-	}
+	sendLimiter.Stop()
 	if globalWebhookLimiter != nil {
 		globalWebhookLimiter.Stop()
 	}
@@ -122,7 +124,7 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 	}
 }
 
-func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *shards.Manager, cache *webhookCache) func(*discordgo.Session, *discordgo.Ready) {
+func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *shards.Manager, cache *webhookCache, sendLimiter *SendLimiter) func(*discordgo.Session, *discordgo.Ready) {
 	var startRemindersOnce sync.Once
 	var startScheduleLoopOnce sync.Once
 	var startAnimeSubCleanupOnce sync.Once
@@ -132,10 +134,6 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 	var readyCount int32
 	var shardLoopsOnce sync.Map
 	return func(s *discordgo.Session, _ *discordgo.Ready) {
-		globalSendLimiterOnce.Do(func() {
-			globalSendLimiter = NewSendLimiter()
-			globalSendLimiter.Start()
-		})
 		globalWebhookLimiterOnce.Do(func() {
 			globalWebhookLimiter = NewWebhookLimiter()
 			globalWebhookLimiter.Start()
@@ -155,7 +153,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		logger.For("bot").Info("shard ready", "shard_id", s.ShardID)
 		// One raw adapter and channel sender factory per shard, handed to that shard's delivery loops.
 		raw := newDiscordgoPort(s)
-		ops, senders := RunOperations(raw), newChannelSenderFactory(raw, cache)
+		ops, senders := RunOperations(raw), newChannelSenderFactory(raw, cache, sendLimiter)
 		if n := atomic.AddInt32(&readyCount, 1); n == int32(mgr.ShardCount) {
 			logger.PrintAlways("all shards ready")
 			startTopGGOnce.Do(func() {

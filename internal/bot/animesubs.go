@@ -479,12 +479,7 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 		}
 
 		emb := buildEpisodeEmbed(show)
-		if globalSendLimiter != nil {
-			if acqErr := globalSendLimiter.Acquire(ctx, PriorityAnimeSubs); acqErr != nil {
-				return acqErr
-			}
-		}
-		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := senders.open("", dmID, episodeDMPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch res.Outcome {
 		case PostCancelled:
 			return ctx.Err()
@@ -747,11 +742,6 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		content := ""
 		if i == 0 && roleID != "" {
 			content = "<@&" + roleID + ">"
-		}
-		if globalSendLimiter != nil {
-			if err := globalSendLimiter.Acquire(ctx, PriorityAnimeSubs); err != nil {
-				return
-			}
 		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
 		res := sender.post(ctx, OutgoingMessage{Content: content, Embeds: embeds})

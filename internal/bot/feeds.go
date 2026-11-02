@@ -454,11 +454,6 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 		for _, it := range items[i:end] {
 			embeds = append(embeds, it.embed)
 		}
-		if globalSendLimiter != nil {
-			if err := globalSendLimiter.Acquire(ctx, PriorityFeeds); err != nil {
-				return
-			}
-		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
 		res := sender.post(ctx, OutgoingMessage{Embeds: embeds})
 		switch res.Outcome {
@@ -478,11 +473,6 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 
 // sendOneAndPin sends one message through the bot account (a message ID is needed to pin), records it, then pins it.
 func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feed guilds.FeedEntry, compositeGUID string, emb *discordgo.MessageEmbed) {
-	if globalSendLimiter != nil {
-		if err := globalSendLimiter.Acquire(ctx, PriorityFeeds); err != nil {
-			return
-		}
-	}
 	res := senders.open(guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 	msgID := res.MessageID
 	switch res.Outcome {

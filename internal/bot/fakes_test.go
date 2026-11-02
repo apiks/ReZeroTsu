@@ -42,11 +42,48 @@ func serverError() step               { return step{kind: stepServerError} }
 func serverErrorAfterDelivery() step  { return step{kind: stepServerErrorDelivered} }
 func inFlightTimeoutAtShutdown() step { return step{kind: stepInFlightAtShutdown} }
 
+// recordingLimiter is a fake send limiter that records the priority of every wait. Waits succeed unless err is set;
+// onAcquire, when set, runs first and its error (if any) ends the wait, so tests can end a wait the way shutdown does.
+type recordingLimiter struct {
+	mu         sync.Mutex
+	priorities []int
+	err        error
+	onAcquire  func() error
+}
+
+func (l *recordingLimiter) Acquire(_ context.Context, priority int) error {
+	l.mu.Lock()
+	l.priorities = append(l.priorities, priority)
+	hook, err := l.onAcquire, l.err
+	l.mu.Unlock()
+	if hook != nil {
+		if herr := hook(); herr != nil {
+			return herr
+		}
+	}
+	return err
+}
+
+// Priorities returns the priority of each wait so far, in order.
+func (l *recordingLimiter) Priorities() []int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]int(nil), l.priorities...)
+}
+
 // newTestSendersWithClock builds the real channel sender factory over the fake raw port, with a fresh shared
-// webhook cache and a fake clock. Runs that must share webhook state across calls reuse the returned factory.
+// webhook cache, a fake clock and a recording send limiter whose waits succeed. Runs that must share webhook state
+// across calls reuse the returned factory.
 func newTestSendersWithClock(raw RawDiscord) (*channelSenderFactory, *fakeClock) {
+	f, clk, _ := newTestSendersWithLimiter(raw, &recordingLimiter{})
+	return f, clk
+}
+
+// newTestSendersWithLimiter is newTestSendersWithClock over the given recording limiter, for tests that assert
+// what the channel sender waited for.
+func newTestSendersWithLimiter(raw RawDiscord, lim *recordingLimiter) (*channelSenderFactory, *fakeClock, *recordingLimiter) {
 	clk := newFakeClock()
-	return newChannelSenderFactory(raw, newWebhookCache(clk)), clk
+	return newChannelSenderFactory(raw, newWebhookCache(clk), lim), clk, lim
 }
 
 // newTestSenders is newTestSendersWithClock for tests that never move the clock.

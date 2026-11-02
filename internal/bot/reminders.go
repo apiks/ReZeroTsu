@@ -214,12 +214,7 @@ func processReminderSlice(ctx context.Context, d RunOperations, senders *channel
 			Description: desc,
 			Color:       discord.EmbedColor,
 		}
-		if globalSendLimiter != nil {
-			if acqErr := globalSendLimiter.Acquire(ctx, PriorityReminders); acqErr != nil {
-				return acqErr
-			}
-		}
-		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		res := senders.open("", dmID, reminderPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch res.Outcome {
 		case PostDelivered, PostPresumed:
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
