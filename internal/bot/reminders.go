@@ -23,16 +23,14 @@ const (
 	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
 	// user-undeliverable ones: once it has been failing this long since its first rejection it is dropped.
 	reminderGiveUpAfter = 24 * time.Hour
-	// reminderUnmarkedGiveUpAfter is a backstop for a reminder whose failing_since mark never landed: it is dropped
-	// once it is this far past due, so a failed mark write cannot make it retry forever.
-	reminderUnmarkedGiveUpAfter = 7 * 24 * time.Hour
 )
 
 // reminderGivenUp reports whether a reminder rejected by Discord has been failing too long to keep retrying.
-// A reminder with no failing_since is kept unless it is more than reminderUnmarkedGiveUpAfter past due.
+// A reminder that has not been marked as failing is never given up on: the mark is rewritten on every later rejection,
+// so a failed write repairs itself on the next run, and an outage can not wipe overdue reminders.
 func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
 	if r.FailingSince.IsZero() {
-		return now.Sub(r.Date) > reminderUnmarkedGiveUpAfter
+		return false
 	}
 	return now.Sub(r.FailingSince) > reminderGiveUpAfter
 }

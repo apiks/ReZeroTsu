@@ -15,7 +15,8 @@ func TestReminderGivenUp(t *testing.T) {
 		want         bool
 	}{
 		{"unmarked, 6 days overdue, kept", 6 * 24 * time.Hour, 0, false},
-		{"unmarked, 8 days overdue, dropped", 8 * 24 * time.Hour, 0, true},
+		{"unmarked, 8 days overdue, kept", 8 * 24 * time.Hour, 0, false},
+		{"unmarked, 60 days overdue, kept", 60 * 24 * time.Hour, 0, false},
 		{"marked 23h ago, kept", 72 * time.Hour, 23 * time.Hour, false},
 		{"marked 25h ago, dropped", 72 * time.Hour, 25 * time.Hour, true},
 		{"marked 23h ago, 8 days overdue, kept", 8 * 24 * time.Hour, 23 * time.Hour, false},
