@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"time"
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
@@ -31,6 +32,8 @@ type ChannelMessage struct {
 	AuthorID string
 	Content  string
 	Embeds   []*discordgo.MessageEmbed
+	// Timestamp is when the message was posted; zero when unknown.
+	Timestamp time.Time
 }
 
 // DiscordPort is the narrow Discord surface the per-target delivery runs depend on.
@@ -85,6 +88,11 @@ type SentState interface {
 
 	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
 	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
+
+	// --- ticket #9 (daily schedule) ---
+
+	// MarkSchedulePosted sets last_posted_date (UTC YYYY-MM-DD) on the guild's daily-schedule autopost entry.
+	MarkSchedulePosted(ctx context.Context, guildID, date string) error
 }
 
 // --- production wiring: discordgo ---
@@ -128,7 +136,7 @@ func (p *discordgoPort) RecentMessages(_ context.Context, channelID string, limi
 		if m == nil {
 			continue
 		}
-		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds}
+		cm := ChannelMessage{ID: m.ID, Content: m.Content, Embeds: m.Embeds, Timestamp: m.Timestamp}
 		if m.Author != nil {
 			cm.AuthorID = m.Author.ID
 		}
@@ -230,4 +238,8 @@ func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID,
 
 func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
 	return m.db.Reminders().Save(ctx, id, slice)
+}
+
+func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {
+	return m.db.Guilds().MarkAutopostPosted(ctx, guildID, postTypeDailySchedule, date)
 }
