@@ -257,20 +257,15 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string) (resp
 	}
 
 	now := time.Now().UTC()
+	var airedToday animeschedule.ShowEntry
 	hasAiredToday := false
 	if weekday := int(now.Weekday()); weekday >= 0 && weekday <= 6 {
-		todayShows := animeschedule.GetDayShows(weekday, true)
-		for _, e := range todayShows {
-			if strings.EqualFold(e.Name, showName) && e.AirTimeUnix <= now.Unix() {
-				hasAiredToday = true
-				break
-			}
-		}
+		airedToday, hasAiredToday = airedTodayEntry(animeschedule.GetDayShows(weekday, true), showName, now.Unix())
 	}
 
 	newSub := &anime_subs.ShowSub{Show: showName, Notified: hasAiredToday, Guild: false}
 	if hasAiredToday {
-		newSub.LastNotifiedAirUnix = show.AirTimeUnix
+		newSub.LastNotifiedAirUnix = airedToday.AirTimeUnix
 	}
 	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
 	if err != nil {
@@ -430,4 +425,17 @@ func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Sessi
 			Components: components,
 		},
 	})
+}
+
+// airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched
+// with anime_subs.MatchKey like the notifier does, and the entry is today's own, so the seeded air time is today's
+// even for a show the schedule lists on several weekdays.
+func airedTodayEntry(todayShows []animeschedule.ShowEntry, showName string, nowUnix int64) (animeschedule.ShowEntry, bool) {
+	key := anime_subs.MatchKey(showName)
+	for _, e := range todayShows {
+		if anime_subs.MatchKey(e.Name) == key && e.AirTimeUnix <= nowUnix {
+			return e, true
+		}
+	}
+	return animeschedule.ShowEntry{}, false
 }

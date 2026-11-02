@@ -248,3 +248,33 @@ func TestFindShowIn(t *testing.T) {
 		})
 	}
 }
+
+// The already-aired check must use today's entry for the show, matched the way the notifier matches names, so a
+// show listed on several weekdays or with a trim-variant spelling seeds the right air time.
+func TestAiredTodayEntry(t *testing.T) {
+	const now = 1000
+	today := []animeschedule.ShowEntry{
+		{Name: "Frieren", AirTimeUnix: 900},
+		{Name: "Dandadan", AirTimeUnix: 1500},
+	}
+	tests := []struct {
+		name     string
+		show     string
+		wantUnix int64
+		ok       bool
+	}{
+		{"aired today", "Frieren", 900, true},
+		{"lookup spelling differs by surrounding space", "Frieren ", 900, true},
+		{"case differs", "frieren", 900, true},
+		{"not aired yet", "Dandadan", 0, false},
+		{"not on today's list", "Other", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, ok := airedTodayEntry(today, tt.show, now)
+			if ok != tt.ok || (ok && e.AirTimeUnix != tt.wantUnix) {
+				t.Errorf("airedTodayEntry(%q) = %d, %v; want %d, %v", tt.show, e.AirTimeUnix, ok, tt.wantUnix, tt.ok)
+			}
+		})
+	}
+}
