@@ -195,3 +195,56 @@ func TestClearsubsCore(t *testing.T) {
 		})
 	}
 }
+
+// A legacy stored entry with stray surrounding space is the same show to the notifier, so /sub must treat it as
+// already subscribed instead of adding a duplicate.
+func TestSubCoreLegacyTrimmedEntryIsAlreadySubscribed(t *testing.T) {
+	withLookup(t, "Frieren")
+	st := newFakeStore().with("u", "Frieren ")
+	msg, err := subCore(context.Background(), st, "u", "Frieren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "already subscribed") {
+		t.Errorf("msg = %q, want already subscribed", msg)
+	}
+	if len(st.calls) != 0 || len(st.docs["u"]) != 1 {
+		t.Errorf("calls=%v names=%v, want no add", st.calls, st.names("u"))
+	}
+}
+
+// /unsub must be able to remove a legacy entry that the notifier still serves.
+func TestUnsubCoreRemovesLegacyTrimmedEntry(t *testing.T) {
+	st := newFakeStore().with("u", "Frieren ", "Dandadan")
+	msg, err := unsubCore(context.Background(), st, "u", "frieren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "unsubscribed") {
+		t.Errorf("msg = %q, want unsubscribed", msg)
+	}
+	if got := st.names("u"); strings.Join(got, ",") != "Dandadan" {
+		t.Errorf("names = %v, want [Dandadan]", got)
+	}
+}
+
+func TestFindShowIn(t *testing.T) {
+	shows := []animeschedule.ShowEntry{{Name: "Frieren "}, {Name: "Dandadan"}}
+	tests := []struct {
+		name, input, want string
+		ok                bool
+	}{
+		{"schedule name with trailing space", "frieren", "Frieren ", true},
+		{"input with surrounding space", "  DANDADAN ", "Dandadan", true},
+		{"unknown", "nope", "", false},
+		{"blank", "   ", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := findShowIn(shows, tt.input)
+			if ok != tt.ok || got.Name != tt.want {
+				t.Errorf("findShowIn(%q) = %q, %v; want %q, %v", tt.input, got.Name, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}

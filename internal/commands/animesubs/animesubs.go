@@ -193,18 +193,26 @@ func subsFirstPageContent(list []*anime_subs.ShowSub, uid string) (desc string, 
 	return desc, components
 }
 
-// findShowByName returns the first ShowEntry matching name (case-insensitive), or zero value and false if none.
-func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	nameLower := strings.ToLower(strings.TrimSpace(name))
-	if nameLower == "" {
+// findShowIn returns the first show whose name matches input under anime_subs.MatchKey (case-insensitive and
+// trimmed like the notifier matches names), or the zero value and false if none.
+func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
+	key := anime_subs.MatchKey(input)
+	if key == "" {
 		return animeschedule.ShowEntry{}, false
 	}
+	for _, show := range shows {
+		if anime_subs.MatchKey(show.Name) == key {
+			return show, true
+		}
+	}
+	return animeschedule.ShowEntry{}, false
+}
+
+// findShowByName returns the first airing ShowEntry matching name, or zero value and false if none.
+func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	for day := 0; day <= 6; day++ {
-		shows := animeschedule.GetDayShows(day, true)
-		for _, show := range shows {
-			if strings.ToLower(show.Name) == nameLower {
-				return show, true
-			}
+		if show, ok := findShowIn(animeschedule.GetDayShows(day, true), name); ok {
+			return show, true
 		}
 	}
 	return animeschedule.ShowEntry{}, false
@@ -239,7 +247,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string) (resp
 	}
 	if doc != nil {
 		for _, sub := range doc.Shows {
-			if sub != nil && strings.EqualFold(sub.Show, showName) {
+			if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(showName) {
 				return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
 			}
 		}
@@ -304,7 +312,7 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	// Resolve the stored titles (exact case) the input names, then remove exactly those.
 	var stored []string
 	for _, sub := range doc.Shows {
-		if sub != nil && strings.EqualFold(sub.Show, animeInput) {
+		if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(animeInput) {
 			stored = append(stored, sub.Show)
 		}
 	}
