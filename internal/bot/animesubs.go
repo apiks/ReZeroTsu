@@ -206,13 +206,14 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	return emb
 }
 
-// sendEpisodeNotification sends the episode embed to the channel (DM or guild new-episodes).
-func sendEpisodeNotification(s *discordgo.Session, channelID string, emb *discordgo.MessageEmbed) error {
-	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Embeds: []*discordgo.MessageEmbed{emb},
-	})
+// sendEpisodeNotification sends the episode embed to the DM channel.
+func sendEpisodeNotification(ctx context.Context, d DiscordPort, channelID string, emb *discordgo.MessageEmbed) error {
+	_, err := d.Send(ctx, channelID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 	return err
 }
+
+// weekdayShows returns the shows for a weekday, optionally including donghua.
+type weekdayShows func(donghua bool) []animeschedule.ShowEntry
 
 func roleExistsInGuild(g *discordgo.Guild, roleID string) bool {
 	if g == nil || roleID == "" {
@@ -236,6 +237,9 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if len(todayShows) == 0 {
 		return
 	}
+	d := newDiscordgoPort(s)
+	st := newMongoSentState(db)
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
 
 	// Per-shard guild seed for current weekday (once per day); missing shard entry = not yet seeded.
 	lastGuildSeedWeekdayMu.RLock()
@@ -243,7 +247,13 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	needGuildSeed := !seeded || lastSeen != weekday
 	lastGuildSeedWeekdayMu.RUnlock()
 	if needGuildSeed {
-		seedGuildNewEpisodesForShard(ctx, db, s, weekday)
+		guildIDs := make([]string, 0, len(s.State.Guilds))
+		for _, g := range s.State.Guilds {
+			if g != nil && g.ID != "" {
+				guildIDs = append(guildIDs, g.ID)
+			}
+		}
+		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows)
 		lastGuildSeedWeekdayMu.Lock()
 		lastGuildSeedWeekdayByShard[s.ShardID] = weekday
 		lastGuildSeedWeekdayMu.Unlock()
@@ -261,7 +271,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					if doc == nil {
 						continue
 					}
-					if err := processAnimeSubUser(ctx, db, s, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
+					if err := processAnimeSubUser(ctx, d, st, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
 						logger.For("animesubs").Error("processAnimeSubUser failed", "user_id", doc.ID, "err", err)
 					}
 				}
@@ -320,7 +330,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					return
 				default:
 				}
-				processGuildNewEpisodes(ctx, db, s, g, weekday, now)
+				processGuildNewEpisodes(ctx, d, st, g.ID, dayShows, now)
 			}
 		}()
 	}
@@ -337,7 +347,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	gwg.Wait()
 }
 
-func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.Session, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
+func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
@@ -350,7 +360,7 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 		}
 	}
 
-	var dm *discordgo.Channel
+	var dmID string
 	var err error
 	updated := false
 	throttleTimer := time.NewTimer(animeSubThrottlePerUser)
@@ -376,8 +386,8 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 			continue
 		}
 
-		if dm == nil {
-			dm, err = s.UserChannelCreate(userID)
+		if dmID == "" {
+			dmID, err = d.OpenDM(ctx, userID)
 			if err != nil {
 				logger.For("animesubs").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 				throttle := time.NewTimer(animeSubThrottlePerUser)
@@ -397,7 +407,7 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 				return acqErr
 			}
 		}
-		if err := sendEpisodeNotification(s, dm.ID, emb); err != nil {
+		if err := sendEpisodeNotification(ctx, d, dmID, emb); err != nil {
 			args := append(discord.RESTAttrs(err), "user_id", userID, "err", err)
 			if discord.IsCannotDMUser(err) {
 				logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
@@ -432,7 +442,7 @@ func processAnimeSubUser(ctx context.Context, db *database.Client, s *discordgo.
 	}
 
 	if updated {
-		if err := db.AnimeSubs().Set(ctx, userID, false, doc.Shows); err != nil {
+		if err := st.SetAnimeSubs(ctx, userID, false, doc.Shows); err != nil {
 			logger.For("animesubs").Error("Set user subs failed", "user_id", userID, "err", err)
 		}
 	}
@@ -463,29 +473,29 @@ func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
-func seedGuildNewEpisodesForShard(ctx context.Context, db *database.Client, s *discordgo.Session, weekday int) {
+func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows) {
 	today := time.Now().UTC().Format("2006-01-02")
 
-	for _, g := range s.State.Guilds {
+	for _, guildID := range guildIDs {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		if g == nil || g.ID == "" {
+		if guildID == "" {
 			continue
 		}
-		ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, postTypeNewEpisodes)
+		ap, err := st.GetAutopost(ctx, guildID, postTypeNewEpisodes)
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		settings, _ := db.Guilds().GetGuildSettings(ctx, g.ID)
+		settings, _ := st.GetGuildSettings(ctx, guildID)
 		donghua := true
 		if settings != nil {
 			donghua = settings.Donghua
 		}
-		dayShows := animeschedule.GetDayShows(weekday, donghua)
-		existing, err := db.AnimeSubs().GetByID(ctx, ap.ID)
+		dayShows := shows(donghua)
+		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
 			logger.For("animesubs").Error("GetByID seed check failed", "channel_id", ap.ID, "err", err)
 			continue
@@ -519,17 +529,17 @@ func seedGuildNewEpisodesForShard(ctx context.Context, db *database.Client, s *d
 			})
 		}
 
-		if err := db.AnimeSubs().Set(ctx, ap.ID, true, showSubs); err != nil {
+		if err := st.SetAnimeSubs(ctx, ap.ID, true, showSubs); err != nil {
 			logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
 		}
 	}
 }
 
-func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discordgo.Session, g *discordgo.Guild, weekday int, now time.Time) {
-	if g == nil || g.ID == "" {
+func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, guildID string, shows weekdayShows, now time.Time) {
+	if guildID == "" {
 		return
 	}
-	ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, postTypeNewEpisodes)
+	ap, err := st.GetAutopost(ctx, guildID, postTypeNewEpisodes)
 	if err != nil {
 		return
 	}
@@ -538,21 +548,21 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 	}
 	channelID := ap.ID
 	roleID := ap.RoleID
-	if roleID != "" && !roleExistsInGuild(g, roleID) {
-		if err := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
-			logger.For("animesubs").Error("clear invalid role failed", "guild_id", g.ID, "role_id", roleID, "err", err)
+	if roleID != "" && !d.GuildHasRole(guildID, roleID) {
+		if err := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, &guilds.Autopost{PostType: postTypeNewEpisodes, Name: ap.Name, ID: ap.ID, RoleID: ""}); err != nil {
+			logger.For("animesubs").Error("clear invalid role failed", "guild_id", guildID, "role_id", roleID, "err", err)
 		} else {
-			logger.For("animesubs").Warn("role no longer exists, cleared from new-episodes autopost", "guild_id", g.ID, "role_id", roleID)
+			logger.For("animesubs").Warn("role no longer exists, cleared from new-episodes autopost", "guild_id", guildID, "role_id", roleID)
 		}
 		roleID = ""
 	}
-	settings, _ := db.Guilds().GetGuildSettings(ctx, g.ID)
+	settings, _ := st.GetGuildSettings(ctx, guildID)
 	donghua := true
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	todayShowsGuild := animeschedule.GetDayShows(weekday, donghua)
-	doc, err := db.AnimeSubs().GetByID(ctx, channelID)
+	todayShowsGuild := shows(donghua)
+	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
 		logger.For("animesubs").Error("GetByID failed", "channel_id", channelID, "err", err)
 		return
@@ -562,7 +572,7 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 		for _, show := range todayShowsGuild {
 			showSubs = append(showSubs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
 		}
-		if err := db.AnimeSubs().Set(ctx, channelID, true, showSubs); err != nil {
+		if err := st.SetAnimeSubs(ctx, channelID, true, showSubs); err != nil {
 			logger.For("animesubs").Error("Set guild channel seed failed", "channel_id", channelID, "err", err)
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
@@ -598,7 +608,7 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 	if len(due) == 0 {
 		return
 	}
-	w, threadID, webhookOK := getOrCreateChannelWebhook(s, g.ID, channelID)
+	webhook := d.ChannelWebhook(guildID, channelID)
 	updated := false
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
 		select {
@@ -621,35 +631,36 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 				return
 			}
 		}
-		usedWebhook := webhookOK && w != nil
-		sendErr := SendBatchToChannel(ctx, s, w, threadID, channelID, content, embeds, usedWebhook)
+		msg := OutgoingMessage{Content: content, Embeds: embeds}
+		usedWebhook := webhook != nil
+		_, sendErr := d.Send(ctx, channelID, webhook, msg)
 		if sendErr != nil && usedWebhook && !discord.IsUnknownChannel(sendErr) {
-			invalidateChannelWebhook(g.ID, channelID)
+			d.InvalidateChannelWebhook(guildID, channelID)
 		}
 		if sendErr != nil {
-			sendErr = SendBatchToChannel(ctx, s, nil, "", channelID, content, embeds, false)
+			_, sendErr = d.Send(ctx, channelID, nil, msg)
 		}
 		if sendErr != nil {
 			if updated {
-				if err := db.AnimeSubs().Set(ctx, channelID, true, doc.Shows); err != nil {
+				if err := st.SetAnimeSubs(ctx, channelID, true, doc.Shows); err != nil {
 					logger.For("animesubs").Error("Set guild before break failed", "channel_id", channelID, "err", err)
 				}
 			}
 			if discord.IsUnknownChannel(sendErr) || discord.IsChannelUnavailable(sendErr) {
-				_ = db.AnimeSubs().DeleteByID(ctx, channelID)
-				if setErr := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", g.ID, "channel_id", channelID, "err", setErr)
+				_ = st.DeleteAnimeSubs(ctx, channelID)
+				if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+					logger.For("animesubs").Error("channel deleted or inaccessible, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
 				}
-				invalidateChannelWebhook(g.ID, channelID)
+				d.InvalidateChannelWebhook(guildID, channelID)
 				return
 			}
 			if discord.IsChannelNotText(sendErr) {
-				_ = db.AnimeSubs().DeleteByID(ctx, channelID)
-				if setErr := db.Guilds().SetAutopost(ctx, g.ID, postTypeNewEpisodes, nil); setErr != nil {
-					logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", g.ID, "channel_id", channelID, "err", setErr)
+				_ = st.DeleteAnimeSubs(ctx, channelID)
+				if setErr := st.SetAutopost(ctx, guildID, postTypeNewEpisodes, nil); setErr != nil {
+					logger.For("animesubs").Error("channel non-text, failed to clear autopost", "guild_id", guildID, "channel_id", channelID, "err", setErr)
 				}
-				invalidateChannelWebhook(g.ID, channelID)
-				logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", g.ID, "channel_id", channelID)
+				d.InvalidateChannelWebhook(guildID, channelID)
+				logger.For("animesubs").Warn("channel is non-text, cleared new-episodes autopost", "guild_id", guildID, "channel_id", channelID)
 				return
 			}
 			if discord.IsMissingPermissions(sendErr) {
@@ -657,14 +668,14 @@ func processGuildNewEpisodes(ctx context.Context, db *database.Client, s *discor
 			}
 			return
 		}
-		logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", g.ID, "channel_id", channelID, "count", len(batch))
+		logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
 		for _, e := range batch {
 			e.sub.Notified = true
 		}
 		updated = true
 	}
 	if updated {
-		if err := db.AnimeSubs().Set(ctx, channelID, true, doc.Shows); err != nil {
+		if err := st.SetAnimeSubs(ctx, channelID, true, doc.Shows); err != nil {
 			logger.For("animesubs").Error("Set guild failed", "channel_id", channelID, "err", err)
 		}
 	}
