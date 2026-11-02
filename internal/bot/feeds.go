@@ -454,7 +454,7 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 	if len(items) == 0 {
 		return
 	}
-	webhook := d.ChannelWebhook(guildID, channelID)
+	sender := newFeedChannelSender(d, guildID, channelID)
 	for i := 0; i < len(items); i += discord.MaxEmbedsPerMessage {
 		end := min(i+discord.MaxEmbedsPerMessage, len(items))
 		embeds := make([]*discordgo.MessageEmbed, 0, end-i)
@@ -466,11 +466,8 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 				return
 			}
 		}
-		res, _ := feedSend(ctx, d, guildID, channelID, webhook, OutgoingMessage{Embeds: embeds})
-		if res.WebhookGone {
-			// The webhook was invalidated: later chunks go through the bot account instead of failing on it again.
-			webhook = nil
-		}
+		// After a rejected webhook the sender sends later chunks through the bot account.
+		res, _ := sender.send(ctx, OutgoingMessage{Embeds: embeds})
 		if !res.Delivered {
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return

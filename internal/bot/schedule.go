@@ -168,7 +168,8 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 	}
 	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
-	match := scheduleMatcher(emb.Title, now)
+	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
+	sender := newChannelSender(d, guildID, ap.ID).withPolicy(scheduleMatcher(emb.Title, now), false, "schedule send")
 
 	var res SendResult
 	for attempt := range 2 {
@@ -186,8 +187,7 @@ func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentSta
 				return err
 			}
 		}
-		// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
-		res, _ = deliverWithRules(ctx, d, guildID, ap.ID, d.ChannelWebhook(guildID, ap.ID), msg, match, false, "schedule send")
+		res, _ = sender.send(ctx, msg)
 		if res.Delivered {
 			break
 		}
@@ -230,39 +230,42 @@ func handleScheduleRejection(ctx context.Context, d DiscordPort, st SentState, g
 	d.InvalidateChannelWebhook(guildID, channelID)
 }
 
-// channelStateFirst looks the channel up in the gateway state cache and only falls back to REST on a miss.
-// A cached channel is returned as a private copy taken under the state lock (discordgo's ChannelAdd overwrites
-// the cached struct in place); REST results are already private.
-func channelStateFirst(s *discordgo.Session, channelID string) (*discordgo.Channel, error) {
-	if s.State != nil {
-		if ch, err := s.State.Channel(channelID); err == nil && ch != nil {
-			return copyStateChannel(s.State, ch), nil
-		}
-	}
-	return s.Channel(channelID)
+// channelInfo is the part of a channel the send paths read.
+type channelInfo struct {
+	Type     discordgo.ChannelType
+	ParentID string
 }
 
-// copyStateChannel copies ch, owned by st, under st's read lock, including its permission overwrites.
-func copyStateChannel(st *discordgo.State, ch *discordgo.Channel) *discordgo.Channel {
-	st.RLock()
-	defer st.RUnlock()
-	c := *ch
-	if ch.PermissionOverwrites != nil {
-		c.PermissionOverwrites = make([]*discordgo.PermissionOverwrite, len(ch.PermissionOverwrites))
-		for i, ow := range ch.PermissionOverwrites {
-			if ow != nil {
-				owCopy := *ow
-				c.PermissionOverwrites[i] = &owCopy
-			}
+// channelStateFirst looks the channel up in the gateway state cache and only falls back to REST on a miss.
+// A cached channel's fields are read under the state lock (discordgo's ChannelAdd overwrites the cached struct
+// in place).
+func channelStateFirst(s *discordgo.Session, channelID string) (channelInfo, error) {
+	if s.State != nil {
+		if ch, err := s.State.Channel(channelID); err == nil && ch != nil {
+			return stateChannelInfo(s.State, ch), nil
 		}
 	}
-	return &c
+	ch, err := s.Channel(channelID)
+	if err != nil {
+		return channelInfo{}, err
+	}
+	if ch == nil {
+		return channelInfo{}, errors.New("channel not found")
+	}
+	return channelInfo{Type: ch.Type, ParentID: ch.ParentID}, nil
+}
+
+// stateChannelInfo reads ch, owned by st, under st's read lock.
+func stateChannelInfo(st *discordgo.State, ch *discordgo.Channel) channelInfo {
+	st.RLock()
+	defer st.RUnlock()
+	return channelInfo{Type: ch.Type, ParentID: ch.ParentID}
 }
 
 // canSendToChannel reports whether the bot can send messages and embeds (View Channel, Send Messages, Embed Links; threads: Send in Threads).
 func canSendToChannel(s *discordgo.Session, channelID string) bool {
 	ch, err := channelStateFirst(s, channelID)
-	if err != nil || ch == nil {
+	if err != nil {
 		return false
 	}
 	if s.State.User == nil {

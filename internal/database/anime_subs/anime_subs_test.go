@@ -38,16 +38,75 @@ func (s *scriptedUpdate) update(_ context.Context, _, _ any, upsert bool) (*mong
 // The Mongo behaviour of the null-tolerant append is covered by manual acceptance; this only pins that show
 // names are wrapped in $literal, so a name starting with "$" is never evaluated as a field path.
 func TestAppendedShowsExprWrapsShowsInLiteral(t *testing.T) {
-	expr := appendedShowsExpr([]*ShowSub{{Show: "$shows"}, {Show: "B"}})
+	shows := []*ShowSub{{Show: "$shows"}, {Show: "B"}}
+	expr := appendedShowsExpr(shows)
 	parts := expr["$concatArrays"].(bson.A)
-	literals := parts[1].(bson.A)
-	if len(literals) != 2 {
-		t.Fatalf("literals = %d, want 2", len(literals))
+	lit, ok := parts[1].(bson.M)["$literal"]
+	if !ok {
+		t.Fatalf("appended shows are not wrapped in $literal: %v", parts[1])
 	}
-	for i, l := range literals {
-		if _, ok := l.(bson.M)["$literal"]; !ok {
-			t.Errorf("entry %d is not wrapped in $literal: %v", i, l)
+	got, ok := lit.([]*ShowSub)
+	if !ok || len(got) != 2 || got[0].Show != "$shows" || got[1].Show != "B" {
+		t.Errorf("$literal holds %v, want the two shows unchanged", lit)
+	}
+}
+
+// The collapse expression must at least encode as BSON; its Mongo behaviour is covered by manual acceptance.
+func TestCollapsedShowsExprMarshals(t *testing.T) {
+	if _, err := bson.Marshal(bson.M{"shows": collapsedShowsExpr()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Names the collapse treats as duplicates must also be one show to the notifier, or a collapse could keep an
+// entry the notifier does not read.
+func TestMatchKeyAgreesWithCollapseKey(t *testing.T) {
+	pairs := [][2]string{
+		{"Frieren", "FRIEREN"},
+		{" Frieren ", "frieren"},
+		{" Show A", "show a\t"},
+		{"ÄBC", "Äbc"},
+	}
+	for _, p := range pairs {
+		if CollapseKey(p[0]) != CollapseKey(p[1]) {
+			t.Fatalf("test pair %q has different collapse keys", p)
 		}
+		if MatchKey(p[0]) != MatchKey(p[1]) {
+			t.Errorf("MatchKey(%q) = %q, MatchKey(%q) = %q, want equal", p[0], MatchKey(p[0]), p[1], MatchKey(p[1]))
+		}
+	}
+	if MatchKey("ÄBC") != MatchKey("äbc") {
+		t.Errorf("MatchKey is not case-insensitive for non-ASCII letters")
+	}
+}
+
+// CollapseKey must equal what the collapse pipeline computes in Mongo: $trim's default whitespace set, then the
+// ASCII-only $toLower. Expected values follow the MongoDB documentation of both operators.
+func TestCollapseKeyMatchesMongo(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ASCII case", "FrIeReN", "frieren"},
+		{"surrounding spaces and tabs", " \tFrieren\r\n", "frieren"},
+		{"vertical tab, form feed and null", "\v\f\x00Frieren\x00", "frieren"},
+		{"no-break, ogham and en/em spaces", "   Frieren  ", "frieren"},
+		{"non-ASCII letters keep their case", "ÄÖÜ Show", "ÄÖÜ show"},
+		{"Turkish dotted I is not lowered", "İstanbul", "İstanbul"},
+		{"ideographic space is not trimmed", "　Frieren", "　frieren"},
+		{"next line is not trimmed", "Frieren\u0085", "frieren\u0085"},
+		{"zero-width space is not trimmed", "​Frieren", "​frieren"},
+		{"inner whitespace is kept", "Show  A", "show  a"},
+		{"only whitespace", "  \t", ""},
+		{"empty", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CollapseKey(tc.in); got != tc.want {
+				t.Errorf("CollapseKey(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -51,6 +51,9 @@ type DiscordPort interface {
 	ChannelWebhook(guildID, channelID string) *WebhookTarget
 	// InvalidateChannelWebhook drops the cached webhook for the channel.
 	InvalidateChannelWebhook(guildID, channelID string)
+	// AvoidChannelWebhook drops the cached webhook for the channel and offers none for it for a while, so sends
+	// go through the bot account. Used when Discord rejected the webhook but the bot account could post.
+	AvoidChannelWebhook(guildID, channelID string)
 	// CanSend reports whether the bot may post embeds to the channel.
 	CanSend(channelID string) bool
 	// GuildRole reports whether the role still exists in the guild, or that the state cannot tell.
@@ -174,6 +177,10 @@ func (p *discordgoPort) ChannelWebhook(guildID, channelID string) *WebhookTarget
 
 func (p *discordgoPort) InvalidateChannelWebhook(guildID, channelID string) {
 	invalidateChannelWebhook(guildID, channelID)
+}
+
+func (p *discordgoPort) AvoidChannelWebhook(guildID, channelID string) {
+	avoidChannelWebhook(guildID, channelID, time.Now())
 }
 
 func (p *discordgoPort) CanSend(channelID string) bool { return canSendToChannel(p.s, channelID) }

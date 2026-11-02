@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"ReZeroTsu/internal/discord"
@@ -12,13 +13,18 @@ import (
 )
 
 // Shared send rules for every delivery run (guild new-episodes, feeds, user DMs, ...):
-//   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; a
-//     context error returned by Send once the context is done means the request was never made (not verified);
+//   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; only a
+//     Send that never made the request (errSendNotAttempted: a send-limiter wait ended by the context) skips
+//     verification, while any other context error (e.g. an in-flight client timeout) stays Unknown;
 //   - the webhook -> bot-account fallback runs at most once per send, only when the webhook send is Rejected as
 //     an unknown/invalid webhook (which is invalidated first) or with a channel-terminal code (deleted,
-//     inaccessible, non-text, missing permissions); callers apply terminal handling to the bot-account error;
-//   - an Unknown outcome is verified by reading recent channel messages; if verification itself fails the
-//     message is treated as delivered (a duplicate role ping is worse than a miss);
+//     inaccessible, non-text, missing permissions); when the bot account then delivers after a channel-terminal
+//     rejection, the channel's webhook is avoided for a while; callers apply terminal handling to the
+//     bot-account error, and channelSender stops using a rejected webhook for the rest of a run;
+//   - an Unknown outcome is verified by reading recent channel messages; what a failed verification means is the
+//     caller's policy (presumeOnVerifyFailure): new-episodes posts and DMs (sendWithRules) treat it as delivered,
+//     since a duplicate role ping or DM is worse than a miss, while feeds and the daily schedule treat it as not
+//     delivered and post again;
 //   - "sent" state is written on a context detached from shutdown with a short timeout.
 
 const (
@@ -39,10 +45,10 @@ type SendResult struct {
 	Err error
 	// Presumed is true when Delivered was assumed because verification failed.
 	Presumed bool
-	// WebhookGone is true when the webhook turned out to be unusable, whatever the final outcome: gone (and
-	// invalidated), or rejected with a channel-terminal code so the bot account was tried instead. Callers
-	// sending further chunks to the same channel must stop passing that webhook.
-	WebhookGone bool
+	// webhookRejected is true when Discord rejected the webhook send (gone, or a channel-terminal code) and the
+	// bot account was tried instead, whatever the final outcome. channelSender stops using the webhook for later
+	// sends of the run; across runs the port's invalidate/avoid calls keep it from being offered again.
+	webhookRejected bool
 }
 
 // sendWithRules sends msg to channelID (through webhook when non-nil) applying the shared send rules.
@@ -50,6 +56,43 @@ type SendResult struct {
 func sendWithRules(ctx context.Context, d DiscordPort, guildID, channelID string, webhook *WebhookTarget, msg OutgoingMessage) SendResult {
 	res, _ := deliverWithRules(ctx, d, guildID, channelID, webhook, msg, matchRecentMessage, true, "send")
 	return res
+}
+
+// channelSender sends a run's messages (chunks, retries) to one channel under the shared send rules. It looks
+// the channel's webhook up once and stops using it for the rest of the run as soon as Discord rejected it, so
+// no caller has to track that itself.
+type channelSender struct {
+	d                  DiscordPort
+	guildID, channelID string
+	webhook            *WebhookTarget
+	match              recentMatcher
+	presume            bool
+	label              string
+}
+
+// newChannelSender returns a sender for channelID through its webhook when one is usable, with the default
+// matcher and presume-on-verify-failure policy. Use the with* options for other policies.
+func newChannelSender(d DiscordPort, guildID, channelID string) *channelSender {
+	return &channelSender{
+		d: d, guildID: guildID, channelID: channelID, webhook: d.ChannelWebhook(guildID, channelID),
+		match: matchRecentMessage, presume: true, label: "send",
+	}
+}
+
+// withPolicy sets how an Unknown send is matched, whether a failed verification counts as delivered and the
+// log label.
+func (c *channelSender) withPolicy(match recentMatcher, presumeOnVerifyFailure bool, label string) *channelSender {
+	c.match, c.presume, c.label = match, presumeOnVerifyFailure, label
+	return c
+}
+
+// send delivers msg and returns the result and the delivered message ID when known.
+func (c *channelSender) send(ctx context.Context, msg OutgoingMessage) (SendResult, string) {
+	res, id := deliverWithRules(ctx, c.d, c.guildID, c.channelID, c.webhook, msg, c.match, c.presume, c.label)
+	if res.webhookRejected {
+		c.webhook = nil
+	}
+	return res, id
 }
 
 // recentMatcher finds the message that an Unknown send produced among the channel's recent messages and
@@ -61,8 +104,8 @@ func matchRecentMessage(recent []ChannelMessage, botUserID string, webhook *Webh
 	return "", messageInRecent(recent, botUserID, webhook, msg)
 }
 
-// deliverWithRules is the shared send structure behind sendWithRules and feedSend: cancel check, webhook-gone
-// fallback, Unknown classification and unrecognised-rejection logging. The callers differ only in how an Unknown
+// deliverWithRules is the shared send structure behind sendWithRules, feedSend and channelSender: cancel check,
+// rejected-webhook fallback, Unknown classification and unrecognised-rejection logging. The callers differ only in how an Unknown
 // send is matched (match), whether a failed verification counts as delivered (presumeOnVerifyFailure) and in the
 // log label. It also returns the delivered message ID when known (bot-account sends and matched messages).
 func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID string, webhook *WebhookTarget, msg OutgoingMessage,
@@ -71,7 +114,7 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 		return SendResult{Err: err}, ""
 	}
 	id, err := d.Send(ctx, channelID, webhook, msg)
-	if sendNotAttempted(ctx, err) {
+	if sendNotAttempted(err) {
 		return SendResult{Err: err}, ""
 	}
 	switch discord.ClassifySend(err) {
@@ -82,54 +125,66 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 	}
 
 	// Rejected: nothing was delivered.
-	gone := false
+	rejected := false
 	if webhook != nil && (discord.IsWebhookGone(err) || discord.ClassifyChannelTerminal(err) != discord.ChannelNotTerminal) {
 		// A gone webhook is invalidated. A channel-terminal rejection of the webhook does not prove the bot
 		// account cannot post (e.g. missing access to a private thread for the webhook), so callers only get
 		// to apply terminal handling when this single bot-account attempt is rejected too.
-		gone = true
-		if discord.IsWebhookGone(err) {
+		rejected = true
+		gone := discord.IsWebhookGone(err)
+		if gone {
 			d.InvalidateChannelWebhook(guildID, channelID)
 		}
 		if cerr := ctx.Err(); cerr != nil {
-			return SendResult{Err: cerr, WebhookGone: true}, ""
+			return SendResult{Err: cerr, webhookRejected: true}, ""
 		}
 		id, err = d.Send(ctx, channelID, nil, msg)
-		if sendNotAttempted(ctx, err) {
-			return SendResult{Err: err, WebhookGone: true}, ""
+		if sendNotAttempted(err) {
+			return SendResult{Err: err, webhookRejected: true}, ""
 		}
-		switch discord.ClassifySend(err) {
-		case discord.Sent:
-			return SendResult{Delivered: true, WebhookGone: true}, id
-		case discord.Unknown:
-			res, vid := verifyUnknownSend(ctx, d, channelID, nil, msg, err, match, presumeOnVerifyFailure, label)
-			res.WebhookGone = true
-			return res, vid
+		if outcome := discord.ClassifySend(err); outcome != discord.Rejected {
+			res := SendResult{Delivered: true}
+			if outcome == discord.Unknown {
+				res, id = verifyUnknownSend(ctx, d, channelID, nil, msg, err, match, presumeOnVerifyFailure, label)
+			}
+			res.webhookRejected = true
+			if res.Delivered && !gone {
+				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
+				// run spends another rejected (401/403) request on it before falling back.
+				d.AvoidChannelWebhook(guildID, channelID)
+			}
+			return res, id
 		}
 	}
 	if !isKnownRejection(err) {
 		logger.For("delivery").Warn(label+" rejected with unrecognised code, not retrying",
 			append([]any{"guild_id", guildID, "channel_id", channelID}, discord.RESTAttrs(err)...)...)
 	}
-	return SendResult{Err: err, WebhookGone: gone}, ""
+	return SendResult{Err: err, webhookRejected: rejected}, ""
 }
 
-// sendNotAttempted reports whether a Send error is the run context's own cancellation or deadline. Production
-// Send only observes ctx while waiting for a send limiter (the REST call itself is not context-aware), so such
-// an error means the request was never made: it is not verified and never falls back. A context error while ctx
-// is still live comes from a client-side request timeout, which may hide a delivered message, so it stays Unknown.
-func sendNotAttempted(ctx context.Context, err error) bool {
-	if ctx.Err() == nil {
-		return false
-	}
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+// errSendNotAttempted marks a Send error returned before any request was made (a send-limiter wait ended by
+// the context). Only such errors skip verification; see sendNotAttempted.
+var errSendNotAttempted = errors.New("send not attempted")
+
+// notAttempted wraps err (a context error from a wait that precedes the request) as errSendNotAttempted while
+// keeping it matchable as the original error.
+func notAttempted(err error) error {
+	return fmt.Errorf("%w: %w", errSendNotAttempted, err)
+}
+
+// sendNotAttempted reports whether a Send error says the request was never made: it is not verified and never
+// falls back. Every other error, including a context error from an in-flight request's client timeout (which
+// matches context.DeadlineExceeded even during shutdown), may hide a delivered message and stays Unknown.
+func sendNotAttempted(err error) bool {
+	return errors.Is(err, errSendNotAttempted)
 }
 
 // isKnownRejection reports whether err is a Rejected code that callers have terminal handling for.
+// Channel-terminal codes come from ClassifyChannelTerminal, so a new terminal code only needs adding there.
 func isKnownRejection(err error) bool {
-	return discord.IsUnknownChannel(err) || discord.IsChannelUnavailable(err) || discord.IsChannelNotText(err) ||
-		discord.IsMissingPermissions(err) || discord.IsUnknownRole(err) || discord.IsUnknownMessage(err) ||
-		discord.IsCannotDMUser(err) || discord.IsWebhookGone(err)
+	return discord.ClassifyChannelTerminal(err) != discord.ChannelNotTerminal ||
+		discord.IsUnknownRole(err) || discord.IsUnknownMessage(err) || discord.IsCannotDMUser(err) || discord.IsWebhookGone(err)
 }
 
 // verifyUnknownSend reads recent channel messages to decide whether an Unknown send actually landed.

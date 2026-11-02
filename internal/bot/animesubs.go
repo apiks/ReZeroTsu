@@ -91,14 +91,15 @@ type userSubsStore interface {
 	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
 	RemoveShows(ctx context.Context, id string, showNames []string) error
 	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
-	// CollapseDuplicateShows drops null entries and every later entry whose show name repeats an earlier one
-	// (case-insensitive, surrounding spaces ignored), in a single update statement.
-	CollapseDuplicateShows(ctx context.Context, id string) error
+	// CollapseDuplicateShows drops null and nameless entries and keeps one entry per anime_subs.CollapseKey (the
+	// one with the latest last-notified air time, ties going to the later entry), in a single update statement.
+	// It reports whether the document was modified.
+	CollapseDuplicateShows(ctx context.Context, id string) (bool, error)
 }
 
 // cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
-// duplicate entries (keeping the first) and null entries among the rest. It returns how many documents were
-// changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
+// duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
+// returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
 func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
@@ -109,19 +110,24 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 		needsCollapse := false
 		seen := make(map[string]struct{}, len(doc.Shows))
 		for _, sub := range doc.Shows {
-			if sub == nil {
+			// The duplicate key must be the one the Mongo collapse computes, or a document could be flagged
+			// forever with Mongo changing nothing. Entries without a name are removed by the collapse, like nulls.
+			var dupKey string
+			if sub != nil {
+				dupKey = anime_subs.CollapseKey(sub.Show)
+			}
+			if dupKey == "" {
 				needsCollapse = true
 				continue
 			}
-			key := strings.ToLower(strings.TrimSpace(sub.Show))
-			if _, ok := airing[key]; !ok {
+			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
 				finished = append(finished, sub.Show)
 				continue
 			}
-			if _, dup := seen[key]; dup {
+			if _, dup := seen[dupKey]; dup {
 				needsCollapse = true
 			}
-			seen[key] = struct{}{}
+			seen[dupKey] = struct{}{}
 		}
 		changed := false
 		if len(finished) > 0 {
@@ -132,9 +138,9 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 			changed = true
 		}
 		if needsCollapse {
-			if err := st.CollapseDuplicateShows(ctx, doc.ID); err != nil {
+			if modified, err := st.CollapseDuplicateShows(ctx, doc.ID); err != nil {
 				logger.For("animesubs").Error("finished cleanup CollapseDuplicateShows failed", "user_id", doc.ID, "err", err)
-			} else {
+			} else if modified {
 				changed = true
 			}
 		}
@@ -407,11 +413,18 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 	}
 	userID := doc.ID
 
+	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
+	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
-		if sub != nil {
-			subByShow[strings.ToLower(sub.Show)] = sub
+		if sub == nil {
+			continue
 		}
+		key := anime_subs.MatchKey(sub.Show)
+		if cur, ok := subByShow[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
+			continue
+		}
+		subByShow[key] = sub
 	}
 
 	var dmID string
@@ -431,7 +444,7 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		sub, ok := subByShow[strings.ToLower(show.Name)]
+		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
 		if !ok {
 			continue
 		}
@@ -443,6 +456,10 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 		if dmID == "" {
 			dmID, err = d.OpenDM(ctx, userID)
 			if err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					// Shutdown aborted the request: nothing to report.
+					return cerr
+				}
 				logger.For("animesubs").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 				throttle := time.NewTimer(animeSubThrottlePerUser)
 				defer throttle.Stop()
@@ -701,7 +718,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 	if len(due) == 0 {
 		return
 	}
-	webhook := d.ChannelWebhook(guildID, channelID)
+	sender := newChannelSender(d, guildID, channelID)
 	for i := 0; i < len(due); i += discord.MaxEmbedsPerMessage {
 		if ctx.Err() != nil {
 			return
@@ -723,11 +740,8 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 				return
 			}
 		}
-		res := sendWithRules(ctx, d, guildID, channelID, webhook, OutgoingMessage{Content: content, Embeds: embeds})
-		if res.WebhookGone {
-			// The webhook was invalidated: later chunks go through the bot account instead of failing on it again.
-			webhook = nil
-		}
+		// After a rejected webhook the sender sends later chunks through the bot account.
+		res, _ := sender.send(ctx, OutgoingMessage{Content: content, Embeds: embeds})
 		if res.Delivered {
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.

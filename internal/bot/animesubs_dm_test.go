@@ -153,6 +153,43 @@ func TestProcessAnimeSubUser(t *testing.T) {
 			},
 		},
 		{
+			name: "duplicate entries: an episode recorded on the earlier entry is not DMed again",
+			run: func(t *testing.T) {
+				show := ep("Show A", "show-a", "Episode 1", aired)
+				d := newFakeDiscord()
+				st := newState(
+					&anime_subs.ShowSub{Show: "Show A", Notified: true, LastNotifiedAirUnix: aired, LastNotifiedEpisode: episodeKey(show)},
+					&anime_subs.ShowSub{Show: "show a"},
+				)
+				_ = run(bg, d, st, show)
+				if n := len(d.deliveredTo(dm)); n != 0 {
+					t.Fatalf("DMs = %d, want 0", n)
+				}
+			},
+		},
+		{
+			name: "duplicate entries: the episode is not DMed again after the collapse",
+			run: func(t *testing.T) {
+				show := ep("Show A", "show-a", "Episode 2", aired)
+				d := newFakeDiscord()
+				st := newState(
+					&anime_subs.ShowSub{Show: "Show A", Notified: true, LastNotifiedAirUnix: aired - 7*24*3600},
+					&anime_subs.ShowSub{Show: " show a "},
+					&anime_subs.ShowSub{Show: "SHOW A", Notified: true, LastNotifiedAirUnix: aired - 14*24*3600},
+				)
+				_ = run(bg, d, st, show)
+				st.collapseUserShows(user)
+				_ = run(bg, d, st, show)
+				if n := len(d.deliveredTo(dm)); n != 1 {
+					t.Fatalf("DMs = %d, want 1", n)
+				}
+				doc, _ := st.GetAnimeSubs(bg, user)
+				if len(doc.Shows) != 1 {
+					t.Fatalf("shows after collapse = %d, want 1", len(doc.Shows))
+				}
+			},
+		},
+		{
 			name: "timeout without delivery is not recorded and is retried next run",
 			run: func(t *testing.T) {
 				d, st := newFakeDiscord(timeoutWithoutDelivery()), newState(&anime_subs.ShowSub{Show: "Show A"})
@@ -170,5 +207,36 @@ func TestProcessAnimeSubUser(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, tt.run)
+	}
+}
+
+// cancelOnOpenDM cancels the run (shutdown) while the DM channel is being created, failing it with the
+// context error like the real context-aware OpenDM.
+type cancelOnOpenDM struct {
+	*fakeDiscord
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnOpenDM) OpenDM(ctx context.Context, _ string) (string, error) {
+	c.cancel()
+	return "", ctx.Err()
+}
+
+func TestProcessAnimeSubUserShutdownDuringOpenDMLogsNoError(t *testing.T) {
+	logs := captureLogs(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	st := newFakeSentState()
+	st.AnimeSubs["u1"] = &anime_subs.AnimeSubs{ID: "u1", Shows: []*anime_subs.ShowSub{{Show: "Show A"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &cancelOnOpenDM{fakeDiscord: newFakeDiscord(), cancel: cancel}
+	doc, _ := st.GetAnimeSubs(ctx, "u1")
+	show := animeschedule.ShowEntry{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}
+	err := processAnimeSubUser(ctx, d, st, doc, []animeschedule.ShowEntry{show}, now)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if n := logs.count("ERROR"); n != 0 {
+		t.Errorf("error logs = %d, want 0 on shutdown", n)
 	}
 }

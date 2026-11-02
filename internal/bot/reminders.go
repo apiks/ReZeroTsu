@@ -20,7 +20,15 @@ const (
 	reminderThrottlePerUser    = 200 * time.Millisecond
 	reminderThrottlePerMessage = 150 * time.Millisecond
 	reminderRunInterval        = 15 * time.Second
+	// reminderGiveUpAfter bounds retries of a reminder that Discord keeps rejecting with a code other than the
+	// user-undeliverable ones: once it is this far past its due time it is dropped.
+	reminderGiveUpAfter = 24 * time.Hour
 )
+
+// reminderGivenUp reports whether a reminder rejected by Discord is too far past its due time to keep retrying.
+func reminderGivenUp(r reminders.RemindMe, now time.Time) bool {
+	return now.Sub(r.Date) > reminderGiveUpAfter
+}
 
 // RunReminderLoop fetches due reminders, sends DMs, updates DB. Exits when ctx is cancelled.
 func RunReminderLoop(ctx context.Context, db *database.Client, session *discordgo.Session, interval time.Duration) {
@@ -122,9 +130,23 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 				append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(refs), "err", err)...)
 			remove(refs...)
 		} else if discord.ClassifySend(err) == discord.Rejected {
-			// Any other rejection (401, missing access, Cloudflare ban, ...) may be an outage: keep and retry.
-			logger.For("reminders").Warn("UserChannelCreate rejected, will retry",
-				append(discord.RESTAttrs(err), "user_id", userID, "err", err)...)
+			// Any other rejection (401, missing access, Cloudflare ban, ...) may be an outage: keep and retry,
+			// except the reminders that have kept failing for more than reminderGiveUpAfter.
+			var expired []reminders.RemindRef
+			for _, r := range due {
+				if reminderGivenUp(r, now) {
+					expired = append(expired, reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+				}
+			}
+			if len(expired) > 0 {
+				logger.For("reminders").Warn("UserChannelCreate still rejected long after the due time, giving up on overdue reminders",
+					append(discord.RESTAttrs(err), "user_id", userID, "dropped", len(expired), "err", err)...)
+				remove(expired...)
+			}
+			if len(expired) < len(due) {
+				logger.For("reminders").Warn("UserChannelCreate rejected, will retry",
+					append(discord.RESTAttrs(err), "user_id", userID, "err", err)...)
+			}
 		} else {
 			logger.For("reminders").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 		}
@@ -176,13 +198,17 @@ func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slic
 			logger.For("reminders").Warn("reminder rejected, dropping",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
 			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
+		case discord.ClassifySend(res.Err) == discord.Rejected && reminderGivenUp(r, now):
+			// Rejected with another code for more than reminderGiveUpAfter: it is not going to work.
+			logger.For("reminders").Warn("reminder still rejected long after the due time, giving up",
+				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
+			remove(reminders.RemindRef{RemindID: r.RemindID, Date: r.Date})
 		default:
 			// Any other rejection, or an Unknown outcome verified as not delivered: keep it for the next run.
 			logger.For("reminders").Warn("reminder send failed, will retry",
 				append(discord.RESTAttrs(res.Err), "user_id", userID, "remind_id", r.RemindID, "err", res.Err)...)
-			continue
 		}
-		// Throttle per channel so we don't hit Discord's per-channel send limit
+		// Throttle per channel so we don't hit Discord's per-channel send limit, after failed sends too.
 		if i < len(due)-1 {
 			if !throttleTimer.Stop() {
 				select {
