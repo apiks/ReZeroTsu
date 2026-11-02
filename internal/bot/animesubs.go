@@ -206,12 +206,6 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	return emb
 }
 
-// sendEpisodeNotification sends the episode embed to the DM channel.
-func sendEpisodeNotification(ctx context.Context, d DiscordPort, channelID string, emb *discordgo.MessageEmbed) error {
-	_, err := d.Send(ctx, channelID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
-	return err
-}
-
 // weekdayShows returns the shows for a weekday, optionally including donghua.
 type weekdayShows func(donghua bool) []animeschedule.ShowEntry
 
@@ -362,7 +356,6 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 
 	var dmID string
 	var err error
-	updated := false
 	throttleTimer := time.NewTimer(animeSubThrottlePerUser)
 	defer throttleTimer.Stop()
 
@@ -382,7 +375,8 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 		if !ok {
 			continue
 		}
-		if show.AirTimeUnix <= sub.LastNotifiedAirUnix {
+		epKey := episodeKey(show)
+		if userShowAlreadyNotified(sub, show, epKey) {
 			continue
 		}
 
@@ -407,25 +401,32 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 				return acqErr
 			}
 		}
-		if err := sendEpisodeNotification(ctx, d, dmID, emb); err != nil {
-			args := append(discord.RESTAttrs(err), "user_id", userID, "err", err)
-			if discord.IsCannotDMUser(err) {
-				logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
-			} else {
-				logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
+		res := sendWithRules(ctx, d, "", dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		if !res.Delivered {
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
+			args := append(discord.RESTAttrs(res.Err), "user_id", userID, "err", res.Err)
+			logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
 			continue
 		}
+		// Record this one show right away, on a context that survives shutdown.
+		if markErr := detachedWrite(ctx, func(wctx context.Context) error {
+			return st.MarkUserShowNotified(wctx, userID, sub.Show, show.AirTimeUnix, epKey)
+		}); markErr != nil {
+			logger.For("animesubs").Error("mark user show notified failed", "user_id", userID, "title", show.Name, "err", markErr)
+		}
 		sub.LastNotifiedAirUnix = show.AirTimeUnix
+		sub.LastNotifiedEpisode = epKey
 		sub.Notified = true
 		logger.For("animesubs").Debug(
 			"episode notification sent",
 			"user_id", userID,
 			"title", show.Name,
 			"air_time_unix", show.AirTimeUnix,
-			"last_notified_air_unix", sub.LastNotifiedAirUnix,
+			"episode_key", epKey,
+			"presumed", res.Presumed,
 		)
-		updated = true
 
 		if !throttleTimer.Stop() {
 			select {
@@ -440,13 +441,21 @@ func processAnimeSubUser(ctx context.Context, d DiscordPort, st SentState, doc *
 		case <-throttleTimer.C:
 		}
 	}
-
-	if updated {
-		if err := st.SetAnimeSubs(ctx, userID, false, doc.Shows); err != nil {
-			logger.For("animesubs").Error("Set user subs failed", "user_id", userID, "err", err)
-		}
-	}
 	return nil
+}
+
+// episodeKey identifies one episode of a show: the show route plus the episode label.
+func episodeKey(show animeschedule.ShowEntry) string {
+	return show.Route + "|" + show.Episode
+}
+
+// userShowAlreadyNotified reports whether the subscriber was already notified of this episode: either the
+// stored episode key matches, or (legacy documents) the air time is not later than the last-notified one.
+func userShowAlreadyNotified(sub *anime_subs.ShowSub, show animeschedule.ShowEntry, epKey string) bool {
+	if sub.LastNotifiedEpisode != "" && sub.LastNotifiedEpisode == epKey {
+		return true
+	}
+	return show.AirTimeUnix <= sub.LastNotifiedAirUnix
 }
 
 // guildShowNamesMatch reports whether dayShows and subs have the same show names (case-insensitive); used to preserve Notified across restarts.

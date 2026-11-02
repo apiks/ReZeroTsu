@@ -85,6 +85,12 @@ type SentState interface {
 
 	// SaveReminders replaces the user's reminders document; nil or empty deletes it.
 	SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error
+
+	// --- ticket #7 (user DMs) ---
+
+	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
+	// key, in a single-statement update (matched by show name).
+	MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error
 }
 
 // --- production wiring: discordgo ---
@@ -230,4 +236,8 @@ func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID,
 
 func (m *mongoSentState) SaveReminders(ctx context.Context, id string, slice *reminders.RemindMeSlice) error {
 	return m.db.Reminders().Save(ctx, id, slice)
+}
+
+func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
+	return m.db.AnimeSubs().MarkShowNotified(ctx, id, showName, airUnix, episodeKey)
 }
