@@ -85,6 +85,36 @@ func (r *Repo) Save(ctx context.Context, id string, slice *RemindMeSlice) error 
 	return nil
 }
 
+// Append atomically adds rm to the user's document, creating it when missing (is_guild is only set on creation).
+// It never rewrites other reminders, so concurrent removals and appends are not lost. Two simultaneous
+// appends by the same user may compute the same RemindID; that rare collision is accepted.
+func (r *Repo) Append(ctx context.Context, id string, isGuild bool, rm RemindMe) error {
+	update := bson.M{
+		"$push":        bson.M{"reminders": rm},
+		"$setOnInsert": bson.M{"is_guild": isGuild, "premium": false},
+	}
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, options.UpdateOne().SetUpsert(true)); err != nil {
+		return fmt.Errorf("Append: %w", err)
+	}
+	return nil
+}
+
+// RemoveByRemindIDs atomically pulls the reminders with the given remind_ids from the user's document, then
+// deletes the document if it has no reminders left. Reminders not named are left untouched.
+func (r *Repo) RemoveByRemindIDs(ctx context.Context, id string, remindIDs []int) error {
+	if len(remindIDs) == 0 {
+		return nil
+	}
+	pull := bson.M{"$pull": bson.M{"reminders": bson.M{"remind_id": bson.M{"$in": remindIDs}}}}
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, pull); err != nil {
+		return fmt.Errorf("RemoveByRemindIDs: %w", err)
+	}
+	if _, err := r.coll.DeleteOne(ctx, bson.M{"id": id, "reminders": bson.M{"$size": 0}}); err != nil {
+		return fmt.Errorf("RemoveByRemindIDs: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) EnsureIndexes(ctx context.Context) error {
 	indexModels := []mongo.IndexModel{
 		{Keys: bson.M{"id": 1}, Options: options.Index().SetUnique(true)},
