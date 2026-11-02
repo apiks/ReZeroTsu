@@ -31,7 +31,7 @@ func (f *fakeSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([
 
 // RemoveReminders removes the named reminders from the user's document and deletes the document when it empties.
 // Like the real store it fails on a cancelled context, which proves callers detach their "sent" writes.
-func (f *fakeSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
+func (f *fakeSentState) RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -41,13 +41,16 @@ func (f *fakeSentState) RemoveReminders(ctx context.Context, id string, remindID
 	if !ok {
 		return nil
 	}
-	drop := map[int]bool{}
-	for _, rid := range remindIDs {
-		drop[rid] = true
-	}
 	var kept []reminders.RemindMe
 	for _, r := range doc.Reminders {
-		if !drop[r.RemindID] {
+		dropIt := false
+		for _, ref := range refs {
+			if ref.RemindID == r.RemindID && ref.Date.Equal(r.Date) {
+				dropIt = true
+				break
+			}
+		}
+		if !dropIt {
 			kept = append(kept, r)
 		}
 	}

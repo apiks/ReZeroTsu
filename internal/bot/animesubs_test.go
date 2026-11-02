@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -78,6 +79,28 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 				got := d.deliveredTo("c1")
 				if len(got) != 1 || got[0].Webhook == nil || got[0].Webhook.ID != "wh" {
 					t.Fatalf("delivered = %+v, want one webhook message", got)
+				}
+			},
+		},
+		{
+			name: "dead webhook is not reused for later chunks",
+			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
+				var many []animeschedule.ShowEntry
+				var subs []*anime_subs.ShowSub
+				for i := 0; i < 11; i++ {
+					name := fmt.Sprintf("Show %d", i)
+					many = append(many, animeschedule.ShowEntry{Name: name, Route: fmt.Sprintf("show-%d", i), Episode: "Episode 1", AirTimeUnix: aired, AirType: "sub"})
+					subs = append(subs, &anime_subs.ShowSub{Show: name, Guild: true})
+				}
+				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subs}
+				d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
+				d.script = []step{rejectWith(10015)}
+				processGuildNewEpisodes(context.Background(), d, st, "g1", func(bool) []animeschedule.ShowEntry { return many }, now)
+				if d.WebhookSends != 1 {
+					t.Errorf("webhook attempts = %d, want 1", d.WebhookSends)
+				}
+				if got := len(d.deliveredTo("c1")); got != 2 {
+					t.Errorf("delivered chunks = %d, want 2", got)
 				}
 			},
 		},

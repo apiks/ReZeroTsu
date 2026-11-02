@@ -87,31 +87,6 @@ func (r *Repo) DeleteByFeed(ctx context.Context, guildID, channelID, subreddit, 
 	return res.DeletedCount, nil
 }
 
-// ListGUIDsByGuildID returns only GUIDs for the guild, most recent first. limit <= 0 means default (e.g. 200).
-// Used for memory-efficient dedupe: build a seen set from the returned slice without loading full FeedCheck docs.
-func (r *Repo) ListGUIDsByGuildID(ctx context.Context, guildID string, limit int) ([]string, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-	opts := options.Find().SetSort(bson.M{"date": -1}).SetLimit(int64(limit)).SetProjection(bson.M{"guid": 1})
-	cursor, err := r.coll.Find(ctx, bson.M{"guild_id": guildID}, opts)
-	if err != nil {
-		return nil, fmt.Errorf("ListGUIDsByGuildID: %w", err)
-	}
-	defer cursor.Close(ctx)
-	var result []struct {
-		GUID string `bson:"guid"`
-	}
-	if err := cursor.All(ctx, &result); err != nil {
-		return nil, fmt.Errorf("ListGUIDsByGuildID: %w", err)
-	}
-	out := make([]string, len(result))
-	for i := range result {
-		out[i] = result[i].GUID
-	}
-	return out, nil
-}
-
 // ExistingGUIDs returns the subset of guids that already have a feed check for the guild.
 func (r *Repo) ExistingGUIDs(ctx context.Context, guildID string, guids []string) ([]string, error) {
 	if len(guids) == 0 {

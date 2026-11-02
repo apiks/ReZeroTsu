@@ -59,7 +59,7 @@ func (e ShowEntry) ImageURL() string {
 var newClient = httpclient.Default
 
 var (
-	apiKeyMu      sync.RWMutex
+	apiKeyMu       sync.RWMutex
 	apiKey         string
 	cacheMu        sync.RWMutex
 	cache          = make(map[int][]ShowEntry) // weekday 0=Sunday .. 6=Saturday

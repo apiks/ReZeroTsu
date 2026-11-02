@@ -26,7 +26,6 @@ import (
 
 const (
 	feedRunInterval        = 30 * time.Second
-	feedCheckLimit         = 1000
 	feedCleanupEveryRuns   = 10
 	feedCheckLifespanDays  = 180
 	feedEmbedAuthorIconURL = "https://images-eu.ssl-images-amazon.com/images/I/418PuxYS63L.png"
@@ -373,13 +372,13 @@ func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guild
 			nonEmpty = append(nonEmpty, batch{channelID, list})
 		}
 	}
-	clear := func() {
+	resetBatches := func() {
 		for channelID := range channelBatches {
 			channelBatches[channelID] = nil
 		}
 	}
 	if len(nonEmpty) == 0 {
-		clear()
+		resetBatches()
 		return
 	}
 
@@ -403,14 +402,14 @@ func flushChannelBatches(ctx context.Context, d DiscordPort, st SentState, guild
 		case <-ctx.Done():
 			close(entryCh)
 			wg.Wait()
-			clear()
+			resetBatches()
 			return
 		case entryCh <- entry:
 		}
 	}
 	close(entryCh)
 	wg.Wait()
-	clear()
+	resetBatches()
 }
 
 // persistFeedChunk records the items of a delivered chunk. The write is detached from shutdown so that a
@@ -473,6 +472,10 @@ func flushChannel(ctx context.Context, d DiscordPort, st SentState, guildID, cha
 			}
 		}
 		res, _ := feedSend(ctx, d, guildID, channelID, webhook, OutgoingMessage{Embeds: embeds})
+		if res.WebhookGone {
+			// The webhook was invalidated: later chunks go through the bot account instead of failing on it again.
+			webhook = nil
+		}
 		if !res.Delivered {
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res.Err)
 			return
@@ -507,7 +510,6 @@ func sendOneAndPin(ctx context.Context, d DiscordPort, st SentState, guildID str
 	}
 	logger.For("feeds").Debug("feed sent and pinned", "shard_id", d.ShardID(), "guild_id", guildID, "channel_id", feed.ChannelID, "subreddit", feed.Subreddit)
 }
-
 
 func feedEntryToFeedChecksFeed(guildID string, e guilds.FeedEntry) feed_checks.Feed {
 	return feed_checks.Feed{

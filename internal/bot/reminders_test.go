@@ -20,6 +20,13 @@ import (
 
 var remindNow = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
+func restErr(status, code int) error {
+	return &discordgo.RESTError{
+		Response: &http.Response{StatusCode: status},
+		Message:  &discordgo.APIErrorMessage{Code: code, Message: "err"},
+	}
+}
+
 func dueReminder(id int, msg string) reminders.RemindMe {
 	return reminders.RemindMe{Message: msg, Date: remindNow.Add(-time.Minute), RemindID: id, CreatedAt: remindNow.Add(-time.Hour)}
 }
@@ -102,11 +109,32 @@ func TestProcessReminderSlice_Outcomes(t *testing.T) {
 			wantSends: 1,
 		},
 		{
-			name:      "other rejection drops only that reminder",
+			name:      "unknown user drops the reminder after one attempt",
+			script:    []step{rejectWith(discord.UnknownUserCode)},
+			stored:    []reminders.RemindMe{dueReminder(1, "a")},
+			wantLeft:  nil,
+			wantSends: 1,
+		},
+		{
+			name:      "other rejection keeps the reminder for retry",
 			script:    []step{rejectWith(discord.MissingPermissionsCode), succeed()},
 			stored:    []reminders.RemindMe{dueReminder(1, "a"), dueReminder(2, "b")},
-			wantLeft:  nil,
+			wantLeft:  []int{1},
 			wantSends: 2,
+		},
+		{
+			name:      "generic 4xx without a user-specific code keeps the reminder",
+			script:    []step{rejectWith(0)},
+			stored:    []reminders.RemindMe{dueReminder(1, "a")},
+			wantLeft:  []int{1},
+			wantSends: 1,
+		},
+		{
+			name:      "missing access keeps the reminder",
+			script:    []step{rejectWith(discord.MissingAccessCode)},
+			stored:    []reminders.RemindMe{dueReminder(1, "a")},
+			wantLeft:  []int{1},
+			wantSends: 1,
 		},
 		{
 			name:      "timeout after delivery is verified and removed",
@@ -186,7 +214,10 @@ func TestProcessReminderSlice_OpenDMFailure(t *testing.T) {
 		dmErr    error
 		wantLeft []int
 	}{
-		{"rejected DM channel creation removes the user's due reminders", rejected, []int{3}},
+		{"cannot-DM-user on channel creation removes the user's due reminders", rejected, []int{3}},
+		{"unknown user on channel creation removes the user's due reminders", restErr(http.StatusNotFound, discord.UnknownUserCode), []int{3}},
+		{"401 on channel creation keeps them", restErr(http.StatusUnauthorized, 0), []int{1, 2, 3}},
+		{"missing access on channel creation keeps them", restErr(http.StatusForbidden, discord.MissingAccessCode), []int{1, 2, 3}},
 		{"transient DM channel creation failure keeps them", errors.New("network"), []int{1, 2, 3}},
 	}
 	for _, tc := range tests {
@@ -242,6 +273,25 @@ func TestProcessReminderSlice_RemindDuringDeliveryKeepsBoth(t *testing.T) {
 	}
 	if got := st.reminderIDs("u1"); !reflect.DeepEqual(got, []int{2}) {
 		t.Errorf("remaining = %v, want the new reminder [2] and delivered one gone", got)
+	}
+}
+
+func TestProcessReminderSlice_ReusedIDIsNotRemoved(t *testing.T) {
+	captureLogs(t)
+	st := stateWith("u1", dueReminder(2, "old"))
+	d := &hookDiscord{fakeDiscord: newFakeDiscord()}
+	d.afterSend = func() {
+		// The user removed the old reminder 2 and created a new one that re-used the ID.
+		st.mu.Lock()
+		st.Reminders["u1"].Reminders = []reminders.RemindMe{futureReminder(2, "new")}
+		st.mu.Unlock()
+	}
+	if err := runSlice(t, context.Background(), d, st, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	doc := st.snapshotReminders("u1")
+	if doc == nil || len(doc.Reminders) != 1 || doc.Reminders[0].Message != "new" {
+		t.Errorf("stored = %+v, want the new reminder with the re-used ID kept", doc)
 	}
 }
 

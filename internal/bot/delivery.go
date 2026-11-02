@@ -68,7 +68,6 @@ type DiscordPort interface {
 // Production wiring is the Mongo repositories; tests use an in-memory fake.
 type SentState interface {
 	GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
-	SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error
 	// MarkShowsNotified sets notified=true for the named shows in one single-statement update.
 	MarkShowsNotified(ctx context.Context, id string, showNames []string) error
 	// SeedAnimeSubs fully rewrites the document, stamping seedDate (YYYY-MM-DD, UTC) as its last seed date.
@@ -93,9 +92,10 @@ type SentState interface {
 
 	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
 	ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error)
-	// RemoveReminders atomically removes the reminders with the given IDs from the user's document and
-	// deletes the document once it is empty. Other reminders (including ones added meanwhile) are untouched.
-	RemoveReminders(ctx context.Context, id string, remindIDs []int) error
+	// RemoveReminders atomically removes the reminders matching both the ID and the due time of the given refs
+	// from the user's document and deletes the document once it is empty. Other reminders (including ones added
+	// meanwhile, even with a re-used ID) are untouched.
+	RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error
 
 	// --- ticket #9 (daily schedule) ---
 
@@ -122,6 +122,8 @@ type discordgoPort struct {
 
 func newDiscordgoPort(s *discordgo.Session) DiscordPort { return &discordgoPort{s: s} }
 
+// Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
+// in-flight send would turn a message that Discord may still post into an Unknown outcome.
 func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
 	if webhook != nil {
 		w := &discordgo.Webhook{ID: webhook.ID, Token: webhook.Token}
@@ -137,16 +139,16 @@ func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *Web
 	return m.ID, nil
 }
 
-func (p *discordgoPort) OpenDM(_ context.Context, userID string) (string, error) {
-	ch, err := p.s.UserChannelCreate(userID)
+func (p *discordgoPort) OpenDM(ctx context.Context, userID string) (string, error) {
+	ch, err := p.s.UserChannelCreate(userID, discordgo.WithContext(ctx))
 	if err != nil {
 		return "", err
 	}
 	return ch.ID, nil
 }
 
-func (p *discordgoPort) RecentMessages(_ context.Context, channelID string, limit int) ([]ChannelMessage, error) {
-	msgs, err := p.s.ChannelMessages(channelID, limit, "", "", "")
+func (p *discordgoPort) RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error) {
+	msgs, err := p.s.ChannelMessages(channelID, limit, "", "", "", discordgo.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -211,10 +213,6 @@ func (m *mongoSentState) GetAnimeSubs(ctx context.Context, id string) (*anime_su
 	return m.db.AnimeSubs().GetByID(ctx, id)
 }
 
-func (m *mongoSentState) SetAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub) error {
-	return m.db.AnimeSubs().Set(ctx, id, isGuild, shows)
-}
-
 func (m *mongoSentState) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
 	return m.db.AnimeSubs().MarkShowsNotified(ctx, id, showNames)
 }
@@ -263,8 +261,8 @@ func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) (
 	return m.db.Reminders().ListDue(ctx, asOf)
 }
 
-func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, remindIDs []int) error {
-	return m.db.Reminders().RemoveByRemindIDs(ctx, id, remindIDs)
+func (m *mongoSentState) RemoveReminders(ctx context.Context, id string, refs []reminders.RemindRef) error {
+	return m.db.Reminders().RemoveByRefs(ctx, id, refs)
 }
 
 func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date string) error {

@@ -9,16 +9,27 @@ import (
 
 // Discord REST error codes.
 const (
-	UnknownChannelCode     = 10003 // Channel was deleted; ID is unrecoverable
-	UnknownMessageCode     = 10008 // Message was deleted or never existed
-	UnknownRoleCode        = 10011 // Role was deleted; ID is unrecoverable
-	MissingAccessCode      = 50001 // Bot not in server or no channel access; recoverable
-	CannotDMUserCode       = 50007 // Cannot send messages to this user (DMs disabled or blocked)
-	ChannelNotTextCode     = 50008 // Cannot send messages in a non-text channel (e.g. voice)
-	MissingPermissionsCode = 50013 // Bot lacks permission for the action (e.g. Send Messages in channel)
-	UnknownWebhookCode     = 10015 // Webhook was deleted
+	UnknownChannelCode      = 10003 // Channel was deleted; ID is unrecoverable
+	UnknownMessageCode      = 10008 // Message was deleted or never existed
+	UnknownRoleCode         = 10011 // Role was deleted; ID is unrecoverable
+	UnknownUserCode         = 10013 // User does not exist (deleted account)
+	MissingAccessCode       = 50001 // Bot not in server or no channel access; recoverable
+	CannotDMUserCode        = 50007 // Cannot send messages to this user (DMs disabled or blocked)
+	ChannelNotTextCode      = 50008 // Cannot send messages in a non-text channel (e.g. voice)
+	MissingPermissionsCode  = 50013 // Bot lacks permission for the action (e.g. Send Messages in channel)
+	UnknownWebhookCode      = 10015 // Webhook was deleted
 	InvalidWebhookTokenCode = 50027 // Webhook token is no longer valid
 )
+
+// IsUserUndeliverable reports whether err means the user can never be DMed: DMs closed or blocked (50007) or
+// the user no longer exists (10013). Every other rejection may be transient or bot-side and must not drop data.
+func IsUserUndeliverable(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Message == nil {
+		return false
+	}
+	return restErr.Message.Code == CannotDMUserCode || restErr.Message.Code == UnknownUserCode
+}
 
 // IsWebhookGone reports whether err says the webhook is unknown (10015) or its token invalid (50027).
 func IsWebhookGone(err error) bool {
