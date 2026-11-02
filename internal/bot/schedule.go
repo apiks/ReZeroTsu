@@ -87,7 +87,10 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 		return
 	}
 	weekday := int(time.Now().UTC().Weekday())
-	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
+	d := newDiscordgoPort(s)
+	st := newMongoSentState(db)
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
+	guilds :=make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
 			continue
@@ -110,7 +113,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 				if g == nil || g.ID == "" {
 					continue
 				}
-				if err := processDailyScheduleForGuild(ctx, db, s, g, weekday); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processDailyScheduleForGuild(ctx, d, st, g.ID, weekday, dayShows); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("schedule").Error("processDailyScheduleForGuild failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
 				}
 			}
@@ -130,28 +133,29 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	wg.Wait()
 }
 
-func processDailyScheduleForGuild(ctx context.Context, db *database.Client, s *discordgo.Session, g *discordgo.Guild, weekday int) error {
-	if g == nil || g.ID == "" {
+func processDailyScheduleForGuild(ctx context.Context, d DiscordPort, st SentState, guildID string, weekday int, dayShows weekdayShows) error {
+	if guildID == "" {
 		return nil
 	}
-	ap, err := db.Guilds().GetAutopostByType(ctx, g.ID, "dailyschedule")
+	shardID := d.ShardID()
+	ap, err := st.GetAutopost(ctx, guildID, "dailyschedule")
 	if err != nil || ap == nil || ap.ID == "" {
 		return nil
 	}
-	if !canSendToChannel(s, ap.ID) {
+	if !d.CanSend(ap.ID) {
 		return nil
 	}
-	settings, err := db.Guilds().GetGuildSettings(ctx, g.ID)
+	settings, err := st.GetGuildSettings(ctx, guildID)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
-			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
+			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", shardID, "guild_id", guildID, "err", err)
 		}
 	}
 	donghua := true
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	shows := animeschedule.GetDayShows(weekday, donghua)
+	shows := dayShows(donghua)
 	emb := schedule.BuildScheduleEmbed(weekday, shows)
 	chunk := []*discordgo.MessageEmbed{emb}
 
@@ -185,51 +189,52 @@ func processDailyScheduleForGuild(ctx context.Context, db *database.Client, s *d
 				return err
 			}
 		}
-		w, threadID, webhookOK := getOrCreateChannelWebhook(s, g.ID, ap.ID)
-		usedWebhook := webhookOK && w != nil
-		sendErr = SendBatchToChannel(ctx, s, w, threadID, ap.ID, "", chunk, usedWebhook)
+		webhook := d.ChannelWebhook(guildID, ap.ID)
+		usedWebhook := webhook != nil
+		msg := OutgoingMessage{Embeds: chunk}
+		_, sendErr = d.Send(ctx, ap.ID, webhook, msg)
 		if sendErr != nil && usedWebhook && !discord.IsUnknownChannel(sendErr) {
-			invalidateChannelWebhook(g.ID, ap.ID)
+			d.InvalidateChannelWebhook(guildID, ap.ID)
 		}
 		if sendErr != nil {
-			sendErr = SendBatchToChannel(ctx, s, nil, "", ap.ID, "", chunk, false)
+			_, sendErr = d.Send(ctx, ap.ID, nil, msg)
 		}
 		if sendErr == nil {
-			logger.For("schedule").Debug("daily schedule sent", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
+			logger.For("schedule").Debug("daily schedule sent", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID)
 			break
 		}
 		if discord.IsUnknownChannel(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel deleted, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
+			if setErr := st.SetAutopost(ctx, guildID, "dailyschedule", nil); setErr != nil {
+				logger.For("schedule").Error("channel deleted, failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", setErr)
 			} else {
-				logger.For("schedule").Warn("channel deleted (10003), cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
+				logger.For("schedule").Warn("channel deleted (10003), cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID)
 			}
-			invalidateChannelWebhook(g.ID, ap.ID)
+			d.InvalidateChannelWebhook(guildID, ap.ID)
 			break
 		}
 		if discord.IsChannelNotText(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel non-text, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
+			if setErr := st.SetAutopost(ctx, guildID, "dailyschedule", nil); setErr != nil {
+				logger.For("schedule").Error("channel non-text, failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", setErr)
 			} else {
-				logger.For("schedule").Warn("channel is non-text, cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
+				logger.For("schedule").Warn("channel is non-text, cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID)
 			}
-			invalidateChannelWebhook(g.ID, ap.ID)
+			d.InvalidateChannelWebhook(guildID, ap.ID)
 			break
 		}
 		if discord.IsChannelUnavailable(sendErr) {
-			if setErr := db.Guilds().SetAutopost(ctx, g.ID, "dailyschedule", nil); setErr != nil {
-				logger.For("schedule").Error("channel inaccessible, failed to clear autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID, "err", setErr)
+			if setErr := st.SetAutopost(ctx, guildID, "dailyschedule", nil); setErr != nil {
+				logger.For("schedule").Error("channel inaccessible, failed to clear autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID, "err", setErr)
 			} else {
-				logger.For("schedule").Warn("channel inaccessible (10003/50001), cleared dailyschedule autopost", "shard_id", s.ShardID, "guild_id", g.ID, "channel_id", ap.ID)
+				logger.For("schedule").Warn("channel inaccessible (10003/50001), cleared dailyschedule autopost", "shard_id", shardID, "guild_id", guildID, "channel_id", ap.ID)
 			}
-			invalidateChannelWebhook(g.ID, ap.ID)
+			d.InvalidateChannelWebhook(guildID, ap.ID)
 			break
 		}
 		if discord.IsMissingPermissions(sendErr) {
 			break
 		}
 		if attempt == maxAttempts-1 {
-			logger.For("schedule").Error("DailySchedule post failed", "shard_id", s.ShardID, "channel_id", ap.ID, "err", sendErr)
+			logger.For("schedule").Error("DailySchedule post failed", "shard_id", shardID, "channel_id", ap.ID, "err", sendErr)
 			break
 		}
 	}

@@ -53,6 +53,8 @@ func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		return
 	}
 
+	d := newDiscordgoPort(s)
+	st := newMongoSentState(db)
 	sliceCh := make(chan *reminders.RemindMeSlice)
 	workerCount := max(runtime.NumCPU()*2, 1)
 	var wg sync.WaitGroup
@@ -64,7 +66,7 @@ func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 				if slice == nil {
 					continue
 				}
-				if err := processReminderSlice(ctx, db, s, slice, now); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processReminderSlice(ctx, d, st, slice, now); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("reminders").Error("processReminderSlice failed", "user_id", slice.ID, "err", err)
 				}
 			}
@@ -84,7 +86,7 @@ func runReminderCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	wg.Wait()
 }
 
-func processReminderSlice(ctx context.Context, db *database.Client, s *discordgo.Session, slice *reminders.RemindMeSlice, now time.Time) error {
+func processReminderSlice(ctx context.Context, d DiscordPort, st SentState, slice *reminders.RemindMeSlice, now time.Time) error {
 	if slice == nil {
 		return nil
 	}
@@ -94,7 +96,7 @@ func processReminderSlice(ctx context.Context, db *database.Client, s *discordgo
 	}
 
 	userID := slice.ID
-	dm, err := s.UserChannelCreate(userID)
+	dmID, err := d.OpenDM(ctx, userID)
 	if err != nil {
 		logger.For("reminders").Error("UserChannelCreate failed", "user_id", userID, "err", err)
 		throttle := time.NewTimer(reminderThrottlePerUser)
@@ -134,7 +136,7 @@ func processReminderSlice(ctx context.Context, db *database.Client, s *discordgo
 				return acqErr
 			}
 		}
-		_, err = s.ChannelMessageSendComplex(dm.ID, &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{emb}})
+		_, err = d.Send(ctx, dmID, nil, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		if err != nil {
 			args := append(discord.RESTAttrs(err), "user_id", userID, "err", err)
 			if discord.IsCannotDMUser(err) {
@@ -174,7 +176,7 @@ func processReminderSlice(ctx context.Context, db *database.Client, s *discordgo
 			Premium:   slice.Premium,
 		}
 	}
-	if err := db.Reminders().Save(ctx, slice.ID, remainingSlice); err != nil {
+	if err := st.SaveReminders(ctx, slice.ID, remainingSlice); err != nil {
 		logger.For("reminders").Error("Save failed", "user_id", slice.ID, "err", err)
 	}
 
