@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"ReZeroTsu/internal/database/anime_subs"
@@ -12,6 +13,15 @@ type fakeUserSubs struct {
 	docs    []*anime_subs.AnimeSubs
 	removed map[string][]string
 	airSet  map[string]int64 // "id|show" -> airUnix
+	// collapsed lists the IDs CollapseDuplicateShows was called for; ops is "remove:id" / "collapse:id" in order.
+	collapsed []string
+	ops       []string
+}
+
+func (f *fakeUserSubs) CollapseDuplicateShows(_ context.Context, id string) error {
+	f.collapsed = append(f.collapsed, id)
+	f.ops = append(f.ops, "collapse:"+id)
+	return nil
 }
 
 func newFakeUserSubs(docs ...*anime_subs.AnimeSubs) *fakeUserSubs {
@@ -29,6 +39,7 @@ func (f *fakeUserSubs) IterateUserSubs(_ context.Context, fn func(*anime_subs.An
 
 func (f *fakeUserSubs) RemoveShows(_ context.Context, id string, names []string) error {
 	f.removed[id] = append(f.removed[id], names...)
+	f.ops = append(f.ops, "remove:"+id)
 	return nil
 }
 
@@ -56,6 +67,51 @@ func TestCleanupFinishedShows(t *testing.T) {
 	}
 	if _, ok := st.removed["b"]; ok {
 		t.Errorf("document b with only airing shows was touched")
+	}
+}
+
+func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
+	airing := map[string]struct{}{"frieren": {}, "dandadan": {}}
+	sub := func(name string) *anime_subs.ShowSub { return &anime_subs.ShowSub{Show: name} }
+	tests := []struct {
+		name         string
+		shows        []*anime_subs.ShowSub
+		wantRemoved  []string
+		wantOps      []string
+		wantUpdated  int
+	}{
+		{name: "clean document is untouched", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("Dandadan")}, wantUpdated: 0},
+		{name: "case-insensitive duplicate is collapsed", shows: []*anime_subs.ShowSub{sub("Frieren"), sub("frieren")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
+		{name: "duplicate differing in surrounding spaces is collapsed", shows: []*anime_subs.ShowSub{sub("Frieren"), sub(" FRIEREN ")}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
+		{name: "nil entry is pruned", shows: []*anime_subs.ShowSub{sub("Frieren"), nil}, wantOps: []string{"collapse:u"}, wantUpdated: 1},
+		{
+			name:        "duplicates among finished shows only need the removal",
+			shows:       []*anime_subs.ShowSub{sub("Frieren"), sub("Old"), sub("old")},
+			wantRemoved: []string{"Old", "old"}, wantOps: []string{"remove:u"}, wantUpdated: 1,
+		},
+		{
+			name:        "finished show and airing duplicate: removal then collapse, counted once",
+			shows:       []*anime_subs.ShowSub{sub("Old"), sub("Dandadan"), sub("DANDADAN"), nil},
+			wantRemoved: []string{"Old"}, wantOps: []string{"remove:u", "collapse:u"}, wantUpdated: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: tc.shows})
+			updated, err := cleanupFinishedShows(context.Background(), st, airing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated != tc.wantUpdated {
+				t.Errorf("updated = %d, want %d", updated, tc.wantUpdated)
+			}
+			if fmt.Sprint(st.removed["u"]) != fmt.Sprint(tc.wantRemoved) {
+				t.Errorf("removed = %v, want %v", st.removed["u"], tc.wantRemoved)
+			}
+			if fmt.Sprint(st.ops) != fmt.Sprint(tc.wantOps) {
+				t.Errorf("ops = %v, want %v", st.ops, tc.wantOps)
+			}
+		})
 	}
 }
 

@@ -200,6 +200,42 @@ func (r *Repo) RemoveShows(ctx context.Context, id string, showNames []string) e
 	return nil
 }
 
+// CollapseDuplicateShows removes null (and other non-document) entries and every entry whose show name repeats
+// an earlier one (case-insensitive, surrounding spaces ignored), keeping the first, in one pipeline update.
+// Being a single statement, it cannot lose a concurrent /sub or notification write.
+func (r *Repo) CollapseDuplicateShows(ctx context.Context, id string) error {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, mongo.Pipeline{
+		{{Key: "$set", Value: bson.M{"shows": collapsedShowsExpr()}}},
+	}); err != nil {
+		return fmt.Errorf("CollapseDuplicateShows: %w", err)
+	}
+	return nil
+}
+
+// collapsedShowsExpr is an aggregation expression yielding the document's shows without non-document entries
+// and without later duplicates by normalised name. A stored shows that is not an array counts as empty.
+func collapsedShowsExpr() bson.M {
+	key := bson.M{"$cond": bson.A{
+		bson.M{"$eq": bson.A{bson.M{"$type": "$$this.show"}, "string"}},
+		bson.M{"$toLower": bson.M{"$trim": bson.M{"input": "$$this.show"}}},
+		"",
+	}}
+	keep := bson.M{
+		"keys": bson.M{"$concatArrays": bson.A{"$$value.keys", bson.A{key}}},
+		"out":  bson.M{"$concatArrays": bson.A{"$$value.out", bson.A{"$$this"}}},
+	}
+	skip := bson.M{"$or": bson.A{
+		bson.M{"$ne": bson.A{bson.M{"$type": "$$this"}, "object"}},
+		bson.M{"$in": bson.A{key, "$$value.keys"}},
+	}}
+	reduced := bson.M{"$reduce": bson.M{
+		"input":        bson.M{"$cond": bson.A{bson.M{"$isArray": "$shows"}, "$shows", bson.A{}}},
+		"initialValue": bson.M{"keys": bson.A{}, "out": bson.A{}},
+		"in":           bson.M{"$cond": bson.A{skip, "$$value", keep}},
+	}}
+	return bson.M{"$let": bson.M{"vars": bson.M{"r": reduced}, "in": "$$r.out"}}
+}
+
 // ClearShows empties the document's shows in a single update statement, leaving the document otherwise intact.
 func (r *Repo) ClearShows(ctx context.Context, id string) error {
 	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": bson.M{"shows": []*ShowSub{}}}); err != nil {

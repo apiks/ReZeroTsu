@@ -91,30 +91,56 @@ type userSubsStore interface {
 	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
 	RemoveShows(ctx context.Context, id string, showNames []string) error
 	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
+	// CollapseDuplicateShows drops null entries and every later entry whose show name repeats an earlier one
+	// (case-insensitive, surrounding spaces ignored), in a single update statement.
+	CollapseDuplicateShows(ctx context.Context, id string) error
 }
 
-// cleanupFinishedShows removes, per user document, only the shows that are no longer airing, and returns
-// how many documents were changed. Shows added concurrently are never touched.
+// cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
+// duplicate entries (keeping the first) and null entries among the rest. It returns how many documents were
+// changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
 func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		if doc == nil {
+			return nil
+		}
 		var finished []string
+		needsCollapse := false
+		seen := make(map[string]struct{}, len(doc.Shows))
 		for _, sub := range doc.Shows {
 			if sub == nil {
+				needsCollapse = true
 				continue
 			}
-			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
+			key := strings.ToLower(strings.TrimSpace(sub.Show))
+			if _, ok := airing[key]; !ok {
 				finished = append(finished, sub.Show)
+				continue
+			}
+			if _, dup := seen[key]; dup {
+				needsCollapse = true
+			}
+			seen[key] = struct{}{}
+		}
+		changed := false
+		if len(finished) > 0 {
+			if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
+				logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
+				return nil
+			}
+			changed = true
+		}
+		if needsCollapse {
+			if err := st.CollapseDuplicateShows(ctx, doc.ID); err != nil {
+				logger.For("animesubs").Error("finished cleanup CollapseDuplicateShows failed", "user_id", doc.ID, "err", err)
+			} else {
+				changed = true
 			}
 		}
-		if len(finished) == 0 {
-			return nil
+		if changed {
+			updated++
 		}
-		if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
-			logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
-			return nil
-		}
-		updated++
 		return nil
 	})
 	return updated, err
