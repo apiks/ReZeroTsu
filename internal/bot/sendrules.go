@@ -148,9 +148,10 @@ func deliverWithRules(ctx context.Context, d DiscordPort, guildID, channelID str
 				res, id = verifyUnknownSend(ctx, d, channelID, nil, msg, err, match, presumeOnVerifyFailure, label)
 			}
 			res.webhookRejected = true
-			if res.Delivered && !gone {
+			if res.Delivered && !res.Presumed && !gone {
 				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
-				// run spends another rejected (401/403) request on it before falling back.
+				// run spends another rejected (401/403) request on it before falling back. A presumed delivery
+				// proves nothing about the bot account, so it does not avoid the webhook.
 				d.AvoidChannelWebhook(guildID, channelID)
 			}
 			return res, id

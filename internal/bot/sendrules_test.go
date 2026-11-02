@@ -90,6 +90,38 @@ func TestDeliverWithRulesTerminalWebhookRejectionKeptWhenFallbackFails(t *testin
 	}
 }
 
+// After a channel-terminal webhook rejection, the webhook is avoided only when the bot-account fallback is
+// confirmed delivered (a clean send or a verified Unknown), never when delivery is merely presumed.
+func TestDeliverWithRulesAvoidsWebhookOnlyOnConfirmedFallback(t *testing.T) {
+	tests := []struct {
+		name          string
+		fallback      step
+		recentErr     error
+		wantDelivered bool
+		wantPresumed  bool
+		wantAvoided   int
+	}{
+		{name: "clean fallback send", fallback: succeed(), wantDelivered: true, wantAvoided: 1},
+		{name: "unknown fallback verified delivered", fallback: timeoutAfterDelivery(), wantDelivered: true, wantAvoided: 1},
+		{name: "unknown fallback presumed delivered", fallback: timeoutAfterDelivery(), recentErr: errors.New("read failed"), wantDelivered: true, wantPresumed: true},
+		{name: "unknown fallback verified missing", fallback: timeoutWithoutDelivery()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newFakeDiscord(rejectWith(50001), tc.fallback)
+			d.RecentErr = tc.recentErr
+			d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
+			res, _ := deliverWithRules(context.Background(), d, "g1", "c1", d.Webhook, OutgoingMessage{Content: "x"}, matchRecentMessage, true, "test send")
+			if res.Delivered != tc.wantDelivered || res.Presumed != tc.wantPresumed {
+				t.Fatalf("result = %+v, want delivered %v presumed %v", res, tc.wantDelivered, tc.wantPresumed)
+			}
+			if len(d.Avoided) != tc.wantAvoided {
+				t.Errorf("avoided = %v, want %d", d.Avoided, tc.wantAvoided)
+			}
+		})
+	}
+}
+
 // A client-side request timeout may hide a delivered message, so it is verified (on the detached context),
 // whether or not the run is shutting down when it fires.
 func TestDeliverWithRulesClientTimeoutIsVerified(t *testing.T) {
