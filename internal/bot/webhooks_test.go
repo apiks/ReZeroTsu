@@ -17,6 +17,17 @@ func resetWebhookAvoid(t *testing.T) {
 	t.Cleanup(reset)
 }
 
+// A bot-account rejection invalidates the channel; the avoided webhook must stay avoided.
+func TestInvalidateKeepsAvoidedWebhookAvoided(t *testing.T) {
+	resetWebhookAvoid(t)
+	now := time.Now()
+	avoidChannelWebhook("g1", "c1", now)
+	invalidateChannelWebhook("g1", "c1")
+	if !channelWebhookAvoided(channelWebhookKey("g1", "c1"), now.Add(time.Minute)) {
+		t.Error("webhook no longer avoided after invalidate")
+	}
+}
+
 func avoidEntryExists(key string) bool {
 	channelWebhookMu.RLock()
 	defer channelWebhookMu.RUnlock()
@@ -35,14 +46,23 @@ func TestChannelWebhookAvoidEntriesAreForgotten(t *testing.T) {
 		present []string
 	}{
 		{
-			name: "invalidating a channel clears its avoid entry",
+			name: "invalidating a channel keeps its avoid entry",
 			act: func() {
 				avoidChannelWebhook("g1", "c1", t0)
 				avoidChannelWebhook("g1", "c2", t0)
 				invalidateChannelWebhook("g1", "c1")
 			},
+			present: []string{channelWebhookKey("g1", "c1"), channelWebhookKey("g1", "c2")},
+		},
+		{
+			name: "invalidating a guild clears its avoid entries",
+			act: func() {
+				avoidChannelWebhook("g1", "c1", t0)
+				avoidChannelWebhook("g2", "c2", t0)
+				invalidateGuildWebhooks("g1")
+			},
 			gone:    []string{channelWebhookKey("g1", "c1")},
-			present: []string{channelWebhookKey("g1", "c2")},
+			present: []string{channelWebhookKey("g2", "c2")},
 		},
 		{
 			name: "a new avoid entry prunes expired ones",
