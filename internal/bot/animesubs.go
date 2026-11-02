@@ -693,11 +693,18 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
+	// Shows are matched like the user path (anime_subs.MatchKey). Among duplicate entries a notified one wins, so
+	// a show any duplicate marks as notified is never reposted; the entry chosen is the one marked after sending.
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
-		if sub != nil {
-			subByShow[strings.ToLower(sub.Show)] = sub
+		if sub == nil {
+			continue
 		}
+		key := anime_subs.MatchKey(sub.Show)
+		if cur, ok := subByShow[key]; ok && (cur.Notified || !sub.Notified) {
+			continue
+		}
+		subByShow[key] = sub
 	}
 	type dueEntry struct {
 		show animeschedule.ShowEntry
@@ -715,7 +722,7 @@ func processGuildNewEpisodes(ctx context.Context, d DiscordPort, st SentState, g
 		if !donghua && show.Donghua {
 			continue
 		}
-		sub, ok := subByShow[strings.ToLower(show.Name)]
+		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
 		if !ok || sub.Notified {
 			continue
 		}

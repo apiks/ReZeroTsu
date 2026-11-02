@@ -124,6 +124,36 @@ func TestGuildNewEpisodesDeliveredAtMostOnce(t *testing.T) {
 	}
 }
 
+// Duplicate entries for one show (by anime_subs.MatchKey) never repost it once any of them is notified, and an
+// episode sent for unnotified duplicates is not sent again on the next run.
+func TestGuildNewEpisodesDuplicateEntriesNeverRepost(t *testing.T) {
+	sub := func(name string, notified bool) *anime_subs.ShowSub {
+		return &anime_subs.ShowSub{Show: name, Notified: notified}
+	}
+	tests := []struct {
+		name          string
+		shows         []*anime_subs.ShowSub
+		wantDelivered []int // cumulative after run 1, run 2
+	}{
+		{"notified entry first, unnotified case duplicate after", []*anime_subs.ShowSub{sub("Show 0", true), sub("show 0", false)}, []int{0, 0}},
+		{"unnotified case duplicate first, notified entry after", []*anime_subs.ShowSub{sub("show 0", false), sub("Show 0", true)}, []int{0, 0}},
+		{"notified entry differing only in surrounding spaces", []*anime_subs.ShowSub{sub(" Show 0 ", true), sub("Show 0", false)}, []int{0, 0}},
+		{"no duplicate notified: sent once, not again next run", []*anime_subs.ShowSub{sub("show 0", false), sub("SHOW 0 ", false)}, []int{1, 1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newGuildHarness(1)
+			h.st.AnimeSubs["c1"].Shows = tc.shows
+			for i := 0; i < 2; i++ {
+				h.run(context.Background())
+				if got := len(h.d.Delivered); got != tc.wantDelivered[i] {
+					t.Errorf("run %d: delivered = %d, want %d", i+1, got, tc.wantDelivered[i])
+				}
+			}
+		})
+	}
+}
+
 func TestGuildNewEpisodesUnknownWebhookInvalidatesAndFallsBack(t *testing.T) {
 	h := newGuildHarness(1, rejectWith(10015))
 	h.d.Webhook = &WebhookTarget{ID: "wh", Token: "t"}
