@@ -100,7 +100,13 @@ type userSubsStore interface {
 // cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
 // duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
 // returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
+// airing holds the airing schedule names in any case-folded form (GetAiringShowNames lowercases them); they are
+// re-keyed with anime_subs.MatchKey so a show counts as airing exactly when the notifier can match it.
 func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
+	airingKeys := make(map[string]struct{}, len(airing))
+	for name := range airing {
+		airingKeys[anime_subs.MatchKey(name)] = struct{}{}
+	}
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
 		if doc == nil {
@@ -120,7 +126,7 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 				needsCollapse = true
 				continue
 			}
-			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
+			if _, ok := airingKeys[anime_subs.MatchKey(sub.Show)]; !ok {
 				finished = append(finished, sub.Show)
 				continue
 			}

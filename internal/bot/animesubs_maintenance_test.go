@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"ReZeroTsu/internal/database/anime_subs"
@@ -72,8 +73,36 @@ func TestCleanupFinishedShows(t *testing.T) {
 	}
 }
 
+// Cleanup must call a show finished exactly when the notifier (anime_subs.MatchKey) cannot match it to an airing
+// schedule name. airing is keyed as animeschedule.GetAiringShowNames builds it: lowercased, not trimmed.
+func TestCleanupFinishedShowsMatchesLikeTheNotifier(t *testing.T) {
+	tests := []struct {
+		name        string
+		airingName  string
+		subName     string
+		wantRemoved []string
+	}{
+		{"schedule name with a trailing space is still airing", "Frieren ", "Frieren ", nil},
+		{"subscription matching only after a trim is still airing", "Frieren ", "frieren", nil},
+		{"subscription ending in U+3000 never matches, so it is finished", "Frieren", "Frieren　", []string{"Frieren　"}},
+		{"subscription ending in U+0085 never matches, so it is finished", "Frieren", "Frieren\u0085", []string{"Frieren\u0085"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			airing := map[string]struct{}{strings.ToLower(tc.airingName): {}}
+			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: tc.subName}}})
+			if _, err := cleanupFinishedShows(context.Background(), st, airing); err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(st.removed["u"]) != fmt.Sprint(tc.wantRemoved) {
+				t.Errorf("removed = %q, want %q", st.removed["u"], tc.wantRemoved)
+			}
+		})
+	}
+}
+
 func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
-	airing := map[string]struct{}{"frieren": {}, "dandadan": {}, "äbc": {}}
+	airing := map[string]struct{}{"frieren": {}, "dandadan": {}, "äbc": {}, "　frieren": {}}
 	sub := func(name string) *anime_subs.ShowSub { return &anime_subs.ShowSub{Show: name} }
 	tests := []struct {
 		name         string
