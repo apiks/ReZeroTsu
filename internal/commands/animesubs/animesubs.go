@@ -78,7 +78,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := clearsubsCore(ctx, db, m.Author.ID)
+			desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), m.Author.ID)
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -92,7 +92,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := subCore(ctx, db, m.Author.ID, strings.TrimSpace(args))
+			desc, logErr := subCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -106,7 +106,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := unsubCore(ctx, db, m.Author.ID, strings.TrimSpace(args))
+			desc, logErr := unsubCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
 			if logErr != nil {
 				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 			}
@@ -210,30 +210,41 @@ func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	return animeschedule.ShowEntry{}, false
 }
 
-func subCore(ctx context.Context, db *database.Client, uid, animeInput string) (responseDesc string, logErr error) {
+// subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
+// whole-document rewrite: every change is a single-statement operation.
+type subsStore interface {
+	GetByID(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
+	AddShowIfAbsent(ctx context.Context, id string, sub *anime_subs.ShowSub) (bool, error)
+	RemoveShows(ctx context.Context, id string, showNames []string) error
+	ClearShows(ctx context.Context, id string) error
+}
+
+// showLookup resolves user input to an airing show; replaced in tests.
+var showLookup = findShowByName
+
+func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name (exact romaji from /schedule or AnimeSchedule.net).", nil
 	}
-	show, ok := findShowByName(animeInput)
+	show, ok := showLookup(animeInput)
 	if !ok {
 		return "That is not a valid airing show name. Use the exact romaji title from `/schedule` or AnimeSchedule.net.", nil
 	}
 	showName := show.Name
 
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
-	if doc == nil {
-		doc = &anime_subs.AnimeSubs{ID: uid, IsGuild: false, Shows: nil}
-	}
-	for _, sub := range doc.Shows {
-		if sub != nil && strings.EqualFold(sub.Show, showName) {
-			return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+	if doc != nil {
+		for _, sub := range doc.Shows {
+			if sub != nil && strings.EqualFold(sub.Show, showName) {
+				return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+			}
 		}
 	}
-	if len(doc.Shows) >= maxUserSubscriptions {
+	if doc != nil && len(doc.Shows) >= maxUserSubscriptions {
 		return fmt.Sprintf("You've reached the maximum number of subscriptions (%d). Unsubscribe from some shows to add more.", maxUserSubscriptions), nil
 	}
 
@@ -253,9 +264,12 @@ func subCore(ctx context.Context, db *database.Client, uid, animeInput string) (
 	if hasAiredToday {
 		newSub.LastNotifiedAirUnix = show.AirTimeUnix
 	}
-	doc.Shows = append(doc.Shows, newSub)
-	if err := db.AnimeSubs().Set(ctx, uid, false, doc.Shows); err != nil {
+	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
+	if err != nil {
 		return "Could not save subscription.", err
+	}
+	if !added {
+		return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
 	}
 	return fmt.Sprintf("Success! You have subscribed to DM notifications for `%s`.", showName), nil
 }
@@ -267,19 +281,19 @@ func handleSub(ctx context.Context, db *database.Client, s *discordgo.Session, i
 	if opt != nil {
 		animeInput = opt.StringValue()
 	}
-	desc, logErr := subCore(ctx, db, commands.UserID(i), animeInput)
+	desc, logErr := subCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}
 	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
 }
 
-func unsubCore(ctx context.Context, db *database.Client, uid, animeInput string) (responseDesc string, logErr error) {
+func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name to unsubscribe from.", nil
 	}
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
@@ -287,23 +301,18 @@ func unsubCore(ctx context.Context, db *database.Client, uid, animeInput string)
 		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
 	}
 
-	var newShows []*anime_subs.ShowSub
-	found := false
+	// Resolve the stored titles (exact case) the input names, then remove exactly those.
+	var stored []string
 	for _, sub := range doc.Shows {
-		if sub == nil {
-			continue
+		if sub != nil && strings.EqualFold(sub.Show, animeInput) {
+			stored = append(stored, sub.Show)
 		}
-		if strings.EqualFold(sub.Show, animeInput) {
-			found = true
-			continue
-		}
-		newShows = append(newShows, sub)
 	}
-	if !found {
+	if len(stored) == 0 {
 		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
 	}
 
-	if err := db.AnimeSubs().Set(ctx, uid, false, newShows); err != nil {
+	if err := store.RemoveShows(ctx, uid, stored); err != nil {
 		return "Could not update subscriptions.", err
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
@@ -316,29 +325,29 @@ func handleUnsub(ctx context.Context, db *database.Client, s *discordgo.Session,
 	if opt != nil {
 		animeInput = opt.StringValue()
 	}
-	desc, logErr := unsubCore(ctx, db, commands.UserID(i), animeInput)
+	desc, logErr := unsubCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}
 	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
 }
 
-func clearsubsCore(ctx context.Context, db *database.Client, uid string) (responseDesc string, logErr error) {
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
+func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDesc string, logErr error) {
+	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", err
 	}
 	if doc == nil || len(doc.Shows) == 0 {
 		return "You have no active anime subscriptions.", nil
 	}
-	if err := db.AnimeSubs().Set(ctx, uid, false, nil); err != nil {
+	if err := store.ClearShows(ctx, uid); err != nil {
 		return "Could not clear subscriptions.", err
 	}
 	return "Success! All your anime subscriptions have been cleared.", nil
 }
 
 func handleClearsubs(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	desc, logErr := clearsubsCore(ctx, db, commands.UserID(i))
+	desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), commands.UserID(i))
 	if logErr != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
 	}

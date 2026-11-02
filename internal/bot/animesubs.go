@@ -74,33 +74,7 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			if len(airing) == 0 {
 				continue
 			}
-			var updated int
-			err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-				if len(doc.Shows) == 0 {
-					return nil
-				}
-				var kept []*anime_subs.ShowSub
-				seen := make(map[string]struct{})
-				for _, sub := range doc.Shows {
-					if sub != nil {
-						key := strings.ToLower(strings.TrimSpace(sub.Show))
-						if _, ok := airing[key]; ok {
-							if _, dup := seen[key]; !dup {
-								seen[key] = struct{}{}
-								kept = append(kept, sub)
-							}
-						}
-					}
-				}
-				if len(kept) < len(doc.Shows) {
-					if err := db.AnimeSubs().Set(ctx, doc.ID, false, kept); err != nil {
-						logger.For("animesubs").Error("finished cleanup Set failed", "channel_id", doc.ID, "err", err)
-						return nil
-					}
-					updated++
-				}
-				return nil
-			})
+			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), airing)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.For("animesubs").Error("finished cleanup IterateUserSubs failed", "err", err)
 			}
@@ -109,6 +83,81 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			}
 		}
 	}
+}
+
+// userSubsStore is the narrow persistence surface of the user-subscription maintenance jobs. It has no
+// whole-document rewrite: each change is a single-statement operation on named shows.
+type userSubsStore interface {
+	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
+	RemoveShows(ctx context.Context, id string, showNames []string) error
+	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
+}
+
+// cleanupFinishedShows removes, per user document, only the shows that are no longer airing, and returns
+// how many documents were changed. Shows added concurrently are never touched.
+func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
+	var updated int
+	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		var finished []string
+		for _, sub := range doc.Shows {
+			if sub == nil {
+				continue
+			}
+			if _, ok := airing[strings.ToLower(strings.TrimSpace(sub.Show))]; !ok {
+				finished = append(finished, sub.Show)
+			}
+		}
+		if len(finished) == 0 {
+			return nil
+		}
+		if err := st.RemoveShows(ctx, doc.ID, finished); err != nil {
+			logger.For("animesubs").Error("finished cleanup RemoveShows failed", "user_id", doc.ID, "err", err)
+			return nil
+		}
+		updated++
+		return nil
+	})
+	return updated, err
+}
+
+// backfillUserSubs sets the last notified air time on notified user shows that lack one, one show at a time,
+// and returns how many user documents were changed. aired maps lower-cased show names to their latest air time.
+func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]int64) (int, error) {
+	var updatedUsers int
+	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if doc == nil {
+			return nil
+		}
+		updated := false
+		for _, sub := range doc.Shows {
+			if sub == nil || sub.Guild || sub.LastNotifiedAirUnix != 0 || !sub.Notified {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(sub.Show))
+			if key == "" {
+				continue
+			}
+			t, ok := aired[key]
+			if !ok || t <= 0 {
+				continue
+			}
+			if err := st.SetShowAirUnix(ctx, doc.ID, sub.Show, t); err != nil {
+				logger.For("animesubs").Error("backfill SetShowAirUnix failed", "user_id", doc.ID, "err", err)
+				continue
+			}
+			updated = true
+		}
+		if updated {
+			updatedUsers++
+		}
+		return nil
+	})
+	return updatedUsers, err
 }
 
 func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now time.Time) error {
@@ -132,46 +181,7 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 			}
 		}
 	}
-	var updatedUsers int
-	err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if doc == nil || len(doc.Shows) == 0 {
-			return nil
-		}
-		updated := false
-		for _, sub := range doc.Shows {
-			if sub == nil || sub.Guild {
-				continue
-			}
-			if sub.LastNotifiedAirUnix != 0 {
-				continue
-			}
-			if !sub.Notified {
-				continue
-			}
-			key := strings.ToLower(strings.TrimSpace(sub.Show))
-			if key == "" {
-				continue
-			}
-			if t, ok := shows[key]; ok && t > 0 {
-				sub.LastNotifiedAirUnix = t
-				updated = true
-			}
-		}
-		if !updated {
-			return nil
-		}
-		if err := db.AnimeSubs().Set(ctx, doc.ID, false, doc.Shows); err != nil {
-			logger.For("animesubs").Error("backfill LastNotifiedAirUnix Set failed", "user_id", doc.ID, "err", err)
-			return nil
-		}
-		updatedUsers++
-		return nil
-	})
+	updatedUsers, err := backfillUserSubs(ctx, db.AnimeSubs(), shows)
 	if err != nil {
 		return err
 	}
