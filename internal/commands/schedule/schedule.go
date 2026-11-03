@@ -30,7 +30,7 @@ func init() {
 		Visibility: commands.Public,
 		Response:   commands.Deferred,
 		Name:       "schedule",
-		Desc:       "Shows anime release times for today, tomorrow or a given day (subbed where possible).",
+		Desc:       "Anime release times for today, tomorrow or a day; a day picker jumps across the loaded weeks.",
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
 		Installs:   commands.BothInstalls(),
@@ -235,6 +235,6 @@ func handleSchedule(ic *interaction.Context) error {
 	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return ic.EditReply(interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
-		Components: navComponents(date, ic.Invoker.ID),
+		Components: pageComponents(date, ic.Invoker.ID),
 	})
 }
