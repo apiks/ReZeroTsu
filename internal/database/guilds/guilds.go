@@ -16,7 +16,7 @@ type ChannelRef struct {
 	RoleID string `bson:"role_id,omitempty"`
 }
 
-// Role is a role reference for command_roles and VoiceCha.
+// Role is a role reference for VoiceCha.
 type Role struct {
 	Name     string `bson:"name,omitempty"`
 	ID       string `bson:"id,omitempty"`
@@ -130,14 +130,11 @@ type FeedEntry struct {
 }
 
 type GuildSettings struct {
-	BotLogID     *ChannelRef `bson:"bot_log_id,omitempty"`
-	CommandRoles []Role      `bson:"command_roles,omitempty"`
-	VoiceChas    []VoiceCha  `bson:"voice_chas,omitempty"`
-	ModOnly      bool        `bson:"mod_only,omitempty"`
-	Donghua      bool        `bson:"donghua,omitempty"`
-	ReactsModule bool        `bson:"reacts_module,omitempty"`
-	PingMessage  string      `bson:"ping_message,omitempty"`
-	Premium      bool        `bson:"premium,omitempty"`
+	BotLogID    *ChannelRef `bson:"bot_log_id,omitempty"`
+	VoiceChas   []VoiceCha  `bson:"voice_chas,omitempty"`
+	Donghua     bool        `bson:"donghua,omitempty"`
+	PingMessage string      `bson:"ping_message,omitempty"`
+	Premium     bool        `bson:"premium,omitempty"`
 }
 
 // Guild is a guild document; _id is the guild ID.
@@ -153,8 +150,7 @@ type Guild struct {
 // DefaultGuildSettings returns the default guild_settings.
 func DefaultGuildSettings() *GuildSettings {
 	return &GuildSettings{
-		ReactsModule: true,
-		PingMessage:  "Hmmm~ So this is what you do all day long?",
+		PingMessage: "Hmmm~ So this is what you do all day long?",
 	}
 }
 

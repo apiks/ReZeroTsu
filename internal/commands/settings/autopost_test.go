@@ -190,23 +190,6 @@ func TestDailyScheduleChooseAndClear(t *testing.T) {
 	}
 }
 
-func TestAutopostPickersRefuseNonModerators(t *testing.T) {
-	st := storeWithAutoposts()
-	useStore(t, st)
-	fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{"g": {ID: "g", OwnerID: "x"}}}
-	for _, id := range []string{idNewEpisodes, idDailySchedule} {
-		if err := pick(t, fake, member, id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if st.autoposts[postTypeNewEpisodes] == nil || st.autoposts[postTypeDailySchedule] == nil || len(st.deletedSentState) != 0 {
-		t.Error("a non-moderator changed an autopost")
-	}
-	if call := lastCall(t, fake); !strings.Contains(call.Response.Content, "You need") {
-		t.Errorf("last = %q", call.Response.Content)
-	}
-}
-
 func TestFailedAutopostSaveKeepsStoredPanel(t *testing.T) {
 	st := storeWithAutoposts()
 	st.failAutopost = errors.New("db down")

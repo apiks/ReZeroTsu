@@ -28,7 +28,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
 
-**Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, ping message), `/mod-only`, `/react-module`, `/moderator-roles`, `/add-moderator-role`, `/remove-moderator-role`.
+**Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, ping message). Mod commands default to Manage Server; server admins grant them to other roles, members or channels in Server Settings, Integrations.
 
 **Voice roles:** `/voicerole add`, `/voicerole remove`, `/voicerole list`.
 

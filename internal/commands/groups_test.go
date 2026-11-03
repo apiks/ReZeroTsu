@@ -29,9 +29,9 @@ func noRun(*interaction.Context) error { return nil }
 func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	register(t, &Command{Name: "t-flat", Desc: "d", Visibility: Public, Response: Direct, Run: noRun,
 		Options: []*discordgo.ApplicationCommandOption{{Name: "o", Description: "od", Type: discordgo.ApplicationCommandOptionString}}})
-	register(t, &Command{Name: "t-flat-admin", Desc: "d", Permission: PermAdmin, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
+	register(t, &Command{Name: "t-flat-admin", Desc: "d", Permission: PermMod, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
 
-	admin := int64(discordgo.PermissionAdministrator)
+	manageServer := int64(discordgo.PermissionManageGuild)
 	serverOnly := &[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
 	want := &discordgo.ApplicationCommand{Name: "t-flat", Description: "d", IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM},
@@ -39,10 +39,10 @@ func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	if got := definition(t, "t-flat"); !reflect.DeepEqual(got, want) {
 		t.Errorf("flat = %+v, want %+v", got, want)
 	}
-	wantAdmin := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &admin, IntegrationTypes: serverOnly,
+	wantMod := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &manageServer, IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild}}
-	if got := definition(t, "t-flat-admin"); !reflect.DeepEqual(got, wantAdmin) {
-		t.Errorf("admin = %+v, want %+v", got, wantAdmin)
+	if got := definition(t, "t-flat-admin"); !reflect.DeepEqual(got, wantMod) {
+		t.Errorf("admin = %+v, want %+v", got, wantMod)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 	}
 
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", sub("add", val))); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", sub("add", val))); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(ran, []string{"add"}) || strings.Join(fake.Ops(), ",") != "Reply" || fake.Calls()[0].Visibility != interaction.Public {
@@ -178,7 +178,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 
 	fake = &interactiontest.Fake{}
 	group := &discordgo.ApplicationCommandInteractionDataOption{Name: "admin", Type: discordgo.ApplicationCommandOptionSubCommandGroup, Options: []*discordgo.ApplicationCommandInteractionDataOption{sub("purge")}}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", group)); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", group)); err != nil {
 		t.Fatal(err)
 	}
 	if ran[len(ran)-1] != "purge" || seen.Group != "admin" || seen.Subcommand != "purge" {
@@ -186,7 +186,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 	}
 
 	fake = &interactiontest.Fake{}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", sub("slow"))); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", sub("slow"))); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(fake.Ops(), ","); got != "Defer,Reply" || fake.Calls()[0].Visibility != interaction.Private {
@@ -199,7 +199,7 @@ func TestDispatchRefusesAnUnknownSubcommandPrivately(t *testing.T) {
 		Subcommands: []*Subcommand{{Name: "add", Desc: "d", Run: noRun}}})
 	fake := &interactiontest.Fake{}
 	bad := &discordgo.ApplicationCommandInteractionDataOption{Name: "gone", Type: discordgo.ApplicationCommandOptionSubCommand}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", bad)); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", bad)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()
@@ -229,7 +229,7 @@ func TestDispatchGivesARightClickCommandItsTarget(t *testing.T) {
 	for name, target := range map[string]string{"T who": "target-user", "T what": "target-msg"} {
 		i := slashInteraction(name, "g", 0)
 		i.Interaction.Data = discordgo.ApplicationCommandInteractionData{Name: name, TargetID: target, Resolved: resolved}
-		if err := run(t, name, &interactiontest.Fake{}, fakeSettings{}, i); err != nil {
+		if err := run(t, name, &interactiontest.Fake{}, i); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,7 +251,7 @@ func TestAFormOpensFromACommandAndItsSubmissionReachesItsHandler(t *testing.T) {
 	})
 
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-say", fake, fakeSettings{}, slashInteraction("t-say", "g", 0)); err != nil {
+	if err := run(t, "t-say", fake, slashInteraction("t-say", "g", 0)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()

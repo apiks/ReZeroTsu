@@ -23,7 +23,7 @@ func init() {
 	})
 }
 
-const hintInvite = "Use /add-moderator-role after inviting to set up moderator roles."
+const hintInvite = "Mod commands default to Manage Server. Grant them to others in Server Settings, Integrations."
 
 func run(ic *interaction.Context) error {
 	return ic.Reply(interaction.Response{Embeds: []*discordgo.MessageEmbed{inviteEmbed(ic.BotUser())}})
