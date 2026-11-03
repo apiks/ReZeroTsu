@@ -1,6 +1,8 @@
 package interaction
 
 import (
+	"time"
+
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -132,3 +134,9 @@ func (p *DiscordgoPort) Channel(channelID string) (*discordgo.Channel, error) {
 	}
 	return p.s.Channel(channelID)
 }
+
+// BotUser is the session's own account.
+func (p *DiscordgoPort) BotUser() *discordgo.User { return p.s.State.User }
+
+// Latency is the gateway heartbeat latency.
+func (p *DiscordgoPort) Latency() time.Duration { return p.s.HeartbeatLatency() }

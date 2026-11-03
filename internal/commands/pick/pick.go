@@ -8,7 +8,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -18,7 +18,7 @@ const embedTitlePick = "Pick"
 func init() {
 	commands.Add(&commands.Command{
 		Visibility: commands.Public,
-		Response:   commands.Deferred,
+		Response:   commands.Direct,
 		Name:       "pick",
 		Desc:       "Picks a random item from a list of items.",
 		Permission: commands.PermEveryone,
@@ -31,7 +31,7 @@ func init() {
 				Required:    true,
 			},
 		},
-		Handler: handlePick,
+		Run: run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "pick",
@@ -64,52 +64,39 @@ func init() {
 	})
 }
 
-func handlePick(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	opt := commands.ParseOption(data.Options, "items")
-	if opt == nil || opt.StringValue() == "" {
-		commands.RespondEmbed(s, i, embedTitlePick, "Please provide items. Separate using comma (`,`) or pipe (`|`). Minimum 2 items required.")
-		return
+func run(ic *interaction.Context) error {
+	var input string
+	if opt := commands.ParseOption(ic.Command.Options, "items"); opt != nil {
+		input = opt.StringValue()
+	}
+	parsed := parseItems(input)
+	switch {
+	case len(parsed) == 0:
+		return ic.Refuse("Please provide items. Separate using comma (`,`) or pipe (`|`). Minimum 2 items required.")
+	case len(parsed) < 2:
+		return ic.Refuse("At least 2 items required.")
 	}
 
-	parsed := parseItems(opt.StringValue())
-	if len(parsed) < 2 {
-		commands.RespondEmbed(s, i, embedTitlePick, "At least 2 items required.")
-		return
-	}
-
-	picked := parsed[rand.Intn(len(parsed))]
-	msg := "**Picked:** " + picked
-
-	if len(msg) <= discord.MaxContentLength {
-		if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
-			args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-			logger.For("commands").Error("pick edit failed", args...)
-		}
-		return
-	}
-
-	first := msg[:discord.MaxContentLength]
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &first}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("pick edit failed", args...)
-		return
-	}
-	rest := msg[discord.MaxContentLength:]
-	for len(rest) > 0 {
-		chunk := rest
+	msg := "**Picked:** " + parsed[rand.Intn(len(parsed))]
+	first := true
+	for len(msg) > 0 {
+		chunk := msg
 		if len(chunk) > discord.MaxContentLength {
-			chunk = rest[:discord.MaxContentLength]
-			rest = rest[discord.MaxContentLength:]
+			chunk = msg[:discord.MaxContentLength]
+		}
+		msg = msg[len(chunk):]
+		var err error
+		if first {
+			err = ic.Reply(interaction.Response{Content: chunk})
 		} else {
-			rest = ""
+			err = ic.FollowUp(interaction.Response{Content: chunk})
 		}
-		if _, err := s.FollowupMessageCreate(i.Interaction, false, &discordgo.WebhookParams{Content: chunk}); err != nil {
-			args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-			logger.For("commands").Error("pick followup failed", args...)
-			return
+		if err != nil {
+			return err
 		}
+		first = false
 	}
+	return nil
 }
 
 // parseItems splits input by |, comma, or ‚; trims and drops empty.

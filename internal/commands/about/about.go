@@ -8,7 +8,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -21,33 +21,28 @@ const (
 func init() {
 	commands.Add(&commands.Command{
 		Visibility: commands.Public,
-		Response:   commands.Deferred,
+		Response:   commands.Direct,
 		Name:       "about",
 		Desc:       "Display more information about me.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
-		Handler:    handleAbout,
+		Run:        run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "about",
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, aboutEmbed(s))
+			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, aboutEmbed(s.State.User))
 		},
 	})
 }
 
-func handleAbout(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	emb := aboutEmbed(s)
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{emb}}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("about edit failed", args...)
-	}
+func run(ic *interaction.Context) error {
+	return ic.Reply(interaction.Response{Embeds: []*discordgo.MessageEmbed{aboutEmbed(ic.BotUser())}})
 }
 
-func aboutEmbed(s *discordgo.Session) *discordgo.MessageEmbed {
-	user := s.State.User
+func aboutEmbed(user *discordgo.User) *discordgo.MessageEmbed {
 	inviteURL := fmt.Sprintf(discord.InviteURLFormat, user.ID, discord.DefaultInvitePermissions)
 
 	emb := &discordgo.MessageEmbed{

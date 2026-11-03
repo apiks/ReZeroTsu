@@ -6,7 +6,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -16,7 +16,7 @@ const embedTitleAvatar = "Avatar"
 func init() {
 	commands.Add(&commands.Command{
 		Visibility: commands.Public,
-		Response:   commands.Deferred,
+		Response:   commands.Direct,
 		Name:       "avatar",
 		Desc:       "Show a user's avatar.",
 		Permission: commands.PermEveryone,
@@ -29,7 +29,7 @@ func init() {
 				Required:    false,
 			},
 		},
-		Handler: handleAvatar,
+		Run: run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "avatar",
@@ -61,32 +61,25 @@ func init() {
 	})
 }
 
-func handleAvatar(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	user := commands.InteractionUser(i)
-	data := i.ApplicationCommandData()
-	if opt := commands.ParseOption(data.Options, "user"); opt != nil {
-		if u := opt.UserValue(s); u != nil {
-			user = u
+func run(ic *interaction.Context) error {
+	user := ic.Invoker
+	if opt := commands.ParseOption(ic.Command.Options, "user"); opt != nil {
+		user = nil
+		if id, ok := opt.Value.(string); ok && ic.Command.Resolved != nil {
+			user = ic.Command.Resolved.Users[id]
 		}
 	}
 	if user == nil {
-		commands.RespondEmbed(s, i, embedTitleAvatar, "Could not determine the user.")
-		return
+		return ic.Refuse("Could not determine the user. Please try again.")
 	}
-
 	avatarURL := user.AvatarURL("1024")
 	if avatarURL == "" {
-		commands.RespondEmbed(s, i, embedTitleAvatar, "This user has no avatar.")
-		return
+		return ic.Refuse("This user has no avatar.")
 	}
-
 	emb := &discordgo.MessageEmbed{
 		Title: user.Username + "'s avatar",
 		Color: discord.EmbedColor,
 		Image: &discordgo.MessageEmbedImage{URL: avatarURL},
 	}
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{emb}}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("avatar edit failed", args...)
-	}
+	return ic.Reply(interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}})
 }
