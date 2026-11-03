@@ -22,6 +22,14 @@ const (
 	// pickerPrefix starts the custom ID of the Remove picker: subscription-rm:<authorID>:<page>.
 	pickerPrefix = "subscription-rm:"
 
+	// clearPrefix starts the custom ID of the clear confirmation buttons: subscription-clear:<authorID>:<yes|no>.
+	clearPrefix = "subscription-clear:"
+	clearYes    = "yes"
+	clearNo     = "no"
+
+	msgOnlyOwnerClears = "Only the member whose list this is can clear it."
+	msgStaleClear      = "Could not read that choice. Run /subscription clear again."
+
 	msgNoSubscriptions  = "You have no active anime subscriptions."
 	msgOnlyOwnerRemoves = "Only the member whose list this is can remove from it."
 	msgStalePicker      = "Could not read that choice. Run /subscription list again."
@@ -75,6 +83,7 @@ func init() {
 	// Restricted: a list belongs to its author, so another member's press is refused, not given a copy.
 	commands.RegisterPaginationRenderer(pageKey, RenderSubscriptionPage)
 	commands.AddComponent(pickerPrefix, handleRemovePicker)
+	commands.AddComponent(clearPrefix, handleClearButton)
 }
 
 // answer replaces the deferred placeholder with a titled embed.
@@ -111,8 +120,26 @@ func runRemove(ic *interaction.Context) error {
 }
 
 func runClear(ic *interaction.Context) error {
-	desc, logErr := clearsubsCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
-	return finish(ic, desc, logErr)
+	list, err := loadList(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
+	if err != nil {
+		return finish(ic, "Could not load your subscriptions.", err)
+	}
+	if len(list) == 0 {
+		return answer(ic, msgNoSubscriptions)
+	}
+	return ic.EditReply(interaction.Response{
+		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleAnimeSubs, fmt.Sprintf("Remove all %d subscriptions?", len(list)))},
+		Components: clearButtons(ic.Invoker.ID),
+	})
+}
+
+// clearButtons are the confirmation buttons. Their custom IDs carry the author's ID and the choice only, so they
+// stay far under 100 characters and never depend on state that could expire.
+func clearButtons(authorID string) []discordgo.MessageComponent {
+	return []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+		discordgo.Button{Label: "Remove all", Style: discordgo.DangerButton, CustomID: clearPrefix + authorID + ":" + clearYes},
+		discordgo.Button{Label: "Keep them", Style: discordgo.SecondaryButton, CustomID: clearPrefix + authorID + ":" + clearNo},
+	}}}
 }
 
 func runList(ic *interaction.Context) error {
@@ -259,4 +286,28 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 func finishRefusal(ic *interaction.Context, text string, err error) error {
 	logger.For("animesubs").Error("subscription picker failed", "guild_id", ic.GuildID, "err", err)
 	return ic.Refuse(text)
+}
+
+// handleClearButton settles the clear confirmation. Guard home: only the member whose list it is may press,
+// checked before the store is touched. Remove all clears whatever the member has now, not what was asked about.
+func handleClearButton(ic *interaction.Context, _ *discordgo.Session) error {
+	parts := strings.SplitN(strings.TrimPrefix(ic.CustomID, clearPrefix), ":", 2)
+	if len(parts) != 2 || (parts[1] != clearYes && parts[1] != clearNo) {
+		return ic.Refuse(msgStaleClear)
+	}
+	if ic.Invoker.ID != parts[0] {
+		return ic.Refuse(msgOnlyOwnerClears)
+	}
+	msg := "Nothing was removed."
+	if parts[1] == clearYes {
+		if err := storeOf(ic.DB).ClearShows(ic.Context(), parts[0]); err != nil {
+			return finishRefusal(ic, "Could not clear subscriptions.", err)
+		}
+		msg = "All your subscriptions were removed."
+	}
+	// Explicit empty components: an omitted list would leave the buttons on the message.
+	return ic.UpdateMessage(interaction.Response{
+		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleAnimeSubs, msg)},
+		Components: []discordgo.MessageComponent{},
+	})
 }
