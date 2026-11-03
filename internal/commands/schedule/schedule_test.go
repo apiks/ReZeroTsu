@@ -101,7 +101,7 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	if len(r.Embeds) != 1 || !strings.Contains(r.Embeds[0].Description, "Frieren") {
 		t.Errorf("embed should list Monday's show: %+v", r.Embeds)
 	}
-	row := r.Components[0].(discordgo.ActionsRow)
+	row := r.Components[len(r.Components)-1].(discordgo.ActionsRow)
 	next := row.Components[1].(discordgo.Button)
 	if next.CustomID != "sched:2026-11-10:user" {
 		t.Errorf("Next button = %q, want it to carry Tuesday's date and the author", next.CustomID)
