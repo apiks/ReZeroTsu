@@ -113,22 +113,15 @@ func autocompleteRaffleName(ctx context.Context, db *database.Client, s *discord
 	if err != nil || len(raffles) == 0 {
 		return nil
 	}
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
 	var names []string
 	for _, r := range raffles {
 		if r == nil || r.Name == "" {
 			continue
 		}
-		if focusedLower != "" && !strings.HasPrefix(strings.ToLower(r.Name), focusedLower) {
-			continue
-		}
 		names = append(names, r.Name)
 	}
 	sort.Strings(names)
-	const maxChoices = 25
-	if len(names) > maxChoices {
-		names = names[:maxChoices]
-	}
+	names = commands.MatchAnywhere(names, focusedValue, func(n string) []string { return []string{n} })
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(names))
 	for i, name := range names {
 		choices[i] = &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name}
