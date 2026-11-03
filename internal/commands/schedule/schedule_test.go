@@ -35,8 +35,8 @@ func runSchedule(t *testing.T, day string) *interactiontest.Fake {
 
 func TestScheduleIsPublicAndDeferred(t *testing.T) {
 	cmd := findCommand(t)
-	if cmd.Visibility != commands.Public || cmd.Response != commands.Deferred || cmd.Run == nil || cmd.Handler != nil {
-		t.Errorf("schedule must be a public, deferred command in the new handler form: %+v", cmd)
+	if cmd.Visibility != commands.Public || cmd.Response != commands.Deferred || cmd.Run == nil {
+		t.Errorf("schedule must be a public, deferred command: %+v", cmd)
 	}
 }
 

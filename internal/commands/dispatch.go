@@ -15,12 +15,12 @@ import (
 // dispatch runs one slash command interaction. The framework's own refusals (unknown command, wrong context)
 // are private replies sent before acknowledging; after that the command is acknowledged by its declared
 // response mode and visibility, and its handler runs. A failure after the acknowledgement is shown privately
-// (see interaction.Context.Refuse). s is only handed to legacy handlers.
+// (see interaction.Context.Refuse).
 //
 // Who may run a mod command is not checked here: Discord enforces the command's default member permissions
 // and the server's overrides before the interaction is sent (ADR-0001).
 // It returns an error only when the acknowledgement itself failed.
-func dispatch(ctx context.Context, db *database.Client, name string, port interaction.Port, s *discordgo.Session, i *discordgo.InteractionCreate) error {
+func dispatch(ctx context.Context, db *database.Client, name string, port interaction.Port, i *discordgo.InteractionCreate) error {
 	cmd, ok := registry[name]
 	if !ok {
 		refuse(interaction.NewContext(port, i.Interaction, db, interaction.Public, interaction.Direct), "Unknown command: "+name)
@@ -60,15 +60,11 @@ func dispatch(ctx context.Context, db *database.Client, name string, port intera
 				refuse(ic, errMessage)
 			}
 		}()
-		if l.run != nil {
-			if err := l.run(ic); err != nil {
-				args := append(discord.RESTAttrs(err), "command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-				logger.For("commands").Error("handler failed", args...)
-				refuse(ic, errMessage)
-			}
-			return
+		if err := l.run(ic); err != nil {
+			args := append(discord.RESTAttrs(err), "command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
+			logger.For("commands").Error("handler failed", args...)
+			refuse(ic, errMessage)
 		}
-		cmd.Handler(ctx, db, s, i)
 	}()
 	return nil
 }
@@ -88,7 +84,7 @@ func OnInteraction(ctx context.Context, db *database.Client, s *discordgo.Sessio
 		return
 	}
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
-		handleAutocomplete(ctx, db, s, i)
+		handleAutocomplete(ctx, db, interaction.NewDiscordgoPort(s, i.Interaction), s, i)
 		return
 	}
 	if i.Type != discordgo.InteractionApplicationCommand {
@@ -96,7 +92,7 @@ func OnInteraction(ctx context.Context, db *database.Client, s *discordgo.Sessio
 	}
 	data := i.ApplicationCommandData()
 	port := interaction.NewDiscordgoPort(s, i.Interaction)
-	if err := dispatch(ctx, db, data.Name, port, s, i); err != nil {
+	if err := dispatch(ctx, db, data.Name, port, i); err != nil {
 		// The acknowledgement failed; it is already logged. A private reply is the last attempt to tell the user.
 		_ = port.Reply(interaction.Response{Content: errMessage, Visibility: interaction.Private})
 	}

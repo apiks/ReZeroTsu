@@ -63,7 +63,7 @@ func TestPickSplitsALongResultIntoPublicFollowUps(t *testing.T) {
 func TestPickIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "pick" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("pick registration = %+v", c)
 			}
 			return

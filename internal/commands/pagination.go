@@ -9,7 +9,6 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
-	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -20,19 +19,6 @@ const (
 
 	msgOnlyAuthorPages = "Only the user who ran the command can change pages."
 )
-
-// RespondEmbedWithFieldsAndComponents edits the deferred response with embed, optional fields, and components (e.g. pagination buttons).
-func RespondEmbedWithFieldsAndComponents(s *discordgo.Session, i *discordgo.InteractionCreate, title, description string, fields []*discordgo.MessageEmbedField, components []discordgo.MessageComponent, footer ...string) {
-	emb := NewEmbedWithFields(s, title, description, fields, footer...)
-	edit := &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{emb}}
-	if len(components) > 0 {
-		edit.Components = &components
-	}
-	if _, err := s.InteractionResponseEdit(i.Interaction, edit); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("RespondEmbedWithFieldsAndComponents edit failed", args...)
-	}
-}
 
 const PaginationPrefix = "pag:"
 

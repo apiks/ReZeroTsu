@@ -80,7 +80,7 @@ func TestShowAvatarIsRegisteredAsAPublicDirectUserCommand(t *testing.T) {
 func TestAvatarIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "avatar" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("avatar registration = %+v", c)
 			}
 			return

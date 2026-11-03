@@ -28,7 +28,7 @@ func TestAboutRepliesOncePubliclyWithTheBotsDetails(t *testing.T) {
 func TestAboutIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "about" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("about registration = %+v", c)
 			}
 			return

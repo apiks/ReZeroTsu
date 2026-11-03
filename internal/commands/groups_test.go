@@ -121,7 +121,7 @@ func TestAddRejectsInconsistentGroupsAndRightClickCommands(t *testing.T) {
 		"empty group":                 base(Command{Groups: []*SubcommandGroup{{Name: "g", Desc: "d"}}}),
 		"right-click with options":    base(Command{Kind: KindUser, Run: noRun, Options: opt}),
 		"right-click with subcommand": base(Command{Kind: KindMessage, Run: noRun, Subcommands: []*Subcommand{sub}}),
-		"right-click with legacy":     base(Command{Kind: KindUser, Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {}}),
+		"right-click without Run":     base(Command{Kind: KindUser}),
 		"install types without value": base(Command{Run: noRun, Installs: []discordgo.ApplicationIntegrationType{}}),
 	}
 	for name, cmd := range tests {
@@ -269,7 +269,7 @@ func TestAFormOpensFromACommandAndItsSubmissionReachesItsHandler(t *testing.T) {
 	}
 }
 
-func TestAutocompleteReachesASubcommandsOwnOption(t *testing.T) {
+func TestAutocompleteReachesASubcommandsOwnOptionAndAnswersThroughThePort(t *testing.T) {
 	var asked string
 	register(t, &Command{Name: "t-tree", Desc: "d", Visibility: Private, Response: Direct,
 		Subcommands: []*Subcommand{{Name: "add", Desc: "d", Run: noRun,
@@ -281,9 +281,19 @@ func TestAutocompleteReachesASubcommandsOwnOption(t *testing.T) {
 
 	focused := &discordgo.ApplicationCommandInteractionDataOption{Name: "show", Type: discordgo.ApplicationCommandOptionString, Value: "fri", Focused: true}
 	sub := &discordgo.ApplicationCommandInteractionDataOption{Name: "add", Type: discordgo.ApplicationCommandOptionSubCommand, Options: []*discordgo.ApplicationCommandInteractionDataOption{focused}}
-	i := subInteraction("t-tree", "g", sub)
-	choices := autocompleteChoices(context.Background(), nil, nil, i)
-	if asked != "show=fri" || len(choices) != 1 || choices[0].Name != "Frieren" {
-		t.Errorf("asked %q choices %v, want the subcommand's autocomplete", asked, choices)
+	fake := &interactiontest.Fake{}
+	handleAutocomplete(context.Background(), nil, fake, nil, subInteraction("t-tree", "g", sub))
+	calls := fake.Calls()
+	if asked != "show=fri" || len(calls) != 1 || calls[0].Op != "Suggest" || len(calls[0].Choices) != 1 || calls[0].Choices[0].Name != "Frieren" {
+		t.Errorf("asked %q calls %+v, want the subcommand's autocomplete answered with one Suggest", asked, calls)
+	}
+}
+
+func TestAutocompleteWithNothingToOfferAnswersWithAnEmptyList(t *testing.T) {
+	fake := &interactiontest.Fake{}
+	handleAutocomplete(context.Background(), nil, fake, nil, subInteraction("t-missing", "g"))
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Op != "Suggest" || calls[0].Choices == nil || len(calls[0].Choices) != 0 {
+		t.Errorf("calls = %+v, want one Suggest with an empty, non-nil list", calls)
 	}
 }
