@@ -38,7 +38,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Raffles:** `/raffle create`, `/raffle draw`, `/raffle remove`, `/raffle list`, `/raffle post`.
 
-**Posting and channels:** `/say`, `/embed`, `/edit`, `/edit-embed`, `/prune`.
+**Posting and channels:** `/say`, `/edit`, `/edit-embed`, `/prune`.
 
 ## Support
 
