@@ -33,7 +33,7 @@ func (p *pinTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		status, body = http.StatusForbidden, `{"code":50013,"message":"Missing Permissions"}`
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pins"):
 		status = http.StatusOK
-		body = `[{"id":"old","author":{"id":"bot"},"embeds":[{"author":{"url":"https://www.reddit.com/r/anime/comments/1"}}]}]`
+		body = `{"items":[{"message":{"id":"old","author":{"id":"bot"},"embeds":[{"author":{"url":"https://www.reddit.com/r/anime/comments/1"}}]}}],"has_more":false}`
 	}
 	return &http.Response{
 		StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Request: r,
@@ -94,7 +94,7 @@ func TestFeedPinningNeedsPinMessagesFromState(t *testing.T) {
 				}
 				return
 			}
-			want := []string{"GET /api/v9/channels/c1/pins", "DELETE /api/v9/channels/c1/pins/old", "PUT /api/v9/channels/c1/pins/new"}
+			want := []string{"GET /api/v9/channels/c1/messages/pins", "DELETE /api/v9/channels/c1/messages/pins/old", "PUT /api/v9/channels/c1/messages/pins/new"}
 			if strings.Join(calls, "|") != strings.Join(want, "|") {
 				t.Fatalf("REST calls = %v, want %v", calls, want)
 			}
@@ -106,7 +106,7 @@ func TestFeedPinningAdministratorBotPins(t *testing.T) {
 	tr := &pinTransport{}
 	s := pinSession(t, discordgo.PermissionAdministrator, tr)
 	handleFeedPinning(s, "c1", "new", "anime")
-	if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/c1/pins/new" {
+	if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/c1/messages/pins/new" {
 		t.Fatalf("REST calls = %v, want list, unpin and pin", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestFeedPinningInThreadUsesParentOverwrites(t *testing.T) {
 		tr := &pinTransport{}
 		s := pinThreadSession(t, 0, discordgo.PermissionOverwrite{Allow: discord.PermissionPinMessages}, tr)
 		handleFeedPinning(s, "t1", "new", "anime")
-		if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/t1/pins/new" {
+		if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/t1/messages/pins/new" {
 			t.Fatalf("REST calls = %v, want list, unpin and pin in the thread", got)
 		}
 	})
@@ -166,7 +166,7 @@ func TestFeedPinningFailuresAreLoggedAndPinStillAttempted(t *testing.T) {
 	tr := &pinTransport{failUnpin: true, putErr: errors.New("pin timed out")}
 	s := pinSession(t, discord.PermissionPinMessages, tr)
 	handleFeedPinning(s, "c1", "new", "anime")
-	want := []string{"GET /api/v9/channels/c1/pins", "DELETE /api/v9/channels/c1/pins/old", "PUT /api/v9/channels/c1/pins/new"}
+	want := []string{"GET /api/v9/channels/c1/messages/pins", "DELETE /api/v9/channels/c1/messages/pins/old", "PUT /api/v9/channels/c1/messages/pins/new"}
 	if strings.Join(tr.got(), "|") != strings.Join(want, "|") {
 		t.Fatalf("REST calls = %v, want %v", tr.got(), want)
 	}

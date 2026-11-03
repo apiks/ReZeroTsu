@@ -32,6 +32,8 @@ var (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "help",
 		Desc:       "List commands by module or show one category.",
 		Permission: commands.PermEveryone,
@@ -139,7 +141,7 @@ func handleHelp(ctx context.Context, db *database.Client, s *discordgo.Session, 
 		return
 	}
 	isOwner := user.ID == commands.OwnerID
-	isAdmin := !inDM && commands.IsGuildAdmin(s, i)
+	isAdmin := !inDM && commands.IsGuildAdmin(ctx, s, i)
 	isMod := !inDM && commands.IsGuildAdminOrMod(ctx, db, s, i)
 
 	emb := buildHelpEmbed(s, inDM, filterModule, isOwner, isAdmin, isMod)

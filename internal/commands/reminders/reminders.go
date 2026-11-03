@@ -12,6 +12,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/reminders"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -30,6 +31,8 @@ var timeHintChoices = []string{
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remind",
 		Desc:       "Set a reminder; you'll get a DM at the given time.",
 		Permission: commands.PermEveryone,
@@ -53,6 +56,8 @@ func init() {
 		AutocompleteOption: autocompleteRemindTime,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-remind",
 		Desc:       "Remove a reminder by ID.",
 		Permission: commands.PermEveryone,
@@ -70,6 +75,8 @@ func init() {
 		AutocompleteOption: autocompleteRemindID,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "reminders",
 		Desc:       "List your reminders.",
 		Permission: commands.PermEveryone,
@@ -150,12 +157,8 @@ func init() {
 }
 
 func autocompleteRemindTime(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
 	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, hint := range timeHintChoices {
-		if focusedLower != "" && !strings.HasPrefix(strings.ToLower(hint), focusedLower) {
-			continue
-		}
+	for _, hint := range commands.MatchAnywhere(timeHintChoices, focusedValue, func(h string) []string { return []string{h} }) {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: hint, Value: hint})
 	}
 	return choices
@@ -167,21 +170,14 @@ func autocompleteRemindID(ctx context.Context, db *database.Client, s *discordgo
 	if err != nil || slice == nil || len(slice.Reminders) == 0 {
 		return nil
 	}
-	focusedTrim := strings.TrimSpace(focusedValue)
-	var filtered []reminders.RemindMe
-	for _, r := range slice.Reminders {
-		idStr := strconv.Itoa(r.RemindID)
-		if focusedTrim != "" && !strings.HasPrefix(idStr, focusedTrim) {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-	sort.Slice(filtered, func(a, b int) bool { return filtered[a].RemindID < filtered[b].RemindID })
-	const maxChoices = 25
+	sorted := append([]reminders.RemindMe(nil), slice.Reminders...)
+	sort.Slice(sorted, func(a, b int) bool { return sorted[a].RemindID < sorted[b].RemindID })
+	filtered := commands.MatchAnywhere(sorted, focusedValue, func(r reminders.RemindMe) []string {
+		return []string{strconv.Itoa(r.RemindID)}
+	})
 	const maxNameLen = 100
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, min(len(filtered), maxChoices))
-	for j := 0; j < len(filtered) && j < maxChoices; j++ {
-		r := filtered[j]
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(filtered))
+	for _, r := range filtered {
 		msgShort := r.Message
 		if len(msgShort) > 50 {
 			msgShort = msgShort[:47] + "..."
@@ -357,20 +353,17 @@ func handleReminders(ctx context.Context, db *database.Client, s *discordgo.Sess
 }
 
 // RenderRemindersPage renders one page of reminders for pagination.
-func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	if authorID == "" {
-		_ = commands.RespondEphemeral(s, i, "Could not load reminders.")
-		return
+		return commands.Page{Refusal: "Could not load reminders."}
 	}
 	slice, err := db.Reminders().GetByID(ctx, authorID)
 	if err != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[reminders] GetByID %s: %v", authorID, err))
-		_ = commands.RespondEphemeral(s, i, "Could not load your reminders.")
-		return
+		return commands.Page{Refusal: "Could not load your reminders."}
 	}
 	if slice == nil || len(slice.Reminders) == 0 {
-		_ = commands.RespondEphemeral(s, i, "No saved reminders for you found.")
-		return
+		return commands.Page{Refusal: "No saved reminders for you found."}
 	}
 	n := len(slice.Reminders)
 	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
@@ -383,14 +376,5 @@ func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.
 	desc := fmt.Sprintf("Page %d of %d. Showing %d–%d of %d.", page+1, totalPages, start+1, endShow, n)
 	components := commands.PaginationComponents("reminders", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleReminders, desc, fields, hintRemoveRemind)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[reminders] RenderRemindersPage respond: %v", err))
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

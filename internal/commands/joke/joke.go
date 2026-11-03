@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
-	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/httpclient"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
@@ -29,11 +30,13 @@ type jokeAPIResponse struct {
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Direct,
 		Name:       "joke",
 		Desc:       "Display a random joke.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
-		Handler:    handleJoke,
+		Run:        func(ic *interaction.Context) error { return runJoke(ic, fetchJoke) },
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "joke",
@@ -57,21 +60,22 @@ func init() {
 	})
 }
 
-func handleJoke(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	jokeStr, err := fetchJoke(ctx)
+// fetchTimeout keeps the fetch inside Discord's three seconds for a first response, since /joke answers
+// directly instead of deferring.
+const fetchTimeout = 2500 * time.Millisecond
+
+func runJoke(ic *interaction.Context, fetch func(context.Context) (string, error)) error {
+	ctx, cancel := context.WithTimeout(ic.Context(), fetchTimeout)
+	defer cancel()
+	jokeStr, err := fetch(ctx)
 	if err != nil {
-		logger.For("commands").Error("joke fetch failed", "guild_id", i.GuildID, "err", err)
-		commands.RespondEmbed(s, i, embedTitleJoke, "Joke website is not working properly. Please notify apiks about it.")
-		return
+		logger.For("commands").Error("joke fetch failed", "guild_id", ic.GuildID, "err", err)
+		return ic.Refuse("The joke website is not working properly right now. Please try again later.")
 	}
 	if jokeStr == "" {
-		commands.RespondEmbed(s, i, embedTitleJoke, "Could not get a joke this time.")
-		return
+		return ic.Refuse("Could not get a joke this time. Please try again.")
 	}
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &jokeStr}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("joke edit failed", args...)
-	}
+	return ic.Reply(interaction.Response{Content: jokeStr})
 }
 
 func fetchJoke(ctx context.Context) (string, error) {

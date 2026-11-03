@@ -2,7 +2,6 @@ package autopost
 
 import (
 	"context"
-	"fmt"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -22,6 +21,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "new-episodes",
 		Desc:       "Set or disable the channel for automatic new anime episode notifications.",
 		Permission: commands.PermMod,
@@ -129,11 +130,7 @@ func handleNewEpisodes(ctx context.Context, db *database.Client, s *discordgo.Se
 			commands.RespondEmbed(s, i, embedTitleNewEp, "Could not save. Try again.")
 			return
 		}
-		roleInfo := ""
-		if ap.RoleID != "" {
-			roleInfo = fmt.Sprintf(" Role ping: <@&%s>.", ap.RoleID)
-		}
-		commands.RespondEmbed(s, i, embedTitleNewEp, fmt.Sprintf("New episodes autopost set to **#%s** (ID: %s).%s", ap.Name, ap.ID, roleInfo), hintNewEpisodesChange)
+		commands.RespondEmbed(s, i, embedTitleNewEp, newEpisodesMessage("New episodes autopost set to", ap.ID, ap.RoleID), hintNewEpisodesChange)
 		return
 	}
 
@@ -146,9 +143,5 @@ func handleNewEpisodes(ctx context.Context, db *database.Client, s *discordgo.Se
 		commands.RespondEmbed(s, i, embedTitleNewEp, "New episodes autopost is not set.", hintNewEpisodesSet)
 		return
 	}
-	roleInfo := ""
-	if ap.RoleID != "" {
-		roleInfo = fmt.Sprintf(" Role ping: <@&%s>.", ap.RoleID)
-	}
-	commands.RespondEmbed(s, i, embedTitleNewEp, fmt.Sprintf("Current new episodes autopost channel: **#%s** (ID: %s).%s", ap.Name, ap.ID, roleInfo), hintNewEpisodesCurrent)
+	commands.RespondEmbed(s, i, embedTitleNewEp, newEpisodesMessage("Current new episodes autopost channel:", ap.ID, ap.RoleID), hintNewEpisodesCurrent)
 }

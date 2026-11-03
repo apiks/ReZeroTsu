@@ -21,6 +21,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "add-voice",
 		Desc:       "Set a voice channel to give a role when users join and remove it when they leave.",
 		Permission: commands.PermMod,
@@ -46,6 +48,8 @@ func init() {
 		Handler: handleAddVoice,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-voice",
 		Desc:       "Remove a voice channel role, or remove a specific role from a channel.",
 		Permission: commands.PermMod,
@@ -71,6 +75,8 @@ func init() {
 		Handler: handleRemoveVoice,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "voice-roles",
 		Desc:       "List all voice channels and their associated roles.",
 		Permission: commands.PermMod,

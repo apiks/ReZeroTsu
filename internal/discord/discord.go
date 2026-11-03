@@ -65,6 +65,9 @@ func IsUnknownRole(err error) bool { return hasCode(err, UnknownRoleCode) }
 // IsChannelUnavailable reports whether the channel is unusable (deleted or no access). For clearing stored IDs use IsUnknownChannel.
 func IsChannelUnavailable(err error) bool { return hasCode(err, UnknownChannelCode, MissingAccessCode) }
 
+// IsMissingAccess reports whether the bot cannot see the target at all (50001).
+func IsMissingAccess(err error) bool { return hasCode(err, MissingAccessCode) }
+
 // IsCannotDMUser reports whether the user cannot receive DMs (50007).
 func IsCannotDMUser(err error) bool { return hasCode(err, CannotDMUserCode) }
 

@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 	"ReZeroTsu/internal/reddit"
 
@@ -26,6 +27,8 @@ var postTypeChoices = []string{"hot", "rising", "new"}
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "add-reddit-feed",
 		Desc:       "Adds a Reddit RSS feed to a channel.",
 		Permission: commands.PermMod,
@@ -43,6 +46,8 @@ func init() {
 		AutocompleteOption: autocompletePostType,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-reddit-feed",
 		Desc:       "Removes a Reddit RSS feed from a channel.",
 		Permission: commands.PermMod,
@@ -59,6 +64,8 @@ func init() {
 		AutocompleteOption: autocompleteRemoveRedditFeed,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "reddit-feeds",
 		Desc:       "Lists all Reddit RSS feeds for this server.",
 		Permission: commands.PermMod,
@@ -85,18 +92,13 @@ func normalizeAuthor(s string) string {
 }
 
 func autocompletePostType(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, name := range postTypeChoices {
-		if focusedLower != "" && !strings.HasPrefix(name, focusedLower) {
-			continue
-		}
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
+	names := commands.MatchAnywhere(postTypeChoices, focusedValue, func(n string) []string { return []string{n} })
+	if len(names) == 0 {
+		names = postTypeChoices
 	}
-	if len(choices) == 0 {
-		for _, name := range postTypeChoices {
-			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
-		}
+	var choices []*discordgo.ApplicationCommandOptionChoice
+	for _, name := range names {
+		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
 	}
 	return choices
 }
@@ -133,23 +135,8 @@ func autocompleteRemoveSubreddit(ctx context.Context, db *database.Client, _ *di
 	for sub := range seen {
 		subs = append(subs, sub)
 	}
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	if focusedLower != "" {
-		var filtered []string
-		for _, sub := range subs {
-			subLower := strings.ToLower(sub)
-			rSub := "r/" + subLower
-			if strings.HasPrefix(rSub, focusedLower) || strings.HasPrefix(subLower, focusedLower) {
-				filtered = append(filtered, sub)
-			}
-		}
-		subs = filtered
-	}
 	sort.Strings(subs)
-	const maxChoices = 25
-	if len(subs) > maxChoices {
-		subs = subs[:maxChoices]
-	}
+	subs = commands.MatchAnywhere(subs, focusedValue, func(sub string) []string { return []string{sub, "r/" + sub} })
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(subs))
 	for j, sub := range subs {
 		name := "r/" + sub
@@ -190,25 +177,10 @@ func autocompleteRemoveChannel(ctx context.Context, db *database.Client, s *disc
 		}
 		list = append(list, channelChoice{id: channelID, name: display})
 	}
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	if focusedLower != "" {
-		focusedTrim := strings.TrimPrefix(focusedLower, "#")
-		var filtered []channelChoice
-		for _, c := range list {
-			nameLower := strings.ToLower(c.name)
-			nameNoHash := strings.TrimPrefix(nameLower, "#")
-			idLower := strings.ToLower(c.id)
-			if strings.HasPrefix(nameLower, focusedLower) || strings.HasPrefix(nameNoHash, focusedTrim) || strings.HasPrefix(idLower, focusedLower) {
-				filtered = append(filtered, c)
-			}
-		}
-		list = filtered
-	}
 	sort.Slice(list, func(a, b int) bool { return list[a].name < list[b].name })
-	const maxChoices = 25
-	if len(list) > maxChoices {
-		list = list[:maxChoices]
-	}
+	list = commands.MatchAnywhere(list, focusedValue, func(c channelChoice) []string {
+		return []string{c.name, strings.TrimPrefix(c.name, "#"), c.id}
+	})
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(list))
 	for j, c := range list {
 		name := c.name
@@ -446,17 +418,15 @@ func handleRedditFeeds(ctx context.Context, db *database.Client, s *discordgo.Se
 }
 
 // RenderRedditFeedsPage renders one page of reddit-feeds for pagination.
-func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
 	if err != nil {
 		logger.For("commands").Error("reddit GetFeeds page failed", "guild_id", i.GuildID, "err", err)
-		_ = commands.RespondEphemeral(s, i, "Could not load feeds.")
-		return
+		return commands.Page{Refusal: "Could not load feeds."}
 	}
 	n := len(feeds)
 	if n == 0 {
-		_ = commands.RespondEphemeral(s, i, "There are no set Reddit feeds.")
-		return
+		return commands.Page{Refusal: "There are no set Reddit feeds."}
 	}
 	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 	if page >= totalPages {
@@ -468,15 +438,5 @@ func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordg
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(end) + " of " + strconv.Itoa(n) + "."
 	components := commands.PaginationComponents("reddit-feeds", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleReddit, description, fields, hintRemoveReddit)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("reddit RenderRedditFeedsPage respond failed", args...)
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

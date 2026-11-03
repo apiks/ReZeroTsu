@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -23,6 +24,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "sub",
 		Desc:       "Subscribe to DM notifications when a new episode of an anime is released (subbed if possible).",
 		Permission: commands.PermEveryone,
@@ -39,6 +42,8 @@ func init() {
 		Handler: handleSub,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "unsub",
 		Desc:       "Stop getting DM notifications for an anime's new episodes.",
 		Permission: commands.PermEveryone,
@@ -55,6 +60,8 @@ func init() {
 		Handler: handleUnsub,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "clearsubs",
 		Desc:       "Clear all your anime episode notifications.",
 		Permission: commands.PermEveryone,
@@ -63,6 +70,8 @@ func init() {
 		Handler:    handleClearsubs,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "subs",
 		Desc:       "List which anime you get new episode notifications for.",
 		Permission: commands.PermEveryone,
@@ -382,19 +391,16 @@ func handleSubs(ctx context.Context, db *database.Client, s *discordgo.Session, 
 }
 
 // RenderSubsPage renders one page of anime subscriptions for pagination.
-func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	if authorID == "" {
-		_ = commands.RespondEphemeral(s, i, "Could not load subscriptions.")
-		return
+		return commands.Page{Refusal: "Could not load subscriptions."}
 	}
 	doc, err := db.AnimeSubs().GetByID(ctx, authorID)
 	if err != nil {
-		_ = commands.RespondEphemeral(s, i, "Could not load your subscriptions.")
-		return
+		return commands.Page{Refusal: "Could not load your subscriptions."}
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		_ = commands.RespondEphemeral(s, i, "You have no active anime subscriptions. Run **/subs** again.")
-		return
+		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
 	}
 	var list []*anime_subs.ShowSub
 	for _, sub := range doc.Shows {
@@ -403,8 +409,7 @@ func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Sessi
 		}
 	}
 	if len(list) == 0 {
-		_ = commands.RespondEphemeral(s, i, "You have no active anime subscriptions. Run **/subs** again.")
-		return
+		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
 	}
 	n := len(list)
 	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
@@ -418,13 +423,7 @@ func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Sessi
 	desc := subsDescriptionForPage(list, start, page, totalPages, n)
 	components := commands.PaginationComponents("subs", page, n, authorID)
 	emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc, hintUnsub)
-	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }
 
 // airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched

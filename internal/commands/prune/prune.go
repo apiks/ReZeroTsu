@@ -1,29 +1,36 @@
 package prune
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 const (
-	embedTitlePrune    = "Prune"
-	maxPrune           = 5000
-	maxPruneAgeHours   = 336 // 14 days
-	bulkDeleteChunk    = 100
-	successDeleteDelay = 3 * time.Second
+	maxPrune         = 5000
+	maxPruneAgeHours = 336 // 14 days
+	bulkDeleteChunk  = 100
+
+	// pruneNeeds is what the bot needs in the pruned channel: to see it, read its history and delete messages.
+	pruneNeeds = discordgo.PermissionViewChannel | discordgo.PermissionReadMessageHistory | discordgo.PermissionManageMessages
 )
+
+// refusal is a problem with the request itself, worded for the person who made it.
+type refusal string
+
+func (r refusal) Error() string { return string(r) }
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Private,
+		Response:   commands.Deferred,
 		Name:       "prune",
 		Desc:       "Prunes the previous x amount of messages. Messages must not be older than 14 days. Max is 5000.",
 		Permission: commands.PermMod,
@@ -44,83 +51,82 @@ func init() {
 				ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText},
 			},
 		},
-		Handler: handlePrune,
+		Run: handlePrune,
 	})
 }
 
-func handlePrune(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
+// handlePrune answers privately through the placeholder the dispatcher already showed. Every refusal and error
+// edits that placeholder (via ic.Refuse and ic.Fail); the confirmation stays and is never deleted.
+func handlePrune(ic *interaction.Context) error {
+	data := ic.Command
+	channelID := ic.ChannelID
+	if opt := commands.ParseOption(data.Options, "channel"); opt != nil {
+		channelID = opt.ChannelValue(nil).ID
+	}
+	at := interaction.ErrorContext{ChannelID: channelID, Needs: pruneNeeds}
+
 	optNum := commands.ParseOption(data.Options, "number")
 	if optNum == nil {
-		commands.RespondEmbed(s, i, embedTitlePrune, "Please provide a number (1–5000).")
-		return
+		return ic.Refuse("Please provide a number (1–5000).")
 	}
 	amount := int(optNum.IntValue())
-	if amount < 1 {
-		commands.RespondEmbed(s, i, embedTitlePrune, "Invalid amount given. Minimum is 1.")
-		return
-	}
-	if amount > maxPrune {
-		commands.RespondEmbed(s, i, embedTitlePrune, "Amount is too large. Maximum is 5000.")
-		return
-	}
-	channelID := commands.TargetChannelID(data, s, i)
 
-	// Immediate feedback for long prunes
-	if amount > bulkDeleteChunk {
+	// Immediate feedback for long prunes.
+	if amount > bulkDeleteChunk && amount <= maxPrune {
 		msg := "Fetching messages and beginning pruning. This might take a while. It may take up to a minute for the change to be reflected afterwards."
-		commands.RespondEmbed(s, i, embedTitlePrune, msg)
-	}
-
-	var excludeMessageID string
-	if respMsg, respErr := s.InteractionResponse(i.Interaction); respErr == nil && respMsg != nil {
-		excludeMessageID = respMsg.ID
-	}
-	deleted, err := pruneMessages(s, amount, channelID, excludeMessageID)
-	if err != nil {
-		commands.RespondEmbed(s, i, embedTitlePrune, err.Error())
-		return
-	}
-
-	resp := fmt.Sprintf("Success! Removed %d valid messages in this channel. Deleting this message in 3 seconds...", deleted)
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &resp}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		if discord.IsUnknownMessage(err) {
-			logger.For("commands").Info("prune edit failed (message already gone)", args...)
-		} else {
-			logger.For("commands").Error("prune edit failed", args...)
+		if err := ic.EditReply(interaction.Response{Content: msg}); err != nil {
+			logEditFailed(ic, err)
 		}
-		return
 	}
-	time.Sleep(successDeleteDelay)
-	if err := s.InteractionResponseDelete(i.Interaction); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("prune delete response failed", args...)
+
+	deleted, err := pruneMessages(ic, amount, channelID)
+	if err != nil {
+		var r refusal
+		if errors.As(err, &r) {
+			return ic.Refuse(string(r))
+		}
+		return ic.Fail(err, at)
 	}
+
+	resp := fmt.Sprintf("Success! Removed %d valid messages in <#%s>.", deleted, channelID)
+	if err := ic.EditReply(interaction.Response{Content: resp}); err != nil {
+		logEditFailed(ic, err)
+	}
+	return nil
 }
 
-// pruneMessages fetches up to amount (newest-first), skips >14 days and excludeMessageID, bulk-deletes in chunks of 100.
-func pruneMessages(s *discordgo.Session, amount int, channelID, excludeMessageID string) (int, error) {
+func logEditFailed(ic *interaction.Context, err error) {
+	args := append(discord.RESTAttrs(err), "guild_id", ic.GuildID, "channel_id", ic.ChannelID, "err", err)
+	if discord.IsUnknownMessage(err) {
+		logger.For("commands").Info("prune edit failed (message already gone)", args...)
+		return
+	}
+	logger.For("commands").Error("prune edit failed", args...)
+}
+
+// pruneMessages fetches up to amount (newest-first), skips messages over 14 days old, and deletes them in
+// chunks of 100. The private reply is not a channel message, so there is nothing of the bot's own to skip.
+func pruneMessages(port interaction.Port, amount int, channelID string) (int, error) {
 	if amount < 1 {
-		return 0, errors.New("Invalid amount given. Minimum is 1.")
+		return 0, refusal("Invalid amount given. Minimum is 1.")
 	}
 	if amount > maxPrune {
-		return 0, errors.New("Amount is too large. Maximum is 5000.")
+		return 0, refusal("Amount is too large. Maximum is 5000.")
 	}
 
 	now := time.Now()
 	var deleteMessageIDs []string
 
-	lastMessages, err := s.ChannelMessages(channelID, 1, "", "", "")
+	lastMessages, err := port.ListMessages(channelID, 1, "")
 	if err != nil {
 		return 0, err
 	}
 	if len(lastMessages) == 0 {
-		return 0, errors.New("No valid messages could be found to delete.")
+		return 0, refusal("No valid messages could be found to delete.")
 	}
 	newest := lastMessages[0]
 	beforeID := newest.ID
-	if now.Sub(newest.Timestamp).Hours() < maxPruneAgeHours && newest.ID != excludeMessageID {
+	if now.Sub(newest.Timestamp).Hours() < maxPruneAgeHours {
 		deleteMessageIDs = append(deleteMessageIDs, newest.ID)
 	}
 	remaining := amount - len(deleteMessageIDs)
@@ -128,7 +134,7 @@ func pruneMessages(s *discordgo.Session, amount int, channelID, excludeMessageID
 OuterLoop:
 	for remaining > 0 {
 		limit := min(remaining, bulkDeleteChunk)
-		messages, err := s.ChannelMessages(channelID, limit, beforeID, "", "")
+		messages, err := port.ListMessages(channelID, limit, beforeID)
 		if err != nil {
 			return 0, err
 		}
@@ -136,9 +142,7 @@ OuterLoop:
 			if now.Sub(m.Timestamp).Hours() >= maxPruneAgeHours {
 				break OuterLoop
 			}
-			if m.ID != excludeMessageID {
-				deleteMessageIDs = append(deleteMessageIDs, m.ID)
-			}
+			deleteMessageIDs = append(deleteMessageIDs, m.ID)
 		}
 		if len(messages) == 0 {
 			break
@@ -151,18 +155,18 @@ OuterLoop:
 	}
 
 	if len(deleteMessageIDs) == 0 {
-		return 0, errors.New("The messages are either more than 14 days old, I cannot fetch them, or there are no other valid messages to prune.")
+		return 0, refusal("The messages are either more than 14 days old, I cannot fetch them, or there are no other valid messages to prune.")
 	}
 
 	for i := 0; i < len(deleteMessageIDs); {
 		end := min(i+bulkDeleteChunk, len(deleteMessageIDs))
 		chunk := deleteMessageIDs[i:end]
 		if len(chunk) == 1 {
-			if err := s.ChannelMessageDelete(channelID, chunk[0]); err != nil {
+			if err := port.DeleteMessage(channelID, chunk[0]); err != nil {
 				return 0, err
 			}
 		} else {
-			if err := s.ChannelMessagesBulkDelete(channelID, chunk); err != nil {
+			if err := port.DeleteMessages(channelID, chunk); err != nil {
 				return 0, err
 			}
 		}

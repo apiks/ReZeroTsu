@@ -12,6 +12,8 @@ import (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "react-module",
 		Desc:       "View or set whether the reacts module is enabled.",
 		Permission: commands.PermMod,
@@ -28,6 +30,8 @@ func init() {
 		Handler: handleReactModule,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "ping-message",
 		Desc:       "View or set the message shown when someone pings the bot.",
 		Permission: commands.PermMod,
@@ -44,6 +48,8 @@ func init() {
 		Handler: handlePingMessage,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "mod-only",
 		Desc:       "View or set whether only moderators can use bot commands.",
 		Permission: commands.PermMod,
@@ -60,6 +66,8 @@ func init() {
 		Handler: handleModOnly,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "donghua",
 		Desc:       "View or set whether donghua (Chinese anime) appears in the anime schedule.",
 		Permission: commands.PermMod,

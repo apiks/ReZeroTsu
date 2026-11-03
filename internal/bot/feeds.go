@@ -667,14 +667,18 @@ func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit str
 	logPinFailure := func(msg string, err error) {
 		logger.For("feeds").Warn(msg, append([]any{"guild_id", guildID, "channel_id", channelID, "subreddit", subreddit, "err", err}, discord.RESTAttrs(err)...)...)
 	}
-	pins, err := s.ChannelMessagesPinned(channelID)
+	pins, err := s.ChannelMessagesPinned(channelID, nil, 0)
 	if err != nil {
 		logPinFailure("feed pin: could not list pinned messages", err)
 		return
 	}
 	time.Sleep(feedPinThrottle)
 	prefix := fmt.Sprintf("https://www.reddit.com/r/%s/", subreddit)
-	for _, pin := range pins {
+	for _, entry := range pins.Items {
+		if entry == nil {
+			continue
+		}
+		pin := entry.Message
 		if pin == nil {
 			continue
 		}

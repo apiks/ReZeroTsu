@@ -8,8 +8,7 @@ import (
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
-	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -21,6 +20,8 @@ var rollChoices = []int{2, 4, 6, 8, 10, 12, 20, 100}
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Direct,
 		Name:       "roll",
 		Desc:       "Rolls a number from 1 to 100. Specify a positive number to change the range.",
 		Permission: commands.PermEveryone,
@@ -34,7 +35,7 @@ func init() {
 				Autocomplete: true,
 			},
 		},
-		Handler:            handleRoll,
+		Run:                run,
 		AutocompleteOption: autocompleteRollNumber,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
@@ -60,41 +61,23 @@ func init() {
 }
 
 func autocompleteRollNumber(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedTrim := strings.TrimSpace(focusedValue)
 	var choices []*discordgo.ApplicationCommandOptionChoice
-	const maxChoices = 25
-	for _, n := range rollChoices {
-		if focusedTrim != "" && !strings.HasPrefix(strconv.Itoa(n), focusedTrim) {
-			continue
-		}
+	for _, n := range commands.MatchAnywhere(rollChoices, focusedValue, func(n int) []string { return []string{strconv.Itoa(n), "d" + strconv.Itoa(n)} }) {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
 			Name:  "d" + strconv.Itoa(n) + " (1–" + strconv.Itoa(n) + ")",
 			Value: n,
 		})
-		if len(choices) >= maxChoices {
-			break
-		}
 	}
 	return choices
 }
 
-func handleRoll(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	opt := commands.ParseOption(data.Options, "number")
-
+func run(ic *interaction.Context) error {
 	max := 100
-	if opt != nil {
+	if opt := commands.ParseOption(ic.Command.Options, "number"); opt != nil {
 		max = int(opt.IntValue())
 		if max < 1 {
-			commands.RespondEmbed(s, i, embedTitleRoll, "Invalid number. Please use a positive number.")
-			return
+			return ic.Refuse("Invalid number. Please use a positive number.")
 		}
 	}
-
-	result := rand.Intn(max) + 1
-	msg := "**Rolled:** " + strconv.Itoa(result)
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("roll edit failed", args...)
-	}
+	return ic.Reply(interaction.Response{Content: "**Rolled:** " + strconv.Itoa(rand.Intn(max)+1)})
 }
