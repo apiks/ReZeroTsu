@@ -109,8 +109,23 @@ const EmbedColor = 0xF8B4D9
 
 const (
 	InviteURLFormat          = "https://discord.com/oauth2/authorize?client_id=%s&scope=bot%%20applications.commands&permissions=%d"
-	DefaultInvitePermissions = 335883328
+	DefaultInvitePermissions = 1<<6 | // Add Reactions
+		1<<10 | // View Channel
+		1<<11 | // Send Messages
+		1<<13 | // Manage Messages
+		1<<14 | // Embed Links
+		1<<16 | // Read Message History
+		1<<18 | // Use External Emojis
+		1<<28 | // Manage Roles
+		1<<29 | // Manage Webhooks
+		1<<38 | // Send Messages in Threads
+		PermissionPinMessages
 )
+
+// PermissionPinMessages is Discord's Pin Messages permission (bit 51). Discord's changelog entry "Pin Messages
+// permission, required from 2026-02-23" (https://docs.discord.com/developers/change-log) made it a requirement
+// for pinning, and the permission list in the docs gives its bit. discordgo v0.29.0 does not define it.
+const PermissionPinMessages int64 = 1 << 51
 
 const SupportServerURL = "https://discord.gg/BDT8Twv"
 

@@ -199,8 +199,8 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 			if len(cfg.PlayingMsg) > 1 {
 				msg = cfg.PlayingMsg[rand.Intn(len(cfg.PlayingMsg))]
 			}
-			if err := s.UpdateGameStatus(0, msg); err != nil {
-				logger.For("bot").Error("UpdateGameStatus failed", "err", err)
+			if err := s.UpdateStatusComplex(customStatus(msg)); err != nil {
+				logger.For("bot").Error("UpdateStatusComplex failed", "err", err)
 			}
 		}
 	}
