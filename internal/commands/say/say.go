@@ -13,67 +13,12 @@ import (
 )
 
 const (
-	embedTitleSay  = "Say"
 	embedTitleEdit = "Edit"
-	successSay     = "Success! Message sent."
-	successEmbed   = "Success! Embed message sent."
 	successEdit    = "Success! Target message has been edited."
 	successEditEmb = "Success! Target embed message has been edited."
 )
 
 func init() {
-	channelOpt := &discordgo.ApplicationCommandOption{
-		Type:         discordgo.ApplicationCommandOptionChannel,
-		Name:         "channel",
-		Description:  "The channel to send the message to (default: current channel).",
-		Required:     false,
-		ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText},
-	}
-
-	commands.Add(&commands.Command{
-
-		Visibility: commands.Public,
-
-		Response:   commands.Deferred,
-		Name:       "say",
-		Desc:       "Sends a message from the bot in the target channel.",
-		Permission: commands.PermMod,
-		Context:    commands.ContextGuildOnly,
-		Module:     "misc",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "message",
-				Description: "The message you want to send.",
-				Required:    true,
-			},
-			channelOpt,
-		},
-		Handler: handleSay,
-	})
-
-	commands.Add(&commands.Command{
-
-		Visibility: commands.Public,
-
-		Response:   commands.Deferred,
-		Name:       "embed",
-		Desc:       "Sends an embed message from the bot in the target channel.",
-		Permission: commands.PermMod,
-		Context:    commands.ContextGuildOnly,
-		Module:     "misc",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "message",
-				Description: "The message you want to send in the embed.",
-				Required:    true,
-			},
-			channelOpt,
-		},
-		Handler: handleEmbed,
-	})
-
 	commands.Add(&commands.Command{
 
 		Visibility: commands.Public,
@@ -141,40 +86,6 @@ func init() {
 		},
 		Handler: handleEditEmbed,
 	})
-}
-
-func handleSay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	optMsg := commands.ParseOption(data.Options, "message")
-	if optMsg == nil || optMsg.StringValue() == "" {
-		commands.RespondEmbed(s, i, embedTitleSay, "Please provide a message.")
-		return
-	}
-	channelID := commands.TargetChannelID(data, s, i)
-	if _, err := s.ChannelMessageSend(channelID, optMsg.StringValue()); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", channelID, "err", err)
-		logger.For("commands").Error("say send failed", args...)
-		commands.RespondEmbed(s, i, embedTitleSay, "Could not send message: "+err.Error())
-		return
-	}
-	editResponseContent(s, i, successSay)
-}
-
-func handleEmbed(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	optMsg := commands.ParseOption(data.Options, "message")
-	if optMsg == nil || optMsg.StringValue() == "" {
-		commands.RespondEmbed(s, i, embedTitleSay, "Please provide a message.")
-		return
-	}
-	channelID := commands.TargetChannelID(data, s, i)
-	if err := commands.SendEmbed(s, channelID, "", optMsg.StringValue()); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", channelID, "err", err)
-		logger.For("commands").Error("embed send failed", args...)
-		commands.RespondEmbed(s, i, embedTitleSay, "Could not send embed: "+err.Error())
-		return
-	}
-	editResponseContent(s, i, successEmbed)
 }
 
 func handleEdit(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
