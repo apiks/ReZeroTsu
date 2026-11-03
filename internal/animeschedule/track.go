@@ -11,7 +11,7 @@ const (
 	TrackDub Track = "dub"
 )
 
-// trackOf reads a track from the API's airType; a missing or unknown one counts as raw.
+// trackOf reads a track from the API's Track; a missing or unknown one counts as raw.
 func trackOf(s string) Track {
 	switch Track(s) {
 	case TrackSub, TrackDub:
@@ -84,9 +84,9 @@ type showWeek struct{ show, monday string }
 // weekTracks records which tracks one show has in one week.
 type weekTracks struct{ sub, dub bool }
 
-// pick returns the track the preference shows for a show with these tracks that week. Sub never picks dub, and
-// Raw picks raw whatever else exists.
-func (p PreferredTrack) pick(w weekTracks) Track {
+// shown returns the track the preference shows for a show with these tracks that week. Sub never shows dub, and
+// Raw shows raw whatever else exists.
+func (p PreferredTrack) shown(w weekTracks) Track {
 	switch p {
 	case PreferDub:
 		if w.dub {
@@ -120,7 +120,7 @@ func tracksByWeek(days map[string][]ShowEntry) map[showWeek]weekTracks {
 		for _, e := range rows {
 			k := showWeek{show: showID(e), monday: monday}
 			w := weeks[k]
-			switch e.AirType {
+			switch e.Track {
 			case TrackSub:
 				w.sub = true
 			case TrackDub:
@@ -132,12 +132,12 @@ func tracksByWeek(days map[string][]ShowEntry) map[showWeek]weekTracks {
 	return weeks
 }
 
-// chainDay keeps the rows of one date whose track is the one pref picks for their show that week.
+// chainDay keeps the rows of one date whose track is the one pref shows for their show that week.
 func chainDay(date string, rows []ShowEntry, weeks map[showWeek]weekTracks, pref PreferredTrack) []ShowEntry {
 	monday := mondayKeyOf(date)
 	var out []ShowEntry
 	for _, e := range rows {
-		if e.AirType == pref.pick(weeks[showWeek{show: showID(e), monday: monday}]) {
+		if e.Track == pref.shown(weeks[showWeek{show: showID(e), monday: monday}]) {
 			out = append(out, e)
 		}
 	}
@@ -165,8 +165,8 @@ func normalizeRows(rows []ShowEntry) []ShowEntry {
 	seen := make(map[key]bool, len(rows))
 	out := make([]ShowEntry, 0, len(rows))
 	for _, e := range rows {
-		e.AirType = trackOf(string(e.AirType))
-		k := key{showID(e), e.Episode, e.AirType, e.AirTimeUnix}
+		e.Track = trackOf(string(e.Track))
+		k := key{showID(e), e.Episode, e.Track, e.AirTimeUnix}
 		if seen[k] {
 			continue
 		}

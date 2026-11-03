@@ -264,10 +264,15 @@ func (g *GuildSettings) Preferred() animeschedule.PreferredTrack {
 
 // SetPreferredTrack sets guild_settings.preferred_track alone.
 func (r *Repo) SetPreferredTrack(ctx context.Context, guildID string, pref animeschedule.PreferredTrack) error {
-	if err := r.setSettingsField(ctx, guildID, preferredTrackField, pref.String()); err != nil {
+	if err := r.setSettingsField(ctx, guildID, preferredTrackField, preferredTrackValue(pref)); err != nil {
 		return fmt.Errorf("SetPreferredTrack: %w", err)
 	}
 	return nil
+}
+
+// preferredTrackValue is what is stored for pref: the lower-case value ParsePreferredTrack reads.
+func preferredTrackValue(pref animeschedule.PreferredTrack) string {
+	return pref.String()
 }
 
 // SetPingMessage sets guild_settings.ping_message alone.

@@ -18,7 +18,7 @@ func seedFrieren(t *testing.T) {
 	t.Helper()
 	setClock(t)
 	row := func(track animeschedule.Track, ep string, air int64) animeschedule.ShowEntry {
-		return animeschedule.ShowEntry{Name: "Frieren", Route: "frieren", Episode: ep, AirType: track, AirTimeUnix: air}
+		return animeschedule.ShowEntry{Name: "Frieren", Route: "frieren", Episode: ep, Track: track, AirTimeUnix: air}
 	}
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
 		"2026-11-03": {row(animeschedule.TrackDub, "Ep 2", 1700000000)},

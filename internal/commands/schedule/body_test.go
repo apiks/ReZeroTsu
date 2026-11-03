@@ -44,7 +44,7 @@ func TestScheduleTitleCarriesThePagesUTCDateForEveryWeekday(t *testing.T) {
 }
 
 func TestScheduleFooterCountsShowsAndExplainsTimeZones(t *testing.T) {
-	entry := animeschedule.ShowEntry{Name: "x", AirTimeUnix: 1700000000, AirType: "sub"}
+	entry := animeschedule.ShowEntry{Name: "x", AirTimeUnix: 1700000000, Track: "sub"}
 	cases := map[int]string{0: "0 shows", 1: "1 show", 12: "12 shows"}
 	for n, count := range cases {
 		t.Run(count, func(t *testing.T) {
@@ -67,8 +67,8 @@ func TestScheduleFooterCountsShowsAndExplainsTimeZones(t *testing.T) {
 
 func TestScheduleRelativeTimeOnlyOnTodaysPage(t *testing.T) {
 	days := map[string][]animeschedule.ShowEntry{
-		"2026-11-04": {{Name: "Today Show", Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}},
-		"2026-11-05": {{Name: "Tomorrow Show", Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-04": {{Name: "Today Show", Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-05": {{Name: "Tomorrow Show", Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}},
 	}
 	today := openDay(t, "wednesday", days)
 	if !strings.Contains(today.Description, "<t:1700000000:t>") || !strings.Contains(today.Description, "<t:1700000000:R>") {
@@ -82,7 +82,7 @@ func TestScheduleRelativeTimeOnlyOnTodaysPage(t *testing.T) {
 
 func TestScheduleLabelsNonTVEntriesOnly(t *testing.T) {
 	mk := func(name string, mt animeschedule.MediaType) animeschedule.ShowEntry {
-		return animeschedule.ShowEntry{Name: name, Episode: "E", AirType: "sub", AirTimeUnix: 1700000000, MediaType: mt}
+		return animeschedule.ShowEntry{Name: name, Episode: "E", Track: "sub", AirTimeUnix: 1700000000, MediaType: mt}
 	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": {
 		mk("A-tv", animeschedule.MediaTV), mk("B-short", animeschedule.MediaTVShort), mk("C-ona", animeschedule.MediaONA),
@@ -109,7 +109,7 @@ func TestScheduleLabelsNonTVEntriesOnly(t *testing.T) {
 func TestScheduleOverlongPageIsCutAtAWholeLineWithMoreLink(t *testing.T) {
 	shows := make([]animeschedule.ShowEntry, 200)
 	for i := range shows {
-		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("Show number %03d with a fairly long title", i), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}
+		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("Show number %03d with a fairly long title", i), Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}
 	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": shows})
 	if u16(emb.Description) > discord.MaxEmbedDescriptionLength {
@@ -139,7 +139,7 @@ func TestScheduleOverlongPageOfMultiByteTitlesCutsByCharactersNotBytes(t *testin
 	shows := make([]animeschedule.ShowEntry, 300)
 	lines := make([]string, len(shows))
 	for i := range shows {
-		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("魔法少女まどか☆マギカ 第%03d話 — 特別編", i), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}
+		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("魔法少女まどか☆マギカ 第%03d話 — 特別編", i), Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}
 		lines[i] = scheduleLine(shows[i], false)
 	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": shows})

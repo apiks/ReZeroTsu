@@ -9,7 +9,7 @@ import (
 )
 
 func row(name, route string, track Track, ep string, air int64) ShowEntry {
-	return ShowEntry{Name: name, Route: route, AirType: track, Episode: ep, AirTimeUnix: air}
+	return ShowEntry{Name: name, Route: route, Track: track, Episode: ep, AirTimeUnix: air}
 }
 
 // readWeek lists "name:TRACK:episode" of every row GetDayShows returns under pref across 2026-11-02 to 2026-11-15.
@@ -17,7 +17,7 @@ func readWeek(pref PreferredTrack, donghua bool) []string {
 	var out []string
 	for d := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC); d.Before(time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)); d = d.AddDate(0, 0, 1) {
 		for _, e := range GetDayShows(d, donghua, pref) {
-			out = append(out, fmt.Sprintf("%s:%s:%s", e.Name, e.AirType, e.Episode))
+			out = append(out, fmt.Sprintf("%s:%s:%s", e.Name, e.Track, e.Episode))
 		}
 	}
 	return out
@@ -104,6 +104,18 @@ func TestDonghuaIsHiddenUnderEveryPreference(t *testing.T) {
 	}
 }
 
+func TestSeedingKeepsRowsApartThatDifferInEpisodeOrAirTime(t *testing.T) {
+	t.Cleanup(Seed(map[string][]ShowEntry{
+		"2026-11-03": {
+			row("A", "a", TrackSub, "Ep 1", 1), row("A", "a", TrackSub, "Ep 2", 1),
+			row("B", "b", TrackSub, "Ep 1", 1), row("B", "b", TrackSub, "Ep 1", 2),
+		},
+	}))
+	if got := strings.Join(readWeek(PreferSub, true), ","); got != "A:sub:Ep 1,A:sub:Ep 2,B:sub:Ep 1,B:sub:Ep 1" {
+		t.Errorf("sub view = %s, want two episodes at one time and one episode at two times kept as four rows", got)
+	}
+}
+
 func TestSeedingKeepsIdenticalRowsOnceAndReadsAnUnknownTrackAsRaw(t *testing.T) {
 	t.Cleanup(Seed(map[string][]ShowEntry{
 		"2026-11-03": {row("A", "a", TrackSub, "Ep 1", 1), row("A", "a", TrackSub, "Ep 1", 1), row("B", "b", "weird", "Ep 1", 2), row("C", "c", "", "Ep 1", 3)},
@@ -133,13 +145,13 @@ func TestFetchKeepsEveryTrackAndTheOtherReadersSeeTheSubView(t *testing.T) {
 	if got := strings.Join(readWeek(PreferRaw, true), ","); got != "Frieren:raw:Ep 5" {
 		t.Errorf("raw view = %s", got)
 	}
-	if all := AllEntries(); len(all) != 1 || all[0].AirType != TrackSub {
+	if all := AllEntries(); len(all) != 1 || all[0].Track != TrackSub {
 		t.Errorf("AllEntries = %+v, want the sub row only", all)
 	}
-	if airing := AiringShows(); len(airing) != 1 || airing[0].AirType != TrackSub {
+	if airing := AiringShows(); len(airing) != 1 || airing[0].Track != TrackSub {
 		t.Errorf("AiringShows = %+v, want the sub row", airing)
 	}
-	if snap := SnapshotWeeks(); len(snap.This) != 1 || snap.This[0].AirType != TrackSub {
+	if snap := SnapshotWeeks(); len(snap.This) != 1 || snap.This[0].Track != TrackSub {
 		t.Errorf("SnapshotWeeks.This = %+v, want the sub row", snap.This)
 	}
 }

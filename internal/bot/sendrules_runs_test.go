@@ -76,7 +76,7 @@ func TestSendRulesNotAttemptedSendIsNotDelivered(t *testing.T) {
 		d.RecentErr = errors.New("read failed")
 		ctx := cancelOnBlock(d)
 		doc, _ := st.GetAnimeSubs(ctx, "u1")
-		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
+		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}}
 		_ = processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, shows, now)
 		check(t, d)
 		if st.userShow("u1", "Show A").Notified {
@@ -182,7 +182,7 @@ func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 		d := newFakeDiscord()
 		d.Webhook = testWebhook
 		doc, _ := st.GetAnimeSubs(context.Background(), "u1")
-		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
+		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}}
 		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, shows, now)
 		assertBotOnly(t, d, 1)
 	})

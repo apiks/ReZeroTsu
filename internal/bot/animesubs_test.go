@@ -38,7 +38,7 @@ func TestGuildRolePresence(t *testing.T) {
 
 func TestProcessGuildNewEpisodesRolePing(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
-	shows := []animeschedule.ShowEntry{{Name: "Aired", Route: "aired", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}}
+	shows := []animeschedule.ShowEntry{{Name: "Aired", Route: "aired", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}}
 	tests := []struct {
 		name        string
 		presence    rolePresence
@@ -74,10 +74,10 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 	aired := now.Unix() - 600
 	future := now.Unix() + 3600
 	shows := []animeschedule.ShowEntry{
-		{Name: "Aired One", Route: "aired-one", Episode: "Episode 1", AirTimeUnix: aired, AirType: "sub"},
-		{Name: "Aired Two", Route: "aired-two", Episode: "Episode 2", AirTimeUnix: aired, AirType: "sub"},
-		{Name: "Later", Route: "later", Episode: "Episode 3", AirTimeUnix: future, AirType: "sub"},
-		{Name: "Delayed", Route: "delayed", Episode: "Episode 4", AirTimeUnix: aired, Delayed: "delayed", AirType: "sub"},
+		{Name: "Aired One", Route: "aired-one", Episode: "Episode 1", AirTimeUnix: aired, Track: "sub"},
+		{Name: "Aired Two", Route: "aired-two", Episode: "Episode 2", AirTimeUnix: aired, Track: "sub"},
+		{Name: "Later", Route: "later", Episode: "Episode 3", AirTimeUnix: future, Track: "sub"},
+		{Name: "Delayed", Route: "delayed", Episode: "Episode 4", AirTimeUnix: aired, Delayed: "delayed", Track: "sub"},
 	}
 	dayShows := func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }
 
@@ -147,7 +147,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 				var subs []*anime_subs.ShowSub
 				for i := 0; i < 11; i++ {
 					name := fmt.Sprintf("Show %d", i)
-					many = append(many, animeschedule.ShowEntry{Name: name, Route: fmt.Sprintf("show-%d", i), Episode: "Episode 1", AirTimeUnix: aired, AirType: "sub"})
+					many = append(many, animeschedule.ShowEntry{Name: name, Route: fmt.Sprintf("show-%d", i), Episode: "Episode 1", AirTimeUnix: aired, Track: "sub"})
 					subs = append(subs, &anime_subs.ShowSub{Show: name, Guild: true})
 				}
 				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subs}

@@ -58,8 +58,8 @@ type ShowEntry struct {
 	Delayed     string
 	Donghua     bool
 	MediaType   MediaType
-	// AirType is the entry's track.
-	AirType           Track
+	// Track is the entry's track.
+	Track             Track
 	ImageVersionRoute string
 	// Final marks the show's last episode.
 	Final bool
@@ -229,8 +229,8 @@ func subView() map[string][]ShowEntry {
 }
 
 // GetDayShows returns the shows of the UTC date of day under the preferred track, sorted by air time. For each
-// show and UTC ISO week the preference picks one track, and only that track's rows show: Sub picks sub, else raw;
-// Dub picks dub, else sub, else raw; Raw picks raw. A delayed row counts. Excludes donghua when false.
+// show and UTC ISO week the preference shows one track, and only that track's rows show: Sub shows sub, else raw;
+// Dub shows dub, else sub, else raw; Raw shows raw. A delayed row counts. Excludes donghua when false.
 func GetDayShows(day time.Time, donghua bool, pref PreferredTrack) []ShowEntry {
 	key := DateKey(day)
 	timetableMu.RLock()
@@ -579,7 +579,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			Delayed:           delayed,
 			Donghua:           a.Donghua,
 			MediaType:         decodeMediaType(a.MediaTypes),
-			AirType:           airType,
+			Track:             airType,
 			ImageVersionRoute: a.ImageVersionRoute,
 			Final:             final,
 		})
