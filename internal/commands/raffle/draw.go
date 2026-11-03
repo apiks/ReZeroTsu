@@ -177,7 +177,7 @@ func runRemove(ic *interaction.Context) error {
 	}
 	reply := "Removed raffle **" + raffle.Name + "**."
 	if closed {
-		reply += " " + messageLink(ic.GuildID, raffle.ChannelID, raffle.MessageID)
+		reply += " " + commands.MessageLink(ic.GuildID, raffle.ChannelID, raffle.MessageID)
 	}
 	return ic.EditReply(interaction.Response{Content: reply})
 }

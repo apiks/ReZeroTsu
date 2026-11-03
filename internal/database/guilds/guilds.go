@@ -39,9 +39,9 @@ type Autopost struct {
 	LastPostedDate string `bson:"last_posted_date,omitempty"`
 }
 
-// ReactJoinWrap is one react_join_map entry; ChannelID holds the message ID (legacy).
+// ReactJoinWrap is one react_join_map entry. MessageID is stored under the legacy key "channel_id".
 type ReactJoinWrap struct {
-	ChannelID string         `bson:"channel_id"`
+	MessageID string         `bson:"channel_id"`
 	ReactJoin ReactJoinMongo `bson:"react_join"`
 	// MessageChannelID is the channel the message is in. Records saved before it was kept have none.
 	MessageChannelID string `bson:"message_channel_id,omitempty"`
@@ -59,13 +59,13 @@ type ReactJoin struct {
 
 // reactJoinFromWrap is the message ID and entry a stored record stands for.
 func reactJoinFromWrap(w ReactJoinWrap) (messageID string, entry *ReactJoin) {
-	return w.ChannelID, &ReactJoin{ChannelID: w.MessageChannelID, RoleEmojiMap: w.ReactJoin.RoleEmojiMap}
+	return w.MessageID, &ReactJoin{ChannelID: w.MessageChannelID, RoleEmojiMap: w.ReactJoin.RoleEmojiMap}
 }
 
 // reactJoinToWrap is the stored record of a message's entry.
 func reactJoinToWrap(messageID string, entry *ReactJoin) ReactJoinWrap {
 	return ReactJoinWrap{
-		ChannelID:        messageID,
+		MessageID:        messageID,
 		ReactJoin:        ReactJoinMongo{RoleEmojiMap: entry.RoleEmojiMap},
 		MessageChannelID: entry.ChannelID,
 	}

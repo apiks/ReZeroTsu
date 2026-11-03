@@ -2,14 +2,16 @@ package react
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
+	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
@@ -31,6 +33,7 @@ const (
 	msgOneRole    = "Pick one role."
 	msgRoleGone   = "That role no longer exists. Pick another one."
 	msgNothingSet = "There are no reaction roles on that message."
+	msgMaxReacts  = "That message already has 20 different reactions, Discord's limit. Remove one, or use another message."
 )
 
 // reactNeeds is what the bot needs in a message's channel to add or remove its own reaction.
@@ -125,12 +128,65 @@ func roleLabel(role string) string {
 	return "**" + role + "**"
 }
 
-func messageLink(guildID, channelID, messageID string) string {
-	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
-}
-
 func reactErrorContext(channelID string) interaction.ErrorContext {
 	return interaction.ErrorContext{ChannelID: channelID, Needs: reactNeeds}
+}
+
+// addErrorContext is reactErrorContext for adding a reaction: a server emoji from another server also needs Use
+// External Emojis. A stored custom emoji has a colon ("name:id" or "a:name:id"); a standard emoji has none.
+func addErrorContext(channelID, emoji string) interaction.ErrorContext {
+	at := reactErrorContext(channelID)
+	if strings.Contains(emoji, ":") {
+		at.Needs |= discordgo.PermissionUseExternalEmojis
+	}
+	return at
+}
+
+// takeReactionsOff removes the bot's own reaction for each emoji from the message, stopping at the first failure.
+// It returns the explained error text, or "" when every reaction came off. err is the failure itself, so a caller
+// can tell a message or channel that is gone from a real problem.
+func takeReactionsOff(ic *interaction.Context, channelID, messageID string, emojis []string) (text string, err error) {
+	for _, e := range emojis {
+		if err := ic.RemoveOwnReaction(channelID, messageID, e); err != nil {
+			text, known := interaction.ExplainError(err, reactErrorContext(channelID))
+			if !known {
+				logger.For("react").Error("reaction removal failed", "guild_id", ic.GuildID, "channel_id", channelID, "message_id", messageID, "err", err)
+			}
+			return text, err
+		}
+	}
+	return "", nil
+}
+
+// clipLines joins lines with newlines so the result is at most budget runes. When some lines do not fit, it ends
+// with "…and N more".
+func clipLines(lines []string, budget int) string {
+	total := 0
+	for i, l := range lines {
+		total += utf8.RuneCountInString(l)
+		if i > 0 {
+			total++
+		}
+	}
+	if total <= budget {
+		return strings.Join(lines, "\n")
+	}
+	used := 0
+	kept := 0
+	for i, l := range lines {
+		note := len("\n…and  more") + len(strconv.Itoa(len(lines)-i))
+		cost := utf8.RuneCountInString(l) + 1
+		if used+cost+note > budget {
+			break
+		}
+		used += cost
+		kept++
+	}
+	out := strings.Join(lines[:kept], "\n")
+	if kept > 0 {
+		out += "\n"
+	}
+	return out + fmt.Sprintf("…and %d more", len(lines)-kept)
 }
 
 // boundRole is the role an emoji is already bound to in an entry, or "".
@@ -240,11 +296,13 @@ func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 	}
 
 	if err := ic.AddReaction(channelID, messageID, emoji); err != nil {
-		var rest *discordgo.RESTError
-		if errors.As(err, &rest) && rest.Message != nil && rest.Message.Code == discordgo.ErrCodeUnknownEmoji {
+		switch {
+		case discord.IsUnknownEmoji(err):
 			return ic.Refuse(msgBadEmoji)
+		case discord.IsMaxReactions(err):
+			return ic.Refuse(msgMaxReacts)
 		}
-		return ic.Fail(err, reactErrorContext(channelID))
+		return ic.Fail(err, addErrorContext(channelID, emoji))
 	}
 
 	entry.ChannelID = channelID
@@ -267,7 +325,7 @@ func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
 
-	reply := "Reaction role set: " + displayEmoji(emoji) + " gives " + commands.RoleMention(roleID) + " on " + messageLink(ic.GuildID, channelID, messageID) + "."
+	reply := "Reaction role set: " + displayEmoji(emoji) + " gives " + commands.RoleMention(roleID) + " on " + commands.MessageLink(ic.GuildID, channelID, messageID) + "."
 	if top, known := botHighestPosition(ic, roles); known && role.Position >= top {
 		reply += "\nHeads up: " + commands.RoleMention(roleID) + " is at or above my highest role, so I can't hand it out. Move my role above it in Server Settings, Roles."
 	}
@@ -315,6 +373,10 @@ func botHighestPosition(ic *interaction.Context, roles []*discordgo.Role) (posit
 //   - the "No such message ID is set" refusal: msgNothingSet below, which now also covers an entry with no
 //     bindings left.
 //
+// Retired by spec #36, on purpose: the per-emoji form of /remove-react-autorole. Reaction roles have no slash
+// remove, and removal is now per message only, so its three refusals are gone with it: the full-emoji-form
+// parse error, "That emoji is not set for this message", and "Could not save after remove".
+//
 // The old command removed no reactions; they are taken off after the delete, so a failure there cannot leave
 // bindings behind.
 func runRemoveAll(ic *interaction.Context) error {
@@ -346,16 +408,12 @@ func runRemoveAll(ic *interaction.Context) error {
 	if channelID == "" {
 		channelID = entry.ChannelID
 	}
-	reply := "Removed the reaction roles from " + messageLink(ic.GuildID, channelID, msg.ID) + ":\n" + strings.Join(pairs, "\n")
-	for _, e := range emojis {
-		if err := ic.RemoveOwnReaction(channelID, msg.ID, e); err != nil {
-			text, known := interaction.ExplainError(err, reactErrorContext(channelID))
-			if !known {
-				logger.For("react").Error("reaction removal failed", "guild_id", ic.GuildID, "channel_id", channelID, "message_id", msg.ID, "err", err)
-			}
-			reply += "\nI couldn't take my reactions off the message: " + text
-			break
-		}
+	failure := ""
+	if text, _ := takeReactionsOff(ic, channelID, msg.ID, emojis); text != "" {
+		failure = "\nI couldn't take my reactions off the message: " + text
 	}
-	return ic.Reply(interaction.Response{Content: reply})
+	// A legacy entry can hold many pairs, so the list is clipped to leave room for the rest of the reply.
+	head := "Removed the reaction roles from " + commands.MessageLink(ic.GuildID, channelID, msg.ID) + ":\n"
+	budget := discord.MaxContentLength - utf8.RuneCountInString(head) - utf8.RuneCountInString(failure)
+	return ic.Reply(interaction.Response{Content: head + clipLines(pairs, budget) + failure})
 }

@@ -1,7 +1,6 @@
 package say
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -16,6 +15,7 @@ const (
 	// user ID>". Three snowflakes and a few separators stay far under Discord's 100-character limit.
 	editPrefix = "sayedit:"
 
+	msgEditFormStale   = "That form is no longer valid. Right-click the message and try again."
 	msgOnlySay         = "I can only edit messages I posted with /say"
 	msgDescriptionLong = "That embed's description is longer than 4000 characters, which the edit form cannot hold."
 )
@@ -99,7 +99,7 @@ func runEditMessage(ic *interaction.Context) error {
 func submitEditForm(ic *interaction.Context, _ *discordgo.Session) error {
 	channelID, messageID, embed, openerID, ok := parseEditFormID(ic.CustomID)
 	if !ok {
-		return fmt.Errorf("say: unrecognised edit form ID %q", ic.CustomID)
+		return ic.Refuse(msgEditFormStale)
 	}
 	if ic.Invoker == nil || ic.Invoker.ID != openerID {
 		return ic.Refuse(msgNotOpener)
@@ -136,6 +136,6 @@ func submitEditForm(ic *interaction.Context, _ *discordgo.Session) error {
 	if err := ic.EditMessage(channelID, messageID, edit); err != nil {
 		return ic.Fail(err, interaction.ErrorContext{ChannelID: channelID, Needs: needs})
 	}
-	link := fmt.Sprintf("https://discord.com/channels/%s/%s/%s", ic.GuildID, channelID, messageID)
+	link := commands.MessageLink(ic.GuildID, channelID, messageID)
 	return ic.EditReply(interaction.Response{Content: "Edited the message in " + commands.ChannelMention(channelID) + ": " + link})
 }
