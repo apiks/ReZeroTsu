@@ -41,6 +41,7 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
+		Installs:   commands.BothInstalls(),
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "add",

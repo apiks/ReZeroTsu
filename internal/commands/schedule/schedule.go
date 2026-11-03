@@ -34,6 +34,7 @@ func init() {
 		Desc:       "Shows today's (or a given day's) anime release times (subbed where possible).",
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
+		Installs:   commands.BothInstalls(),
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:         discordgo.ApplicationCommandOptionString,
@@ -183,12 +184,13 @@ func BuildScheduleEmbed(weekday int, shows []animeschedule.ShowEntry) *discordgo
 	return emb
 }
 
-// donghuaSetting reports whether the server shows donghua; the default, and DMs, show it.
-func donghuaSetting(ctx context.Context, db *database.Client, guildID string) bool {
-	if guildID == "" {
+// donghuaSetting reports whether the server shows donghua. Where the bot has no server membership (DMs, and a
+// user install in a server it has not joined) there are no settings, and donghua is shown.
+func donghuaSetting(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
+	if !interaction.BotInGuild(i) {
 		return true
 	}
-	settings, err := commands.GetSettings(ctx, db, guildID)
+	settings, err := commands.GetSettings(ctx, db, i.GuildID)
 	if err == nil && settings != nil {
 		return settings.Donghua
 	}
@@ -212,7 +214,7 @@ func handleSchedule(ic *interaction.Context) error {
 		}
 	}
 
-	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ic.Context(), ic.DB, ic.GuildID))
+	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return ic.EditReply(interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
 		Components: commands.BuildSchedulePaginationComponents(weekday, ic.Invoker.ID),
@@ -230,7 +232,7 @@ func RenderSchedulePage(ctx context.Context, db *database.Client, _ *discordgo.S
 	}
 
 	weekday := min(max(page, 0), 6)
-	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ctx, db, i.GuildID))
+	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ctx, db, i.Interaction))
 	return commands.Page{Response: interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
 		Components: commands.BuildSchedulePaginationComponents(weekday, authorID),

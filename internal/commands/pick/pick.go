@@ -23,6 +23,7 @@ func init() {
 		Desc:       "Picks a random item from a list of items.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,

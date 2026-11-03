@@ -26,6 +26,7 @@ func init() {
 		Desc:       "Display more information about me.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
