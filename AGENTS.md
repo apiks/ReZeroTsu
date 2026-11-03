@@ -15,3 +15,7 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created lazi
 ### Coding standards
 
 Reviewers read `CODING_STANDARDS.md`.
+
+### Implementer subagents
+
+Implementer prompts name the ticket and point at `docs/agents/implementer.md`.

@@ -8,6 +8,7 @@ A change described as behaviour-preserving keeps every check the old code ran on
 
 - A cache, memo or hoisted lookup replays the preconditions of the uncached path before it returns an entry. Permission, state and ownership checks are preconditions.
 - For each deleted or moved call, name where its guard now runs. A guard with no new home is a finding.
+- Moving a call into a callee moves it relative to the callee's guards. List the checks that ran after the call at the old site; each still runs after it at the new one. Trace a late-ending path too: a wait that ends in success after shutdown must still reach the shutdown check before any send.
 - The spec and its tickets can disagree with each other ("resolve on a miss" beside "behaviour unchanged"). Review against the behaviour; report the disagreement.
 
 ## Glossary vocabulary

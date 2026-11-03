@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fast local guardrail; CI runs the full check (tests and golangci-lint).
+# Enable once per clone: git config core.hooksPath .githooks
+
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+  echo "gofmt would change:"
+  echo "$unformatted"
+  exit 1
+fi
+
+go vet ./...
