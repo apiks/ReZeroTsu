@@ -43,6 +43,8 @@ type Autopost struct {
 type ReactJoinWrap struct {
 	ChannelID string         `bson:"channel_id"`
 	ReactJoin ReactJoinMongo `bson:"react_join"`
+	// MessageChannelID is the channel the message is in. Records saved before it was kept have none.
+	MessageChannelID string `bson:"message_channel_id,omitempty"`
 }
 
 type ReactJoinMongo struct {
@@ -50,7 +52,23 @@ type ReactJoinMongo struct {
 }
 
 type ReactJoin struct {
+	// ChannelID is the channel of the message, or "" for a record saved before it was kept.
+	ChannelID    string
 	RoleEmojiMap []map[string][]string
+}
+
+// reactJoinFromWrap is the message ID and entry a stored record stands for.
+func reactJoinFromWrap(w ReactJoinWrap) (messageID string, entry *ReactJoin) {
+	return w.ChannelID, &ReactJoin{ChannelID: w.MessageChannelID, RoleEmojiMap: w.ReactJoin.RoleEmojiMap}
+}
+
+// reactJoinToWrap is the stored record of a message's entry.
+func reactJoinToWrap(messageID string, entry *ReactJoin) ReactJoinWrap {
+	return ReactJoinWrap{
+		ChannelID:        messageID,
+		ReactJoin:        ReactJoinMongo{RoleEmojiMap: entry.RoleEmojiMap},
+		MessageChannelID: entry.ChannelID,
+	}
 }
 
 type RaffleMongo struct {
@@ -233,7 +251,8 @@ func (r *Repo) GetReactJoinMap(ctx context.Context, guildID string) (map[string]
 	}
 	out := make(map[string]*ReactJoin, len(g.ReactJoinMap))
 	for _, w := range g.ReactJoinMap {
-		out[w.ChannelID] = &ReactJoin{RoleEmojiMap: w.ReactJoin.RoleEmojiMap}
+		messageID, entry := reactJoinFromWrap(w)
+		out[messageID] = entry
 	}
 	return out, nil
 }
@@ -246,10 +265,7 @@ func (r *Repo) SaveReactJoinEntry(ctx context.Context, guildID, messageID string
 	filter := bson.M{"_id": guildID}
 	pull := bson.M{"$pull": bson.M{"react_join_map": bson.M{"channel_id": messageID}}}
 	_, _ = r.coll.UpdateOne(ctx, filter, pull)
-	wrap := ReactJoinWrap{
-		ChannelID: messageID,
-		ReactJoin: ReactJoinMongo{RoleEmojiMap: entry.RoleEmojiMap},
-	}
+	wrap := reactJoinToWrap(messageID, entry)
 	push := bson.M{"$push": bson.M{"react_join_map": wrap}}
 	_, err := r.coll.UpdateOne(ctx, filter, push, options.UpdateOne().SetUpsert(true))
 	if err != nil {
