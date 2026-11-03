@@ -38,19 +38,20 @@ func slashInteraction(name, guildID string, perms int64, roles ...string) *disco
 
 func run(t *testing.T, name string, fake *interactiontest.Fake, i *discordgo.InteractionCreate) error {
 	t.Helper()
-	return dispatch(context.Background(), (*database.Client)(nil), name, fake, nil, i)
+	return dispatch(context.Background(), (*database.Client)(nil), name, fake, i)
 }
 
 func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
-	legacyCalled := false
-	legacy := func(name string, mod PermissionLevel, c AllowedContext) *Command {
-		return &Command{Name: name, Permission: mod, Context: c, Visibility: Public, Response: Deferred,
-			Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {
-				legacyCalled = true
+	handlerCalled := false
+	guarded := func(name string, c AllowedContext) *Command {
+		return &Command{Name: name, Context: c, Visibility: Public, Response: Deferred,
+			Run: func(*interaction.Context) error {
+				handlerCalled = true
+				return nil
 			}}
 	}
-	register(t, legacy("t-guildonly", PermEveryone, ContextGuildOnly))
-	register(t, legacy("t-dmonly", PermEveryone, ContextDMOnly))
+	register(t, guarded("t-guildonly", ContextGuildOnly))
+	register(t, guarded("t-dmonly", ContextDMOnly))
 
 	tests := []struct {
 		name string
@@ -89,24 +90,10 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 			if !strings.Contains(text, tt.want) {
 				t.Errorf("refusal %q does not contain %q", text, tt.want)
 			}
-			if legacyCalled {
+			if handlerCalled {
 				t.Error("handler ran after a refusal")
 			}
 		})
-	}
-}
-
-func TestDispatchLegacyCommandsKeepThePublicDeferredShape(t *testing.T) {
-	ran := false
-	register(t, &Command{Name: "t-legacy", Visibility: Public, Response: Deferred,
-		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran = true }})
-	fake := &interactiontest.Fake{}
-	if err := run(t, "t-legacy", fake, slashInteraction("t-legacy", "g", 0)); err != nil {
-		t.Fatal(err)
-	}
-	calls := fake.Calls()
-	if len(calls) != 1 || calls[0].Op != "Defer" || calls[0].Visibility != interaction.Public || !ran {
-		t.Errorf("calls = %+v, ran = %v; want one public Defer then the legacy handler", calls, ran)
 	}
 }
 
@@ -147,9 +134,7 @@ func TestDispatchNewFormAcknowledgesByDeclaredMode(t *testing.T) {
 
 func TestDispatchLateFailureOnPublicDeferredCommandIsPrivate(t *testing.T) {
 	register(t, &Command{Name: "t-panic", Visibility: Public, Response: Deferred,
-		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {
-			panic("boom")
-		}})
+		Run: func(*interaction.Context) error { panic("boom") }})
 	register(t, &Command{Name: "t-err", Visibility: Public, Response: Deferred,
 		Run: func(*interaction.Context) error { return errors.New("db down") }})
 
@@ -197,17 +182,14 @@ func TestDispatchFailureOnPrivateDeferredCommandReplacesThePlaceholder(t *testin
 }
 
 func TestAddRejectsUndeclaredOrInconsistentCommands(t *testing.T) {
-	noop := func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {}
 	run1 := func(*interaction.Context) error { return nil }
 	tests := []struct {
 		name string
 		cmd  *Command
 	}{
-		{"no visibility", &Command{Name: "x", Response: Deferred, Handler: noop}},
-		{"no response mode", &Command{Name: "x", Visibility: Public, Handler: noop}},
-		{"no handler form", &Command{Name: "x", Visibility: Public, Response: Deferred}},
-		{"both handler forms", &Command{Name: "x", Visibility: Public, Response: Deferred, Handler: noop, Run: run1}},
-		{"legacy handler cannot be direct", &Command{Name: "x", Visibility: Public, Response: Direct, Handler: noop}},
+		{"no visibility", &Command{Name: "x", Response: Deferred, Run: run1}},
+		{"no response mode", &Command{Name: "x", Visibility: Public, Run: run1}},
+		{"no Run", &Command{Name: "x", Visibility: Public, Response: Deferred}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,7 +209,7 @@ func TestAddRejectsUndeclaredOrInconsistentCommands(t *testing.T) {
 func TestDispatchDoesNotRefuseAModCommandForAMemberWithoutManageServer(t *testing.T) {
 	var ran int
 	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
-		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
+		Run: func(*interaction.Context) error { ran++; return nil }})
 	fake := &interactiontest.Fake{StallGuild: true}
 	if err := run(t, "t-mod", fake, slashInteraction("t-mod", "g", 0, "some-role")); err != nil {
 		t.Fatal(err)

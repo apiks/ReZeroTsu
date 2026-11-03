@@ -120,19 +120,10 @@ var interactionResponseCalls = map[string]bool{
 	"FollowupMessageDelete":     true,
 }
 
-// portAdapterFile is the one file allowed to call them for good.
+// portAdapterFile is the one file allowed to call them.
 const portAdapterFile = "interaction/discordgo.go"
 
-// legacyResponseFiles may still call them: the command files that have not moved onto the port, relative to
-// internal/. Each area spec (#33 to #36) removes the entries it migrates, and ticket 7.2 deletes the allowlist.
-// A stale entry (a file that no longer makes such a call) fails the test, so the list only shrinks.
-var legacyResponseFiles = map[string]bool{
-	"commands/command.go":    true, // autocomplete answers and RespondEphemeral
-	"commands/helpers.go":    true, // RespondEmbed helpers
-	"commands/pagination.go": true, // pagination buttons
-}
-
-// responseCalls lists every interaction-response call in a file, ignoring the allowlists.
+// responseCalls lists every interaction-response call in a file.
 func responseCalls(fset *token.FileSet, file *ast.File) []string {
 	var out []string
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -149,10 +140,10 @@ func responseCalls(fset *token.FileSet, file *ast.File) []string {
 	return out
 }
 
-// checkInteractionResponses reports session interaction-response calls outside the port adapter and the
-// allowlist. name is the path relative to internal/.
+// checkInteractionResponses reports session interaction-response calls outside the port adapter. name is the
+// path relative to internal/.
 func checkInteractionResponses(fset *token.FileSet, file *ast.File, name string) []string {
-	if name == portAdapterFile || legacyResponseFiles[name] {
+	if name == portAdapterFile {
 		return nil
 	}
 	return responseCalls(fset, file)
@@ -270,23 +261,6 @@ func TestInteractionResponsesGoThroughThePort(t *testing.T) {
 	}
 }
 
-// The allowlist must shrink as commands migrate: an entry whose file no longer makes a session response call
-// (or no longer exists) has to go.
-func TestInteractionResponseAllowlistHasNoStaleEntries(t *testing.T) {
-	for name := range legacyResponseFiles {
-		path := filepath.Join("..", filepath.FromSlash(name))
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			t.Errorf("%s: allowlisted but unreadable: %v", name, err)
-			continue
-		}
-		if len(responseCalls(fset, file)) == 0 {
-			t.Errorf("%s: allowlisted but makes no session response call; remove it from legacyResponseFiles", name)
-		}
-	}
-}
-
 func TestEveryRegisteredCommandDeclaresAVisibility(t *testing.T) {
 	for _, v := range scanTree(t, "../commands", checkCommandsDeclareVisibility) {
 		t.Error(v)
@@ -339,7 +313,7 @@ func f(s session, i interaction) {
 func init() {
 	commands.Add(&commands.Command{Name: "a", Visibility: commands.Public})
 	commands.Add(&commands.Command{Name: "b"})
-	commands.Add(&commands.Command{Name: "c", Handler: h})
+	commands.Add(&commands.Command{Name: "c", Run: h})
 	wg.Add(1)
 }
 `
@@ -365,7 +339,7 @@ func init() {
 		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
 		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
 		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
-		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/helpers.go", 0},
+		{"command helpers may not respond", responding, checkInteractionResponses, "commands/helpers.go", 3},
 		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 	}

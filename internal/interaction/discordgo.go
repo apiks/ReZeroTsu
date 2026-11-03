@@ -8,8 +8,7 @@ import (
 )
 
 // DiscordgoPort is the Port backed by a discordgo session, bound to one interaction. This file is the only
-// place outside the not-yet-migrated command files that may call the session's interaction-response methods;
-// the archcheck guardrail enforces it.
+// place that may call the session's interaction-response methods; the archcheck guardrail enforces it.
 type DiscordgoPort struct {
 	s *discordgo.Session
 	i *discordgo.Interaction
@@ -78,6 +77,13 @@ func (p *DiscordgoPort) UpdateMessage(r Response) error {
 	return p.s.InteractionRespond(p.i, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
 		Data: &discordgo.InteractionResponseData{Content: r.Content, Embeds: r.Embeds, Components: r.Components},
+	})
+}
+
+func (p *DiscordgoPort) Suggest(choices []*discordgo.ApplicationCommandOptionChoice) error {
+	return p.s.InteractionRespond(p.i, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+		Data: &discordgo.InteractionResponseData{Choices: choices},
 	})
 }
 

@@ -90,8 +90,8 @@ func TestPruneIsDeclaredPrivateAndDeferred(t *testing.T) {
 		if c.Name != "prune" {
 			continue
 		}
-		if c.Visibility != commands.Private || c.Response != commands.Deferred || c.Run == nil || c.Handler != nil {
-			t.Fatalf("prune: visibility %v, response %v, run %v, handler %v", c.Visibility, c.Response, c.Run != nil, c.Handler != nil)
+		if c.Visibility != commands.Private || c.Response != commands.Deferred || c.Run == nil {
+			t.Fatalf("prune: visibility %v, response %v, run %v", c.Visibility, c.Response, c.Run != nil)
 		}
 		return
 	}

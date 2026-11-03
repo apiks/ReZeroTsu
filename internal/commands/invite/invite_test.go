@@ -29,7 +29,7 @@ func TestInviteRepliesOncePubliclyWithTheInviteLink(t *testing.T) {
 func TestInviteIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "invite" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("invite registration = %+v", c)
 			}
 			return

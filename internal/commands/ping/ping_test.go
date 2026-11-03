@@ -132,7 +132,7 @@ func TestPingReadStopsWithTheInteractionContext(t *testing.T) {
 func TestPingIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "ping" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("ping registration = %+v", c)
 			}
 			return

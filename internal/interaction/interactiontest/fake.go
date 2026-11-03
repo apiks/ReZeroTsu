@@ -22,6 +22,7 @@ type Call struct {
 	MessageID  string
 	MessageIDs []string // DeleteMessages
 	Emoji      string
+	Choices    []*discordgo.ApplicationCommandOptionChoice // Suggest
 }
 
 // Fake is a recording interaction.Port. Reads answer from the maps; any operation named in Fail returns its error.
@@ -90,6 +91,9 @@ func (f *Fake) OpenForm(form interaction.Form) error {
 }
 func (f *Fake) UpdateMessage(r interaction.Response) error {
 	return f.record(Call{Op: "UpdateMessage", Response: r})
+}
+func (f *Fake) Suggest(choices []*discordgo.ApplicationCommandOptionChoice) error {
+	return f.record(Call{Op: "Suggest", Choices: choices})
 }
 
 func (f *Fake) PostMessage(channelID string, r interaction.Response) (*discordgo.Message, error) {
