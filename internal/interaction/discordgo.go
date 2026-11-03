@@ -136,6 +136,11 @@ func (p *DiscordgoPort) Channel(channelID string) (*discordgo.Channel, error) {
 	return p.s.Channel(channelID)
 }
 
+// BotChannelPermissions resolves the bot's permissions in a channel from the cached guild state.
+func (p *DiscordgoPort) BotChannelPermissions(channelID string) (int64, error) {
+	return p.s.State.UserChannelPermissions(p.s.State.User.ID, channelID)
+}
+
 // BotUser is the session's own account.
 func (p *DiscordgoPort) BotUser() *discordgo.User { return p.s.State.User }
 

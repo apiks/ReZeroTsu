@@ -42,10 +42,28 @@ const (
 type settingsStore interface {
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
 	SetGuildSettings(ctx context.Context, guildID string, settings *guilds.GuildSettings) error
+	GetAutopostByType(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
+	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
+	DeleteAnimeSubs(ctx context.Context, id string) error
 }
 
 // panelStoreOf picks the settings store of a database client; tests replace it.
-var panelStoreOf = func(db *database.Client) settingsStore { return db.Guilds() }
+var panelStoreOf = func(db *database.Client) settingsStore { return newDBStore(db) }
+
+// draft is a copy of the panel data that one change edits, plus the sent state it leaves behind.
+type draft struct {
+	*panelData
+	dropSubs []string
+}
+
+// scope names which stored records a change writes, so a change saves exactly the one setting it touches.
+type scope int
+
+const (
+	scopeSettings scope = iota
+	scopeNewEpisodes
+	scopeDailySchedule
+)
 
 func init() {
 	commands.Add(&commands.Command{
@@ -64,11 +82,11 @@ func init() {
 }
 
 func runSettings(ic *interaction.Context) error {
-	gs, err := panelStoreOf(ic.DB).GetGuildSettings(ic.Context(), ic.GuildID)
-	if err != nil || gs == nil {
+	data, err := readPanel(ic.Context(), panelStoreOf(ic.DB), ic.GuildID)
+	if err != nil || data == nil {
 		return failedLoad(ic, err)
 	}
-	return ic.EditReply(panelResponse(gs))
+	return ic.EditReply(panelResponse(ic, data))
 }
 
 func failedLoad(ic *interaction.Context, err error) error {
@@ -93,7 +111,14 @@ func botLogChannelID(gs *guilds.GuildSettings) string {
 }
 
 // panelResponse is the whole panel for the given stored settings: the summary embed and the component rows.
-func panelResponse(gs *guilds.GuildSettings) interaction.Response {
+func panelResponse(ic *interaction.Context, data *panelData) interaction.Response {
+	gs := data.gs
+	off := func(id, none string, mention func(string) string) string {
+		if id == "" {
+			return none
+		}
+		return mention(id)
+	}
 	botLog := "Off"
 	if id := botLogChannelID(gs); id != "" {
 		botLog = commands.ChannelMention(id)
@@ -107,14 +132,21 @@ func panelResponse(gs *guilds.GuildSettings) interaction.Response {
 		ping = append(ping[:maxShownPingLength], '…')
 	}
 	desc := "**Bot log channel:** " + botLog +
-		"\n**Donghua in the schedule:** " + donghua +
-		"\n\n**" + labelPingMessage + "**\n" + string(ping)
+		"\n**New episodes channel:** " + off(autopostChannelID(data.newEpisodes), "Off", commands.ChannelMention) +
+		"\n**New episodes ping role:** " + off(autopostRoleID(data.newEpisodes), "None", commands.RoleMention) +
+		"\n**Daily schedule channel:** " + off(autopostChannelID(data.dailySchedule), "Off", commands.ChannelMention) +
+		"\n**Donghua in the schedule:** " + donghua
+	if w := mentionWarning(ic, data.newEpisodes); w != "" {
+		desc += "\n\n" + w
+	}
+	desc += "\n\n**" + labelPingMessage + "**\n" + string(ping)
 	return interaction.Response{
 		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleSettings, desc)},
 		Components: []discordgo.MessageComponent{
 			botLogRow(gs),
-			// Rows 2 to 4 (new-episodes channel, new-episodes role, daily-schedule channel) are added by the
-			// autopost settings ticket.
+			newEpisodesRow(data),
+			newEpisodesRoleRow(data),
+			dailyScheduleRow(data),
 			toggleRow(gs),
 		},
 	}
@@ -163,16 +195,22 @@ func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {
 	}
 	switch ic.CustomID {
 	case idBotLog:
-		return apply(ic, store, chooseBotLog)
+		return apply(ic, store, scopeSettings, settingsChange(chooseBotLog))
 	case idDonghua:
-		return apply(ic, store, func(_ *interaction.Context, gs *guilds.GuildSettings) string {
+		return apply(ic, store, scopeSettings, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
 			gs.Donghua = !gs.Donghua
 			return ""
-		})
+		}))
 	case idPingEdit:
 		return openPingForm(ic, store)
 	case idPingForm:
-		return apply(ic, store, savePingMessage)
+		return apply(ic, store, scopeSettings, settingsChange(savePingMessage))
+	case idNewEpisodes:
+		return apply(ic, store, scopeNewEpisodes, chooseNewEpisodes)
+	case idNewEpisodesRole:
+		return apply(ic, store, scopeNewEpisodes, chooseNewEpisodesRole)
+	case idDailySchedule:
+		return apply(ic, store, scopeDailySchedule, chooseDailySchedule)
 	}
 	return ic.Refuse(msgStaleControl)
 }
@@ -220,34 +258,53 @@ func openPingForm(ic *interaction.Context, store settingsStore) error {
 	})
 }
 
-// apply reads the stored settings, lets change set exactly one of them on a copy, saves, and updates the panel
-// in place from freshly read settings. When change refuses or the save fails, the panel is put back to the
-// stored values (a picker keeps showing the choice otherwise) and the reason follows privately.
-func apply(ic *interaction.Context, store settingsStore, change func(*interaction.Context, *guilds.GuildSettings) string) error {
+// settingsChange adapts a change of the guild settings to a change of the panel data.
+func settingsChange(f func(*interaction.Context, *guilds.GuildSettings) string) func(*interaction.Context, *draft) string {
+	return func(ic *interaction.Context, d *draft) string { return f(ic, d.gs) }
+}
+
+// apply reads the stored panel data, lets change set exactly one setting on a copy, saves only what the scope
+// names, and updates the panel in place from freshly read data. When change refuses or the save fails, the
+// panel is put back to the stored values (a picker keeps showing the choice otherwise) and the reason follows
+// privately.
+func apply(ic *interaction.Context, store settingsStore, sc scope, change func(*interaction.Context, *draft) string) error {
 	ctx := ic.Context()
-	stored, err := store.GetGuildSettings(ctx, ic.GuildID)
+	stored, err := readPanel(ctx, store, ic.GuildID)
 	if err != nil || stored == nil {
 		return failedLoad(ic, err)
 	}
-	updated := *stored
-	if refusal := change(ic, &updated); refusal != "" {
+	d := &draft{panelData: stored.copyOf()}
+	if refusal := change(ic, d); refusal != "" {
 		return restore(ic, stored, refusal)
 	}
-	if err := store.SetGuildSettings(ctx, ic.GuildID, &updated); err != nil {
+	if err := save(ctx, store, ic.GuildID, sc, d); err != nil {
 		logger.For("settings").Error("settings save failed", "guild_id", ic.GuildID, "custom_id", ic.CustomID, "err", err)
 		return restore(ic, stored, msgSaveFailed)
 	}
-	fresh, err := store.GetGuildSettings(ctx, ic.GuildID)
+	fresh, err := readPanel(ctx, store, ic.GuildID)
 	if err != nil || fresh == nil {
 		// The change is saved; show what was written rather than leaving the panel stale.
-		fresh = &updated
+		fresh = d.panelData
 	}
-	return ic.UpdateMessage(panelResponse(fresh))
+	return ic.UpdateMessage(panelResponse(ic, fresh))
 }
 
-// restore shows the stored settings on the panel and then the reason, which only the invoker sees.
-func restore(ic *interaction.Context, stored *guilds.GuildSettings, reason string) error {
-	if err := ic.UpdateMessage(panelResponse(stored)); err != nil {
+// save writes the records the scope names. Sent state of channels the new-episodes autopost left is deleted
+// before the autopost is written, as /new-episodes did.
+func save(ctx context.Context, store settingsStore, guildID string, sc scope, d *draft) error {
+	switch sc {
+	case scopeNewEpisodes:
+		dropSentState(ctx, store, guildID, d.dropSubs)
+		return store.SetAutopost(ctx, guildID, postTypeNewEpisodes, d.newEpisodes)
+	case scopeDailySchedule:
+		return store.SetAutopost(ctx, guildID, postTypeDailySchedule, d.dailySchedule)
+	}
+	return store.SetGuildSettings(ctx, guildID, d.gs)
+}
+
+// restore shows the stored data on the panel and then the reason, which only the invoker sees.
+func restore(ic *interaction.Context, stored *panelData, reason string) error {
+	if err := ic.UpdateMessage(panelResponse(ic, stored)); err != nil {
 		return err
 	}
 	return ic.Refuse(reason)
