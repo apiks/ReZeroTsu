@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"ReZeroTsu/internal/animeschedule"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -137,11 +139,13 @@ func (f FeedEntry) SameIdentity(g FeedEntry) bool {
 }
 
 type GuildSettings struct {
-	BotLogID    *ChannelRef `bson:"bot_log_id,omitempty"`
-	VoiceChas   []VoiceCha  `bson:"voice_chas,omitempty"`
-	Donghua     bool        `bson:"donghua,omitempty"`
-	PingMessage string      `bson:"ping_message,omitempty"`
-	Premium     bool        `bson:"premium,omitempty"`
+	BotLogID  *ChannelRef `bson:"bot_log_id,omitempty"`
+	VoiceChas []VoiceCha  `bson:"voice_chas,omitempty"`
+	Donghua   bool        `bson:"donghua,omitempty"`
+	// PreferredTrack is "sub", "dub" or "raw"; missing reads as Sub (see Preferred).
+	PreferredTrack string `bson:"preferred_track,omitempty"`
+	PingMessage    string `bson:"ping_message,omitempty"`
+	Premium        bool   `bson:"premium,omitempty"`
 }
 
 // Guild is a guild document; _id is the guild ID.
@@ -247,6 +251,28 @@ func (r *Repo) SetDonghua(ctx context.Context, guildID string, on bool) error {
 		return fmt.Errorf("SetDonghua: %w", err)
 	}
 	return nil
+}
+
+// preferredTrackField is the guild_settings key of GuildSettings.PreferredTrack.
+const preferredTrackField = "preferred_track"
+
+// Preferred is the server's preferred track; a missing or unknown value is Sub.
+func (g *GuildSettings) Preferred() animeschedule.PreferredTrack {
+	pref, _ := animeschedule.ParsePreferredTrack(g.PreferredTrack)
+	return pref
+}
+
+// SetPreferredTrack sets guild_settings.preferred_track alone.
+func (r *Repo) SetPreferredTrack(ctx context.Context, guildID string, pref animeschedule.PreferredTrack) error {
+	if err := r.setSettingsField(ctx, guildID, preferredTrackField, preferredTrackValue(pref)); err != nil {
+		return fmt.Errorf("SetPreferredTrack: %w", err)
+	}
+	return nil
+}
+
+// preferredTrackValue is what is stored for pref: the lower-case value ParsePreferredTrack reads.
+func preferredTrackValue(pref animeschedule.PreferredTrack) string {
+	return pref.String()
 }
 
 // SetPingMessage sets guild_settings.ping_message alone.

@@ -15,13 +15,13 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 	today := now.Format("2006-01-02")
 	aired := now.Unix() - 600
 	future := now.Unix() + 3600
-	one := animeschedule.ShowEntry{Name: "Aired One", Route: "aired-one", Episode: "Episode 1", AirTimeUnix: aired, AirType: "sub"}
-	later := animeschedule.ShowEntry{Name: "Later", Route: "later", Episode: "Episode 3", AirTimeUnix: future, AirType: "sub"}
-	delayed := animeschedule.ShowEntry{Name: "Delayed", Route: "delayed", Episode: "Episode 4", AirTimeUnix: aired, Delayed: "delayed", AirType: "sub"}
-	late := animeschedule.ShowEntry{Name: "Late Listed", Route: "late-listed", Episode: "Episode 9", AirTimeUnix: future, AirType: "sub"}
+	one := animeschedule.ShowEntry{Name: "Aired One", Route: "aired-one", Episode: "Episode 1", AirTimeUnix: aired, Track: "sub"}
+	later := animeschedule.ShowEntry{Name: "Later", Route: "later", Episode: "Episode 3", AirTimeUnix: future, Track: "sub"}
+	delayed := animeschedule.ShowEntry{Name: "Delayed", Route: "delayed", Episode: "Episode 4", AirTimeUnix: aired, Delayed: "delayed", Track: "sub"}
+	late := animeschedule.ShowEntry{Name: "Late Listed", Route: "late-listed", Episode: "Episode 9", AirTimeUnix: future, Track: "sub"}
 
 	schedule := func(list ...animeschedule.ShowEntry) dayShowsFunc {
-		return func(bool) []animeschedule.ShowEntry { return list }
+		return func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return list }
 	}
 	newState := func() *fakeSentState {
 		st := newFakeSentState()

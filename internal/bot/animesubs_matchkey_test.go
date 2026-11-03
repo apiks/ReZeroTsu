@@ -37,8 +37,8 @@ func TestGuildShowNamesMatchUsesMatchKey(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := guildShowNamesMatch(tc.day, tc.subs); got != tc.want {
-				t.Errorf("guildShowNamesMatch = %v, want %v", got, tc.want)
+			if got := guildSentMatches(tc.day, tc.subs, tc.day); got != tc.want {
+				t.Errorf("guildSentMatches = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -57,7 +57,7 @@ func TestSeedDoesNotDuplicateTrimVariantName(t *testing.T) {
 	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, LastSeedDate: today, Shows: []*anime_subs.ShowSub{
 		{Show: "Aired One", Guild: true},
 	}}
-	seedGuildNewEpisodesForShard(context.Background(), st, []string{"g1"}, func(bool) []animeschedule.ShowEntry { return list }, now)
+	seedGuildNewEpisodesForShard(context.Background(), st, []string{"g1"}, func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return list }, now)
 	doc, _ := st.GetAnimeSubs(context.Background(), "c1")
 	if len(doc.Shows) != 2 {
 		t.Errorf("shows = %d, want 2 (Aired One, Late Listed)", len(doc.Shows))

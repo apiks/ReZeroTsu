@@ -6,9 +6,9 @@
 
 ## Features
 
-* **New Anime Episodes feed (subbed).** Optional DM notifications when new episodes release; optional channel autopost with role ping. Source: [AnimeSchedule.net](https://animeschedule.net).
+* **New Anime Episodes.** Optional DM notifications when new episodes release (always the sub, else raw); optional channel autopost with role ping that follows the server's preferred track: Sub posts sub (else raw) episodes, Dub posts dubbed episodes plus the sub (else raw) episodes of shows without a dub that week, Raw posts raw episodes. Source: [AnimeSchedule.net](https://animeschedule.net).
 
-* **Daily Anime Schedule.** View or autopost the daily schedule; `/schedule` has a day picker for the three loaded weeks plus Previous and Next buttons. Source: [AnimeSchedule.net](https://animeschedule.net).
+* **Daily Anime Schedule.** View or autopost the daily schedule; `/schedule` has a day picker for the three loaded weeks plus Previous and Next buttons, and an optional `track` option (Sub, Dub or Raw) that sets which track a day shows (omitted, it follows the server's preferred track, which moderators cycle Sub, Dub, Raw with the Preferred track button on `/settings`; Sub by default, and always Sub in DMs). The daily-schedule autopost follows the same preference. Source: [AnimeSchedule.net](https://animeschedule.net).
 
 * **Customizable Reddit RSS autopost.** Post threads by subreddit, sort (hot / rising / new), optional author or title filters, and optional auto-pin of the latest post.
 
@@ -28,7 +28,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`; `add` also follows upcoming shows (it says when they premiere, or that the date isn't announced yet), says when the next episode airs and reminds you to keep DMs open, and takes an optional `type` filter: TV, TV Short, ONA, Donghua, OVA, Special or Movie; `list` shows each show's next episode or when it last aired), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
 
-**Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, ping message). Mod commands default to Manage Server; server admins grant them to other roles, members or channels in Server Settings, Integrations.
+**Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, preferred track, ping message). Mod commands default to Manage Server; server admins grant them to other roles, members or channels in Server Settings, Integrations.
 
 **Voice roles:** `/voicerole add`, `/voicerole remove`, `/voicerole list`.
 

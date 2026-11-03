@@ -24,7 +24,7 @@ func seedWeeks(t *testing.T) {
 	setClock(t)
 	days := map[string][]animeschedule.ShowEntry{}
 	for d := mustDate(loadedFirst); !d.After(mustDate(loadedLast)); d = d.AddDate(0, 0, 1) {
-		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "Show " + animeschedule.DateKey(d), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}}
+		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "Show " + animeschedule.DateKey(d), Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}}
 	}
 	t.Cleanup(animeschedule.Seed(days))
 	animeschedule.SetAPIKey("key")
@@ -113,12 +113,12 @@ func TestPreviousOnAMondayOpensTheSundayBefore(t *testing.T) {
 
 func TestPreviousIsDisabledOnLastWeeksMondayAndNextOnNextWeeksSunday(t *testing.T) {
 	seedWeeks(t)
-	first := pressNav(t, "sched:"+loadedFirst+":user", "user", publicMsg())[0].Response
+	first := pressNav(t, "sched:"+loadedFirst+":user:sub", "user", publicMsg())[0].Response
 	prev, next := buttons(t, first)
 	if !prev.Disabled || next.Disabled {
 		t.Errorf("first loaded day: prev disabled=%v next disabled=%v, want true/false", prev.Disabled, next.Disabled)
 	}
-	last := pressNav(t, "sched:"+loadedLast+":user", "user", publicMsg())[0].Response
+	last := pressNav(t, "sched:"+loadedLast+":user:sub", "user", publicMsg())[0].Response
 	prev, next = buttons(t, last)
 	if prev.Disabled || !next.Disabled {
 		t.Errorf("last loaded day: prev disabled=%v next disabled=%v, want false/true", prev.Disabled, next.Disabled)
@@ -128,7 +128,7 @@ func TestPreviousIsDisabledOnLastWeeksMondayAndNextOnNextWeeksSunday(t *testing.
 func TestPressForADateOutsideTheLoadedRangeIsRefusedPrivately(t *testing.T) {
 	seedWeeks(t)
 	for _, day := range []string{staleDay, "2026-11-16"} {
-		calls := pressNav(t, "sched:"+day+":user", "user", publicMsg())
+		calls := pressNav(t, "sched:"+day+":user:sub", "user", publicMsg())
 		if len(calls) != 1 || calls[0].Visibility != interaction.Private || calls[0].Response.Content != msgDayNotLoaded {
 			t.Errorf("%s: want the private refusal %q, got %+v", day, msgDayNotLoaded, calls)
 		}
@@ -155,14 +155,14 @@ func TestScheduleDayOutsideTheLoadedRangeIsRefusedPrivately(t *testing.T) {
 
 func TestOnlyTheAuthorsPressUpdatesTheMessage(t *testing.T) {
 	seedWeeks(t)
-	id := "sched:2026-11-05:author"
+	id := "sched:2026-11-05:author:sub"
 
 	calls := pressNav(t, id, "stranger", publicMsg())
 	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private {
 		t.Fatalf("other member: want a private copy, got %+v", calls)
 	}
 	_, next := buttons(t, calls[0].Response)
-	if !strings.HasSuffix(next.CustomID, ":author") {
+	if !strings.HasSuffix(next.CustomID, ":author:sub") {
 		t.Errorf("the copy's buttons %q should still page the author's data", next.CustomID)
 	}
 

@@ -28,37 +28,41 @@ const (
 
 // TimetableAnime is one entry from the AnimeSchedule API timetables.
 type TimetableAnime struct {
-	Title             string         `json:"title"`
-	Romaji            string         `json:"romaji"`
-	English           string         `json:"english"`
-	Native            string         `json:"native"`
-	Route             string         `json:"route"`
-	EpisodeDate       time.Time      `json:"episodeDate"`
-	EpisodeNumber     int            `json:"episodeNumber"`
-	Episodes          int            `json:"episodes"`
-	DelayedText       string         `json:"delayedText"`
-	DelayedFrom       time.Time      `json:"delayedFrom"`
-	DelayedUntil      time.Time      `json:"delayedUntil"`
-	Donghua           bool           `json:"donghua"`
-	AirType           string         `json:"airType"`
-	ImageVersionRoute string         `json:"imageVersionRoute"`
-	MediaTypes        []MediaTypeRef `json:"mediaTypes"`
+	Title         string    `json:"title"`
+	Romaji        string    `json:"romaji"`
+	English       string    `json:"english"`
+	Native        string    `json:"native"`
+	Route         string    `json:"route"`
+	EpisodeDate   time.Time `json:"episodeDate"`
+	EpisodeNumber int       `json:"episodeNumber"`
+	// SubtractedEpisodeNumber is the first episode of an episode span that ends at EpisodeNumber. Zero, or a value
+	// equal to or above EpisodeNumber, means no span: the entry is the single episode EpisodeNumber.
+	SubtractedEpisodeNumber int            `json:"subtractedEpisodeNumber"`
+	Episodes                int            `json:"episodes"`
+	DelayedText             string         `json:"delayedText"`
+	DelayedFrom             time.Time      `json:"delayedFrom"`
+	DelayedUntil            time.Time      `json:"delayedUntil"`
+	Donghua                 bool           `json:"donghua"`
+	AirType                 string         `json:"airType"`
+	ImageVersionRoute       string         `json:"imageVersionRoute"`
+	MediaTypes              []MediaTypeRef `json:"mediaTypes"`
 }
 
 type ShowEntry struct {
 	// Name is the display title; subscriptions are keyed by it.
 	Name string
 	// Romaji, English and Native are the show's other names; any may be empty.
-	Romaji            string
-	English           string
-	Native            string
-	Route             string
-	AirTimeUnix       int64
-	Episode           string
-	Delayed           string
-	Donghua           bool
-	MediaType         MediaType
-	AirType           string
+	Romaji      string
+	English     string
+	Native      string
+	Route       string
+	AirTimeUnix int64
+	Episode     string
+	Delayed     string
+	Donghua     bool
+	MediaType   MediaType
+	// Track is the entry's track.
+	Track             Track
 	ImageVersionRoute string
 	// Final marks the show's last episode.
 	Final bool
@@ -182,9 +186,13 @@ func Seed(days map[string][]ShowEntry) (restore func()) {
 			weeks[DateKey(mondayOf(t))] = true
 		}
 	}
+	normalized := make(map[string][]ShowEntry, len(days))
+	for date, rows := range days {
+		normalized[date] = normalizeRows(rows)
+	}
 	timetableMu.Lock()
 	prev, prevPopulated, prevWeeks := timetable, timetablePopulated, fetchedWeeks
-	timetable, timetablePopulated, fetchedWeeks = days, true, weeks
+	timetable, timetablePopulated, fetchedWeeks = normalized, true, weeks
 	timetableMu.Unlock()
 	return func() {
 		timetableMu.Lock()
@@ -217,10 +225,27 @@ func loadedDates() []string {
 	return dates
 }
 
-// GetDayShows returns the shows of the UTC date of day, sorted by air time. Excludes donghua when false.
-func GetDayShows(day time.Time, donghua bool) []ShowEntry {
+// subView is the loaded timetable read under the Sub chain, which the readers other than GetDayShows return.
+// The caller holds timetableMu.
+func subView() map[string][]ShowEntry {
+	return chainDays(timetable, PreferSub)
+}
+
+// GetDayShows returns the shows of the UTC date of day under the preferred track, sorted by air time. For each
+// show and UTC ISO week the preference shows one track, and only that track's rows show: Sub shows sub, else raw;
+// Dub shows dub, else sub, else raw; Raw shows raw. A delayed row counts. Excludes donghua when false.
+func GetDayShows(day time.Time, donghua bool, pref PreferredTrack) []ShowEntry {
+	key := DateKey(day)
 	timetableMu.RLock()
-	entries := timetable[DateKey(day)]
+	week := make(map[string][]ShowEntry, 7)
+	monday := mondayOf(day)
+	for d := range 7 {
+		k := DateKey(monday.AddDate(0, 0, d))
+		if rows, ok := timetable[k]; ok {
+			week[k] = rows
+		}
+	}
+	entries := chainDay(key, week[key], tracksByWeek(week), pref)
 	timetableMu.RUnlock()
 	if len(entries) == 0 {
 		return nil
@@ -244,13 +269,14 @@ func AiringShows() []ShowEntry {
 	from, to := DateKey(weeks[1].monday), DateKey(weeks[2].monday.AddDate(0, 0, 6))
 	timetableMu.RLock()
 	defer timetableMu.RUnlock()
+	view := subView()
 	var out []ShowEntry
 	seen := make(map[string]bool)
 	for _, date := range loadedDates() {
 		if date < from || date > to {
 			continue
 		}
-		for _, e := range timetable[date] {
+		for _, e := range view[date] {
 			key := e.Route
 			if key == "" {
 				key = strings.ToLower(e.Name)
@@ -318,9 +344,10 @@ func LoadedShows() []ShowEntry {
 func AllEntries() []ShowEntry {
 	timetableMu.RLock()
 	defer timetableMu.RUnlock()
+	view := subView()
 	var out []ShowEntry
 	for _, date := range loadedDates() {
-		out = append(out, timetable[date]...)
+		out = append(out, view[date]...)
 	}
 	return out
 }
@@ -338,9 +365,10 @@ func SnapshotWeeks() WeekSnapshot {
 	weeks := weekLayout(Now())
 	timetableMu.RLock()
 	defer timetableMu.RUnlock()
+	view := subView()
 	read := func(w timetableWeek) (entries []ShowEntry, loaded bool) {
 		for d := range 7 {
-			entries = append(entries, timetable[DateKey(w.monday.AddDate(0, 0, d))]...)
+			entries = append(entries, view[DateKey(w.monday.AddDate(0, 0, d))]...)
 		}
 		return entries, fetchedWeeks[DateKey(w.monday)] && len(entries) > 0
 	}
@@ -511,29 +539,20 @@ func setFetchErr(err error) {
 	timetableMu.Unlock()
 }
 
-// processTimetable builds UTC date -> []ShowEntry from API; sub preferred, raw if no sub. Sorts each day by air time.
+// processTimetable builds UTC date -> []ShowEntry from API, keeping every row with its track (a missing or
+// unknown one counts as raw) and each row that repeats another in show, track, air time and episode once.
+// The preferred track is applied when a day is read. Sorts each day by air time.
 func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
-	subRoutes := make(map[string]bool)
-	for _, a := range list {
-		if a.AirType == "sub" {
-			subRoutes[a.Route] = true
-		}
-	}
-
 	byDate := make(map[string][]ShowEntry)
 	for _, a := range list {
-		if a.AirType == "dub" {
-			continue
-		}
-		if a.AirType == "raw" && subRoutes[a.Route] {
-			continue
-		}
-
 		date := DateKey(a.EpisodeDate)
 		episodeStr := fmt.Sprintf("Ep %d", a.EpisodeNumber)
+		if a.SubtractedEpisodeNumber > 0 && a.SubtractedEpisodeNumber < a.EpisodeNumber {
+			episodeStr = fmt.Sprintf("Ep %d-%d", a.SubtractedEpisodeNumber, a.EpisodeNumber)
+		}
 		final := false
 		if a.Episodes > 0 && a.EpisodeNumber >= a.Episodes {
-			episodeStr = fmt.Sprintf("Ep %dF", a.EpisodeNumber)
+			episodeStr += "F"
 			final = true
 		}
 		delayed := ""
@@ -554,10 +573,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			delayed = a.DelayedText
 		}
 
-		airType := a.AirType
-		if airType != "sub" && airType != "raw" {
-			airType = "raw"
-		}
+		airType := trackOf(a.AirType)
 		byDate[date] = append(byDate[date], ShowEntry{
 			Name:              strings.TrimSpace(a.Title),
 			Romaji:            strings.TrimSpace(a.Romaji),
@@ -569,13 +585,14 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			Delayed:           delayed,
 			Donghua:           a.Donghua,
 			MediaType:         decodeMediaType(a.MediaTypes),
-			AirType:           airType,
+			Track:             airType,
 			ImageVersionRoute: a.ImageVersionRoute,
 			Final:             final,
 		})
 	}
 
 	for d := range byDate {
+		byDate[d] = normalizeRows(byDate[d])
 		sort.Slice(byDate[d], func(i, j int) bool {
 			return byDate[d][i].AirTimeUnix < byDate[d][j].AirTimeUnix
 		})

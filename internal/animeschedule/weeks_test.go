@@ -84,7 +84,7 @@ func at(t time.Time) func() {
 func dayNames(date string) string {
 	day, _ := time.Parse("2006-01-02", date)
 	var out []string
-	for _, e := range GetDayShows(day, true) {
+	for _, e := range GetDayShows(day, true, PreferSub) {
 		out = append(out, e.Name)
 	}
 	return strings.Join(out, ",")
@@ -154,7 +154,7 @@ func TestRefreshReadsAllThreeWeeksAndAppliesSubOverRawAndDubDropping(t *testing.
 		}
 	}
 	day := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
-	if got := GetDayShows(day, true); got[0].AirType != "sub" {
+	if got := GetDayShows(day, true, PreferSub); got[0].Track != "sub" {
 		t.Errorf("2026-11-10 = %+v, want the sub", got[0])
 	}
 }

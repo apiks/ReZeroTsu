@@ -16,11 +16,16 @@ func TestEpisodeEmbedWording(t *testing.T) {
 		show animeschedule.ShowEntry
 		want string
 	}{
-		{"tv sub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", AirType: "sub"}, "**Ep 5** subbed is out!"},
-		{"tv raw", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", AirType: "raw"}, "**Ep 5** raw is out!"},
-		{"ova keeps episode wording", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1F", AirType: "sub", MediaType: animeschedule.MediaOVA}, "**Ep 1F** subbed is out!"},
-		{"movie sub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", AirType: "sub", MediaType: animeschedule.MediaMovie}, "**Film** is out, subbed!"},
-		{"movie raw", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", AirType: "raw", MediaType: animeschedule.MediaMovie}, "**Film** is out, raw!"},
+		{"tv sub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", Track: "sub"}, "**Ep 5** subbed is out!"},
+		{"tv dub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", Track: "dub"}, "**Ep 5** dubbed is out!"},
+		{"movie dub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "dub", MediaType: animeschedule.MediaMovie}, "**Film** is out, dubbed!"},
+		{"span dub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1-12F", Track: "dub"}, "**Ep 1-12F** dubbed is out!"},
+		{"span sub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1-12", Track: "sub"}, "**Ep 1-12** subbed is out!"},
+		{"span raw", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1-12", Track: "raw"}, "**Ep 1-12** raw is out!"},
+		{"tv raw", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", Track: "raw"}, "**Ep 5** raw is out!"},
+		{"ova keeps episode wording", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1F", Track: "sub", MediaType: animeschedule.MediaOVA}, "**Ep 1F** subbed is out!"},
+		{"movie sub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "sub", MediaType: animeschedule.MediaMovie}, "**Film** is out, subbed!"},
+		{"movie raw", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "raw", MediaType: animeschedule.MediaMovie}, "**Film** is out, raw!"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -33,12 +38,12 @@ func TestEpisodeEmbedWording(t *testing.T) {
 
 func TestGuildNewEpisodesMovieWording(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
-	shows := []animeschedule.ShowEntry{{Name: "Film", Route: "film", Episode: "Ep 1F", AirTimeUnix: now.Unix() - 600, AirType: "sub", MediaType: animeschedule.MediaMovie}}
+	shows := []animeschedule.ShowEntry{{Name: "Film", Route: "film", Episode: "Ep 1F", AirTimeUnix: now.Unix() - 600, Track: "sub", MediaType: animeschedule.MediaMovie}}
 	st := newFakeSentState()
 	st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1"}
 	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{{Show: "Film", Guild: true}}}
 	d := newFakeDiscord()
-	processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
+	processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }, now)
 	got := d.deliveredTo("c1")
 	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
 		t.Fatalf("delivered = %+v, want one message with one embed", got)

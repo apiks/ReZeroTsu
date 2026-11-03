@@ -90,7 +90,9 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	now := animeschedule.Now()
 	today := animeschedule.DayOf(now)
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
+	dayShows := func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry {
+		return animeschedule.GetDayShows(today, donghua, pref)
+	}
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
@@ -162,11 +164,11 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", shardID, "guild_id", guildID, "err", err)
 		}
 	}
-	donghua := true
+	donghua, pref := true, animeschedule.PreferSub
 	if settings != nil {
-		donghua = settings.Donghua
+		donghua, pref = settings.Donghua, settings.Preferred()
 	}
-	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua))
+	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua, pref), pref)
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
 	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))

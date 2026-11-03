@@ -27,12 +27,17 @@ const (
 
 var dayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 
+// trackChoice is the track option's choice for p: its title and what it falls back to.
+func trackChoice(p animeschedule.PreferredTrack) *discordgo.ApplicationCommandOptionChoice {
+	return &discordgo.ApplicationCommandOptionChoice{Name: p.Title() + ": " + p.Fallback(), Value: p.String()}
+}
+
 func init() {
 	commands.Add(&commands.Command{
 		Visibility: commands.Public,
 		Response:   commands.Deferred,
 		Name:       "schedule",
-		Desc:       "Anime release times for today, tomorrow or a day; a day picker jumps across the loaded weeks.",
+		Desc:       "Anime release times for today, tomorrow or a day, as sub, dub or raw; jump across the loaded weeks.",
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
 		Installs:   commands.BothInstalls(),
@@ -43,6 +48,17 @@ func init() {
 				Description:  "A day: today, tomorrow, or a weekday like monday or tue (its next occurrence). Omit for today.",
 				Required:     false,
 				Autocomplete: true,
+			},
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "track",
+				Description: "Which track to show. Defaults to the server's preferred track, else Sub.",
+				Required:    false,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					trackChoice(animeschedule.PreferSub),
+					trackChoice(animeschedule.PreferDub),
+					trackChoice(animeschedule.PreferRaw),
+				},
 			},
 		},
 		Run:                handleSchedule,
@@ -117,11 +133,7 @@ func parseDay(s string) int {
 
 // scheduleLine renders one entry; onToday adds the live relative time.
 func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
-	airLabel := "SUB"
-	if e.AirType == "raw" {
-		airLabel = "RAW"
-	}
-	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, airLabel)
+	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, e.Track.Label())
 	if e.Delayed != "" {
 		line += " " + e.Delayed
 	}
@@ -169,10 +181,10 @@ func utf16Len(s string) int {
 	return n
 }
 
-// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list. Both /schedule and the
-// daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC day adds live
-// relative times.
-func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
+// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list, read under pref. Both
+// /schedule and the daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC
+// day adds live relative times. The footer names a Dub or Raw preference.
+func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pref animeschedule.PreferredTrack) *discordgo.MessageEmbed {
 	date = date.UTC()
 	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
@@ -190,6 +202,9 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *d
 	footerText := fmt.Sprintf("%d shows", len(shows))
 	if len(shows) == 1 {
 		footerText = "1 show"
+	}
+	if pref != animeschedule.PreferSub {
+		footerText += " · " + pref.Title() + " preferred"
 	}
 	footerText += " · days run on UTC, times show in your time zone"
 	emb := &discordgo.MessageEmbed{
@@ -211,17 +226,38 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *d
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// donghuaSetting reports whether the server shows donghua. Where the bot has no server membership (DMs, and a
-// user install in a server it has not joined) there are no settings, and donghua is shown.
-func donghuaSetting(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
+// serverSettings reads, in one lookup, whether the server shows donghua and its preferred track. Where the bot has
+// no server membership (DMs, and a user install in a server it has not joined) there are no settings; donghua is
+// shown and the track is Sub, as when the settings cannot be read.
+func serverSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction) (donghua bool, pref animeschedule.PreferredTrack) {
 	if !interaction.BotInGuild(i) {
-		return true
+		return true, animeschedule.PreferSub
 	}
 	settings, err := guildSettings(ctx, db, i.GuildID)
-	if err == nil && settings != nil {
-		return settings.Donghua
+	if err != nil || settings == nil {
+		return true, animeschedule.PreferSub
 	}
-	return true
+	return settings.Donghua, settings.Preferred()
+}
+
+// trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.
+func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
+	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
+		if pref, ok := animeschedule.ParsePreferredTrack(opt.StringValue()); ok {
+			return &pref
+		}
+	}
+	return nil
+}
+
+// dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
+// and returns the track used.
+func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack) {
+	donghua, pref := serverSettings(ic.Context(), ic.DB, ic.Interaction)
+	if chosen != nil {
+		pref = *chosen
+	}
+	return animeschedule.GetDayShows(date, donghua, pref), pref
 }
 
 // handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.
@@ -246,9 +282,9 @@ func handleSchedule(ic *interaction.Context) error {
 		date = resolved
 	}
 
-	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
+	shows, pref := dayShows(ic, date, trackOption(ic))
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows)},
-		Components: pageComponents(v, date, ic.Invoker.ID),
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
+		Components: pageComponents(v, date, ic.Invoker.ID, pref),
 	})
 }

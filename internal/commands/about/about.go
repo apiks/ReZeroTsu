@@ -43,7 +43,7 @@ func aboutEmbed(user *discordgo.User) *discordgo.MessageEmbed {
 		Thumbnail:   &discordgo.MessageEmbedThumbnail{URL: user.AvatarURL("256")},
 		Fields: []*discordgo.MessageEmbedField{{
 			Name:  "**Features:**",
-			Value: "**-** Autopost Anime Episodes, Anime Schedule (_subbed_)\n**-** Autopost Reddit Feed\n**-** React-based Auto Role\n**-** Raffles\n[Invite Link](" + inviteURL + ")",
+			Value: "**-** Autopost Anime Episodes, Anime Schedule (sub, dub or raw)\n**-** Autopost Reddit Feed\n**-** React-based Auto Role\n**-** Raffles\n[Invite Link](" + inviteURL + ")",
 		}},
 	}
 	emb.URL = topGGBase + user.ID

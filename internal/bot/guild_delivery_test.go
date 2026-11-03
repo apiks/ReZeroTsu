@@ -29,7 +29,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	for i := 0; i < n; i++ {
 		shows = append(shows, animeschedule.ShowEntry{
 			Name: fmt.Sprintf("Show %d", i), Route: fmt.Sprintf("show-%d", i),
-			Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub",
+			Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub",
 		})
 	}
 	st := newFakeSentState()
@@ -39,7 +39,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	d := newFakeDiscord(script...)
 	d.Roles["r1"] = true
 	senders, clk := newTestSendersWithClock(d)
-	return &guildHarness{d: d, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }, senders: senders, clock: clk}
+	return &guildHarness{d: d, st: st, now: now, fn: func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }, senders: senders, clock: clk}
 }
 
 func (h *guildHarness) run(ctx context.Context) {

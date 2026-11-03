@@ -14,7 +14,7 @@ func TestProcessAnimeSubUser(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	aired := now.Unix() - 600
 	ep := func(name, route, episode string, air int64) animeschedule.ShowEntry {
-		return animeschedule.ShowEntry{Name: name, Route: route, Episode: episode, AirTimeUnix: air, AirType: "sub"}
+		return animeschedule.ShowEntry{Name: name, Route: route, Episode: episode, AirTimeUnix: air, Track: "sub"}
 	}
 	const user = "u1"
 	newState := func(subs ...*anime_subs.ShowSub) *fakeSentState {
@@ -231,7 +231,7 @@ func TestProcessAnimeSubUserShutdownDuringOpenDMLogsNoError(t *testing.T) {
 	defer cancel()
 	d := &cancelOnOpenDM{fakeDiscord: newFakeDiscord(), cancel: cancel}
 	doc, _ := st.GetAnimeSubs(ctx, "u1")
-	show := animeschedule.ShowEntry{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub"}
+	show := animeschedule.ShowEntry{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}
 	err := processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, []animeschedule.ShowEntry{show}, now)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
@@ -247,7 +247,7 @@ func TestProcessAnimeSubUserMatchesByRouteFirst(t *testing.T) {
 	const user = "u1"
 	dm := "dm-" + user
 	ep := func(name, route string) animeschedule.ShowEntry {
-		return animeschedule.ShowEntry{Name: name, Route: route, Episode: "Episode 2", AirTimeUnix: aired, AirType: "sub"}
+		return animeschedule.ShowEntry{Name: name, Route: route, Episode: "Episode 2", AirTimeUnix: aired, Track: "sub"}
 	}
 	run := func(sub *anime_subs.ShowSub, show animeschedule.ShowEntry) (*fakeDiscord, *fakeSentState) {
 		d, st := newFakeDiscord(), newFakeSentState()
