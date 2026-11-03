@@ -32,7 +32,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Voice roles:** `/add-voice`, `/remove-voice`, `/voice-roles`.
 
-**Reddit feeds:** `/add-reddit-feed`, `/remove-reddit-feed`, `/reddit-feeds`.
+**Reddit feeds:** `/reddit add`, `/reddit remove`, `/reddit list`.
 
 **Reaction roles:** `/add-react-autorole`, `/remove-react-autorole`, `/reacts-autorole`.
 
