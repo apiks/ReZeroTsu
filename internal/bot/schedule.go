@@ -136,16 +136,13 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	wg.Wait()
 }
 
-// scheduleDayFunc returns the shows of today under a preferred track, optionally including donghua.
-type scheduleDayFunc func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry
-
 // scheduleRetryWait is the pause before the single retry of a verifiably missing schedule post.
 var scheduleRetryWait = 3 * time.Second
 
 // processDailyScheduleForGuild posts the daily schedule to one guild at most once per UTC day: one attempt
 // following the shared send rules, then at most one retry when the post is verifiably missing (or verification
 // itself failed, which is the opposite of the default policy). Rejected outcomes are never retried.
-func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, dayShows scheduleDayFunc, now time.Time) error {
+func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, dayShows dayShowsFunc, now time.Time) error {
 	if guildID == "" {
 		return nil
 	}

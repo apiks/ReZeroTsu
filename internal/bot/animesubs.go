@@ -209,15 +209,15 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster
 func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	var desc string
 	switch {
-	case show.MediaType == animeschedule.MediaMovie && show.AirType == "sub":
+	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackSub:
 		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
-	case show.MediaType == animeschedule.MediaMovie && show.AirType == animeschedule.TrackDub:
+	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackDub:
 		desc = fmt.Sprintf("**%s** is out, dubbed!", show.Name)
 	case show.MediaType == animeschedule.MediaMovie:
 		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
-	case show.AirType == animeschedule.TrackDub:
+	case show.Track == animeschedule.TrackDub:
 		desc = fmt.Sprintf("**%s** dubbed is out!", show.Episode)
-	case show.AirType == "sub":
+	case show.Track == animeschedule.TrackSub:
 		desc = fmt.Sprintf("**%s** subbed is out!", show.Episode)
 	default:
 		desc = fmt.Sprintf("**%s** raw is out!", show.Episode)
@@ -555,10 +555,10 @@ type airing struct {
 }
 
 func airingOf(show animeschedule.ShowEntry) airing {
-	return airing{show: anime_subs.MatchKey(show.Name), track: show.AirType.Known(), episode: show.Episode}
+	return airing{show: anime_subs.MatchKey(show.Name), track: show.Track.Known(), episode: show.Episode}
 }
 
-func (a airing) sub(name string) *anime_subs.ShowSub {
+func (a airing) entry(name string) *anime_subs.ShowSub {
 	return &anime_subs.ShowSub{Show: name, Track: string(a.track), Episode: a.episode, Guild: true}
 }
 
@@ -572,9 +572,9 @@ type sentIndex struct {
 	subTracks map[string]map[animeschedule.Track]bool
 }
 
-// newSentIndex indexes subs. Among entries of one identity a notified one wins, so a row any of them marks as
+// newSentIndex indexes entries. Among entries of one identity a notified one wins, so a row any of them marks as
 // posted is never reposted; the entry chosen is the one marked after sending. subChain is today's Sub chain rows.
-func newSentIndex(subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) sentIndex {
+func newSentIndex(entries []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) sentIndex {
 	idx := sentIndex{
 		exact:     map[airing]*anime_subs.ShowSub{},
 		legacy:    map[string]*anime_subs.ShowSub{},
@@ -587,20 +587,20 @@ func newSentIndex(subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry
 		}
 		idx.subTracks[a.show][a.track] = true
 	}
-	for _, sub := range subs {
-		if sub == nil {
+	for _, entry := range entries {
+		if entry == nil {
 			continue
 		}
-		key := anime_subs.MatchKey(sub.Show)
-		if sub.Track == "" && sub.Episode == "" {
-			if cur, ok := idx.legacy[key]; !ok || (!cur.Notified && sub.Notified) {
-				idx.legacy[key] = sub
+		key := anime_subs.MatchKey(entry.Show)
+		if entry.Track == "" && entry.Episode == "" {
+			if cur, ok := idx.legacy[key]; !ok || (!cur.Notified && entry.Notified) {
+				idx.legacy[key] = entry
 			}
 			continue
 		}
-		a := airing{show: key, track: animeschedule.Track(sub.Track).Known(), episode: sub.Episode}
-		if cur, ok := idx.exact[a]; !ok || (!cur.Notified && sub.Notified) {
-			idx.exact[a] = sub
+		a := airing{show: key, track: animeschedule.Track(entry.Track).Known(), episode: entry.Episode}
+		if cur, ok := idx.exact[a]; !ok || (!cur.Notified && entry.Notified) {
+			idx.exact[a] = entry
 		}
 	}
 	return idx
@@ -608,26 +608,26 @@ func newSentIndex(subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry
 
 func (idx sentIndex) find(show animeschedule.ShowEntry) (*anime_subs.ShowSub, bool) {
 	a := airingOf(show)
-	if sub, ok := idx.exact[a]; ok {
-		return sub, true
+	if entry, ok := idx.exact[a]; ok {
+		return entry, true
 	}
-	if sub, ok := idx.legacy[a.show]; ok && idx.subTracks[a.show][a.track] {
-		return sub, true
+	if entry, ok := idx.legacy[a.show]; ok && idx.subTracks[a.show][a.track] {
+		return entry, true
 	}
 	return nil, false
 }
 
 // guildSentMatches reports whether the stored entries and today's rows identify the same airings (case-insensitive
 // show names); it lets the same-day seeding skip a document that is already complete.
-func guildSentMatches(dayShows []animeschedule.ShowEntry, subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) bool {
-	idx := newSentIndex(subs, subChain)
+func guildSentMatches(dayShows []animeschedule.ShowEntry, entries []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) bool {
+	idx := newSentIndex(entries, subChain)
 	found := make(map[*anime_subs.ShowSub]struct{}, len(dayShows))
 	for _, show := range dayShows {
-		sub, ok := idx.find(show)
+		entry, ok := idx.find(show)
 		if !ok {
 			return false
 		}
-		found[sub] = struct{}{}
+		found[entry] = struct{}{}
 	}
 	return len(found) == len(idx.exact)+len(idx.legacy)
 }
@@ -649,11 +649,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		settings, _ := st.GetGuildSettings(ctx, guildID)
-		donghua, pref := true, animeschedule.PreferSub
-		if settings != nil {
-			donghua, pref = settings.Donghua, settings.Preferred()
-		}
+		donghua, pref := guildShowSettings(ctx, st, guildID)
 		dayShows := shows(donghua, pref)
 		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
@@ -674,10 +670,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 
-		subChain := dayShows
-		if pref != animeschedule.PreferSub {
-			subChain = shows(donghua, animeschedule.PreferSub)
-		}
+		subChain := subChainOf(shows, dayShows, donghua, pref)
 		if len(existing.Shows) > 0 && guildSentMatches(dayShows, existing.Shows, subChain) {
 			continue
 		}
@@ -689,7 +682,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			if _, ok := idx.find(show); ok {
 				continue
 			}
-			sub := airingOf(show).sub(show.Name)
+			sub := airingOf(show).entry(show.Name)
 			idx.exact[airingOf(show)] = sub
 			added = append(added, sub)
 		}
@@ -699,11 +692,54 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 	}
 }
 
+// guildShowSettings is the donghua setting and preferred track a server's new-episodes autopost reads: donghua on
+// and Sub when the server has no settings.
+func guildShowSettings(ctx context.Context, st SentState, guildID string) (donghua bool, pref animeschedule.PreferredTrack) {
+	donghua, pref = true, animeschedule.PreferSub
+	if settings, _ := st.GetGuildSettings(ctx, guildID); settings != nil {
+		donghua, pref = settings.Donghua, settings.Preferred()
+	}
+	return donghua, pref
+}
+
+// subChainOf is today's Sub chain rows: dayShows when pref is already Sub, else a read under Sub.
+func subChainOf(shows dayShowsFunc, dayShows []animeschedule.ShowEntry, donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry {
+	if pref == animeschedule.PreferSub {
+		return dayShows
+	}
+	return shows(donghua, animeschedule.PreferSub)
+}
+
+// recordMissingRows adds to the channel's document, and to idx, an entry for each of today's rows idx does not
+// find: one that aired before it was added starts as posted, so a switch of track never reposts the day's earlier
+// airings, and one still to air starts unnotified. It reports false when the entries could not be stored; the
+// caller must then deliver nothing, or a row posted now could never be marked.
+func recordMissingRows(ctx context.Context, st SentState, channelID string, idx sentIndex, dayShows []animeschedule.ShowEntry, now time.Time) bool {
+	var added []*anime_subs.ShowSub
+	for _, show := range dayShows {
+		if _, ok := idx.find(show); ok {
+			continue
+		}
+		entry := airingOf(show).entry(show.Name)
+		entry.Notified = show.Delayed == "" && show.AirTimeUnix <= now.Unix()
+		idx.exact[airingOf(show)] = entry
+		added = append(added, entry)
+	}
+	if len(added) == 0 {
+		return true
+	}
+	if err := st.AppendAnimeSubShows(ctx, channelID, added); err != nil {
+		logger.For("animesubs").Error("Append guild channel shows failed", "channel_id", channelID, "err", err)
+		return false
+	}
+	return true
+}
+
 // newGuildShowSubs returns a guild show list with every row not yet notified.
 func newGuildShowSubs(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
 	subs := make([]*anime_subs.ShowSub, 0, len(dayShows))
 	for _, show := range dayShows {
-		subs = append(subs, airingOf(show).sub(show.Name))
+		subs = append(subs, airingOf(show).entry(show.Name))
 	}
 	return subs
 }
@@ -742,11 +778,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		roleID = ""
 	}
-	settings, _ := st.GetGuildSettings(ctx, guildID)
-	donghua, pref := true, animeschedule.PreferSub
-	if settings != nil {
-		donghua, pref = settings.Donghua, settings.Preferred()
-	}
+	donghua, pref := guildShowSettings(ctx, st, guildID)
 	todayShowsGuild := shows(donghua, pref)
 	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
@@ -760,11 +792,12 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
-	subChain := todayShowsGuild
-	if pref != animeschedule.PreferSub {
-		subChain = shows(donghua, animeschedule.PreferSub)
-	}
+	subChain := subChainOf(shows, todayShowsGuild, donghua, pref)
 	sent := newSentIndex(doc.Shows, subChain)
+	// A server that changed its preferred track today has no entries for the new chain's rows yet.
+	if !recordMissingRows(ctx, st, channelID, sent, todayShowsGuild, now) {
+		return
+	}
 	type dueEntry struct {
 		show animeschedule.ShowEntry
 		sub  *anime_subs.ShowSub

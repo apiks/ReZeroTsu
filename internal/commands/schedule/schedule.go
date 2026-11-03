@@ -128,7 +128,7 @@ func parseDay(s string) int {
 
 // scheduleLine renders one entry; onToday adds the live relative time.
 func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
-	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, e.AirType.Label())
+	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, e.Track.Label())
 	if e.Delayed != "" {
 		line += " " + e.Delayed
 	}
@@ -198,11 +198,8 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 	if len(shows) == 1 {
 		footerText = "1 show"
 	}
-	switch pref {
-	case animeschedule.PreferDub:
-		footerText += " · Dub preferred"
-	case animeschedule.PreferRaw:
-		footerText += " · Raw preferred"
+	if pref != animeschedule.PreferSub {
+		footerText += " · " + pref.Title() + " preferred"
 	}
 	footerText += " · days run on UTC, times show in your time zone"
 	emb := &discordgo.MessageEmbed{

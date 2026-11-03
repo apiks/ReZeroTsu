@@ -24,7 +24,7 @@ func seedWeeks(t *testing.T) {
 	setClock(t)
 	days := map[string][]animeschedule.ShowEntry{}
 	for d := mustDate(loadedFirst); !d.After(mustDate(loadedLast)); d = d.AddDate(0, 0, 1) {
-		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "Show " + animeschedule.DateKey(d), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}}
+		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "Show " + animeschedule.DateKey(d), Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}}
 	}
 	t.Cleanup(animeschedule.Seed(days))
 	animeschedule.SetAPIKey("key")

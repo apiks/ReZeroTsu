@@ -44,13 +44,13 @@ type scheduleHarness struct {
 	fd  *fakeDiscord
 	st  *fakeSentState
 	now time.Time
-	fn  scheduleDayFunc
+	fn  dayShowsFunc
 }
 
 func newScheduleHarness(script ...step) *scheduleHarness {
 	now := time.Date(2024, 3, 5, 0, 0, 30, 0, time.UTC) // a Tuesday, just after midnight
 	shows := []animeschedule.ShowEntry{
-		{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() + 3600, AirType: "sub"},
+		{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() + 3600, Track: "sub"},
 	}
 	st := newFakeSentState()
 	st.Autoposts[apKey("g1", postTypeDailySchedule)] = &guilds.Autopost{PostType: postTypeDailySchedule, ID: "sch"}

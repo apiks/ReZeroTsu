@@ -31,8 +31,8 @@ func TestScheduleWithoutDayOpensTheUTCDayNotTheHostsLocalDay(t *testing.T) {
 	time.Local = far
 	t.Cleanup(func() { time.Local = prev })
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
-		"2026-11-03": {{Name: "Tuesday Show", AirType: "sub", AirTimeUnix: 1700000000}},
-		"2026-11-04": {{Name: "Wednesday Show", AirType: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-03": {{Name: "Tuesday Show", Track: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-04": {{Name: "Wednesday Show", Track: "sub", AirTimeUnix: 1700000000}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -91,7 +91,7 @@ func findCommand(t *testing.T) *commands.Command {
 func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	setClock(t)
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
-		"2026-11-09": {{Name: "Frieren", Episode: "Episode 5", AirType: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-09": {{Name: "Frieren", Episode: "Episode 5", Track: "sub", AirTimeUnix: 1700000000}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -117,7 +117,7 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
 	setClock(t)
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
-		"2026-11-09": {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
+		"2026-11-09": {{Name: "Soul Land", Episode: "Episode 9", Track: "sub", AirTimeUnix: 1700000000, Donghua: true}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -153,7 +153,7 @@ func scheduleDateFor(t *testing.T, now time.Time, day string) string {
 	t.Cleanup(animeschedule.SetClock(func() time.Time { return now }))
 	days := map[string][]animeschedule.ShowEntry{}
 	for d := time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC); d.Before(time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)); d = d.AddDate(0, 0, 1) {
-		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "show-" + animeschedule.DateKey(d), AirType: "sub", AirTimeUnix: 1700000000}}
+		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "show-" + animeschedule.DateKey(d), Track: "sub", AirTimeUnix: 1700000000}}
 	}
 	t.Cleanup(animeschedule.Seed(days))
 	animeschedule.SetAPIKey("key")

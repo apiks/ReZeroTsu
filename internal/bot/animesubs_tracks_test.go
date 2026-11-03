@@ -15,7 +15,7 @@ var trackedNow = time.Unix(1_700_000_000, 0).UTC()
 
 func trackedRow(name, ep string, track animeschedule.Track) animeschedule.ShowEntry {
 	return animeschedule.ShowEntry{
-		Name: name, Route: name, Episode: ep, AirTimeUnix: trackedNow.Unix() - 600, AirType: track,
+		Name: name, Route: name, Episode: ep, AirTimeUnix: trackedNow.Unix() - 600, Track: track,
 	}
 }
 

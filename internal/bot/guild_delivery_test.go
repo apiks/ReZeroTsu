@@ -29,7 +29,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	for i := 0; i < n; i++ {
 		shows = append(shows, animeschedule.ShowEntry{
 			Name: fmt.Sprintf("Show %d", i), Route: fmt.Sprintf("show-%d", i),
-			Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, AirType: "sub",
+			Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub",
 		})
 	}
 	st := newFakeSentState()

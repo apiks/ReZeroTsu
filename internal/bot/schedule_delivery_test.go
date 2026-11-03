@@ -167,7 +167,7 @@ func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
 	h := newScheduleHarness()
 	t.Cleanup(animeschedule.SetClock(func() time.Time { return h.now }))
 	h.fn = func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry {
-		return []animeschedule.ShowEntry{{Name: "Movie A", Episode: "Movie", AirTimeUnix: h.now.Unix() + 3600, AirType: "sub", MediaType: animeschedule.MediaMovie}}
+		return []animeschedule.ShowEntry{{Name: "Movie A", Episode: "Movie", AirTimeUnix: h.now.Unix() + 3600, Track: "sub", MediaType: animeschedule.MediaMovie}}
 	}
 	if err := h.run(context.Background()); err != nil {
 		t.Fatal(err)
