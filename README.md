@@ -32,7 +32,7 @@ The bot uses **slash commands** (`/`) as the main interface. Use `/help` in the 
 
 **Official Discord Support Server:** https://discord.gg/BDT8Twv
 
-Use `/invite` in the bot to get an invite link with recommended permissions (or invite the bot with `bot` and `applications.commands` scope).
+Use `/invite` or `/about` in the bot to get an invite link with the permissions it uses (or invite the bot with `bot` and `applications.commands` scope).
 
 This application is the next version of [ZeroTsu](https://github.com/apiks/ZeroTsu).
 
