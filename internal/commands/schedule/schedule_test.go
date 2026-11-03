@@ -103,8 +103,8 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	}
 	row := r.Components[0].(discordgo.ActionsRow)
 	next := row.Components[1].(discordgo.Button)
-	if next.CustomID != commands.BuildPaginationCustomID("schedule", 2, 7, "user") {
-		t.Errorf("Next button = %q, want it to carry the author and page 2 of 7", next.CustomID)
+	if next.CustomID != "sched:2026-11-03:user" {
+		t.Errorf("Next button = %q, want it to carry Tuesday's date and the author", next.CustomID)
 	}
 }
 

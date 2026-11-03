@@ -46,8 +46,6 @@ func init() {
 		Run:                handleSchedule,
 		AutocompleteOption: autocompleteScheduleDay,
 	})
-	commands.RegisterCopySafePaginationRenderer("schedule", RenderSchedulePage)
-
 }
 
 func autocompleteScheduleDay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
@@ -209,25 +207,6 @@ func handleSchedule(ic *interaction.Context) error {
 	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return ic.EditReply(interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
-		Components: commands.BuildSchedulePaginationComponents(int(date.Weekday()), ic.Invoker.ID),
+		Components: navComponents(date, ic.Invoker.ID),
 	})
-}
-
-// RenderSchedulePage renders one day's schedule for pagination.
-func RenderSchedulePage(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
-	if !animeschedule.HasData() {
-		emb := commands.NewEmbedWithFields(nil, embedTitleUnavailable, msgTryAgainLater, nil)
-		return commands.Page{Response: interaction.Response{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: []discordgo.MessageComponent{},
-		}}
-	}
-
-	weekday := min(max(page, 0), 6)
-	date := animeschedule.DateInWeek(time.Weekday(weekday))
-	shows := animeschedule.GetDayShows(date, donghuaSetting(ctx, db, i.Interaction))
-	return commands.Page{Response: interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
-		Components: commands.BuildSchedulePaginationComponents(weekday, authorID),
-	}}
 }

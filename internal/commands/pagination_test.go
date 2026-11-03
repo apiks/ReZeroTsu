@@ -151,3 +151,43 @@ func TestServerOnlyViewIsRefusedWithoutAServerAndRendersInOne(t *testing.T) {
 		t.Errorf("in a server: want one UpdateMessage and one render, got %v (rendered %d)", ops, rendered)
 	}
 }
+
+// A component handler other than the page buttons (the schedule day picker) applies the same press rule.
+func TestPressRuleServesAHandlerOutsideThePageButtons(t *testing.T) {
+	page := Page{Response: interaction.Response{Content: "picked"}}
+	registerComponent(t, "t-pick:", func(ic *interaction.Context, _ *discordgo.Session) error {
+		return RespondToPress(ic, "author", page)
+	})
+	tests := []struct {
+		name    string
+		user    string
+		msg     *discordgo.Message
+		op      string
+		private bool
+	}{
+		{"author replaces the message", "author", publicMessage(), "UpdateMessage", false},
+		{"other member gets a private copy", "stranger", publicMessage(), "Reply", true},
+		{"press on a private copy updates it", "stranger", privateMessage(), "UpdateMessage", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &interactiontest.Fake{}
+			dispatchPress(t, fake, componentInteraction(press("t-pick:x"), "g", tt.user, tt.msg))
+			calls := fake.Calls()
+			if len(calls) != 1 || calls[0].Op != tt.op || (calls[0].Visibility == interaction.Private) != tt.private {
+				t.Fatalf("want one %s (private=%v), got %+v", tt.op, tt.private, calls)
+			}
+		})
+	}
+	t.Run("a refusal is private", func(t *testing.T) {
+		registerComponent(t, "t-refuse:", func(ic *interaction.Context, _ *discordgo.Session) error {
+			return RespondToPress(ic, "author", Page{Refusal: "nope"})
+		})
+		fake := &interactiontest.Fake{}
+		dispatchPress(t, fake, componentInteraction(press("t-refuse:x"), "g", "author", publicMessage()))
+		calls := fake.Calls()
+		if len(calls) != 1 || calls[0].Visibility != interaction.Private || calls[0].Response.Content != "nope" {
+			t.Fatalf("want one private refusal, got %+v", calls)
+		}
+	})
+}
