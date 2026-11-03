@@ -130,9 +130,6 @@ func TestEmbedCommandIsGone(t *testing.T) {
 	if command(t, "embed") != nil {
 		t.Error("/embed is still registered")
 	}
-	if command(t, "edit") == nil || command(t, "edit-embed") == nil {
-		t.Error("/edit and /edit-embed stay until ticket 62")
-	}
 }
 
 func TestSayOpensAParagraphFormLimitedTo2000CharactersForAPlainMessage(t *testing.T) {
