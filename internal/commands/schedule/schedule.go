@@ -85,49 +85,80 @@ func parseDay(s string) int {
 	}
 }
 
-// BuildScheduleEmbed builds the schedule embed for a UTC date and its show list.
+// mediaTypeLabels names the non-TV media types; TV carries no label.
+var mediaTypeLabels = map[animeschedule.MediaType]string{
+	animeschedule.MediaTVShort: "TV Short",
+	animeschedule.MediaONA:     "ONA",
+	animeschedule.MediaDonghua: "Donghua",
+	animeschedule.MediaOVA:     "OVA",
+	animeschedule.MediaSpecial: "Special",
+	animeschedule.MediaMovie:   "Movie",
+}
+
+// scheduleLine renders one entry; onToday adds the live relative time.
+func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
+	airLabel := "SUB"
+	if e.AirType == "raw" {
+		airLabel = "RAW"
+	}
+	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, airLabel)
+	if e.Delayed != "" {
+		line += " " + e.Delayed
+	}
+	line += fmt.Sprintf(" · <t:%d:t>", e.AirTimeUnix)
+	if onToday {
+		line += fmt.Sprintf(" · <t:%d:R>", e.AirTimeUnix)
+	}
+	if label := mediaTypeLabels[e.MediaType]; label != "" {
+		line += " · " + label
+	}
+	return line
+}
+
+// scheduleDescription joins the entry lines. When they exceed the embed description limit it keeps the lines
+// that fit whole and ends with a linked count of the rest.
+func scheduleDescription(lines []string) string {
+	full := strings.Join(lines, "\n")
+	if len(full) <= discord.MaxEmbedDescriptionLength {
+		return full
+	}
+	more := func(n int) string {
+		return fmt.Sprintf("[… and %d more on AnimeSchedule.net](%s)", n, animeschedule.BaseURL)
+	}
+	used, kept := 0, 0
+	for kept < len(lines) {
+		next := used + len(lines[kept]) + 1 // the line and its newline
+		if next+len(more(len(lines)-kept-1)) > discord.MaxEmbedDescriptionLength {
+			break
+		}
+		used = next
+		kept++
+	}
+	return strings.Join(lines[:kept], "\n") + "\n" + more(len(lines)-kept)
+}
+
+// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list. Both /schedule and the
+// daily-schedule autopost use it. Today's page adds live relative times.
 func BuildScheduleEmbed(date time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	date = date.UTC()
 	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
-	var desc strings.Builder
-	if len(shows) == 0 {
-		desc.WriteString("No anime scheduled for this day. Use the buttons below to check other days.")
-	} else {
-		for _, e := range shows {
-			airLabel := "SUB"
-			if e.AirType == "raw" {
-				airLabel = "RAW"
-			}
-			line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, airLabel)
-			if e.Delayed != "" {
-				line += " " + e.Delayed
-			}
-			line += fmt.Sprintf(" · <t:%d:t>\n", e.AirTimeUnix)
-			desc.WriteString(line)
+	onToday := animeschedule.DateKey(date) == animeschedule.DateKey(animeschedule.Now())
+
+	description := "No anime scheduled for this day. Use the buttons below to check other days."
+	if len(shows) > 0 {
+		lines := make([]string, len(shows))
+		for i, e := range shows {
+			lines[i] = scheduleLine(e, onToday)
 		}
-	}
-	description := desc.String()
-	if len(description) > discord.MaxEmbedDescriptionLength {
-		suffix := "\n\n… and more."
-		maxLen := discord.MaxEmbedDescriptionLength - len(suffix)
-		if maxLen < 200 {
-			maxLen = discord.MaxEmbedDescriptionLength - 80
-		}
-		description = description[:maxLen] + suffix
-		if len(description) > discord.MaxEmbedDescriptionLength {
-			description = description[:discord.MaxEmbedDescriptionLength-1] + "…"
-		}
+		description = scheduleDescription(lines)
 	}
 
-	footerText := "AnimeSchedule.net"
-	if len(shows) == 0 {
-		footerText += " · 0 shows"
-	} else if len(shows) == 1 {
-		footerText += " · 1 show"
-	} else {
-		footerText += fmt.Sprintf(" · %d shows", len(shows))
+	footerText := fmt.Sprintf("%d shows", len(shows))
+	if len(shows) == 1 {
+		footerText = "1 show"
 	}
+	footerText += " · days run on UTC, times show in your time zone"
 	emb := &discordgo.MessageEmbed{
 		Title:       titleWithDate,
 		URL:         animeschedule.BaseURL,
