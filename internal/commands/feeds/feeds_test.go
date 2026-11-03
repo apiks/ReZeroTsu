@@ -69,17 +69,6 @@ func (f *fakeStore) SetFeedPin(_ context.Context, _ string, feed guilds.FeedEntr
 	return nil
 }
 
-func (f *fakeStore) RemoveFeed(_ context.Context, _, channelID, subreddit, postType, author, title string) (int64, error) {
-	if f.failRemove != nil {
-		return 0, f.failRemove
-	}
-	before := len(f.feeds)
-	f.feeds = slices.DeleteFunc(f.feeds, func(g guilds.FeedEntry) bool {
-		return sameFeedScope(guilds.FeedEntry{ChannelID: channelID, Subreddit: subreddit, PostType: postType, Author: author, Title: title}, g)
-	})
-	return int64(before - len(f.feeds)), nil
-}
-
 func (f *fakeStore) DeleteChecks(_ context.Context, _, channelID, subreddit, postType, author, title string) error {
 	f.checksGone = append(f.checksGone, strings.Join([]string{channelID, subreddit, postType, author, title}, "|"))
 	return nil
@@ -224,13 +213,6 @@ func TestAddKeepsEveryOption(t *testing.T) {
 	if !slices.Equal(names, []string{"channel", "subreddit", "sort", "author", "title", "pin"}) {
 		t.Errorf("add options = %v", names)
 	}
-	names = nil
-	for _, o := range subcommand(t, "remove").Options {
-		names = append(names, o.Name)
-	}
-	if !slices.Equal(names, []string{"channel", "subreddit", "post-type", "author", "title"}) {
-		t.Errorf("remove options = %v", names)
-	}
 }
 
 func TestAddSavesTheFeedWithNormalizedFiltersAndPin(t *testing.T) {
@@ -317,108 +299,6 @@ func TestAddStoreFailureIsSomethingWentWrong(t *testing.T) {
 	r := lastReply(t, invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime")))
 	if r.Content != interaction.SomethingWentWrong {
 		t.Errorf("reply = %+v", r)
-	}
-}
-
-func TestRemoveDeletesTheMatchingFeedForOneTypeAndItsDeliveryRecords(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "new", ChannelID: "c1"})
-	fake := invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "r/Anime"), strOpt("post-type", "hot"))
-	if len(st.feeds) != 1 || st.feeds[0].PostType != "new" {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-	if !slices.Equal(st.checksGone, []string{"c1|anime|hot||"}) {
-		t.Errorf("records forgotten %v", st.checksGone)
-	}
-	if got := text(lastReply(t, fake)); !strings.Contains(got, "<#c1>") {
-		t.Errorf("reply = %q", got)
-	}
-}
-
-func TestRemoveWithoutPostTypeRemovesAllThree(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "rising", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "new", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c2"})
-	got := text(lastReply(t, func() *interactiontest.Fake {
-		return invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))
-	}()))
-	if len(st.feeds) != 1 || st.feeds[0].ChannelID != "c2" || !strings.Contains(got, "all post types") {
-		t.Errorf("feeds = %+v, reply %q", st.feeds, got)
-	}
-}
-
-func TestRemoveNarrowsByAuthorAndTitle(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "amy", Title: "ep"})
-	invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "hot"), strOpt("author", "u/Amy"), strOpt("title", "EP"))
-	if len(st.feeds) != 1 || st.feeds[0].Author != "bob" {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestRemoveRepliesForNoFeedsNoMatchAndBadInput(t *testing.T) {
-	st := useStore(t)
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime")))); !strings.Contains(got, "no Reddit feeds") {
-		t.Errorf("empty: %q", got)
-	}
-	st.feeds = []guilds.FeedEntry{{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c2"), strOpt("subreddit", "anime")))); !strings.Contains(got, "No matching feed") {
-		t.Errorf("no match: %q", got)
-	}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "top")))); !strings.Contains(got, "hot, rising, new") {
-		t.Errorf("bad type: %q", got)
-	}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "r/")))); !strings.Contains(got, "valid subreddit") {
-		t.Errorf("blank: %q", got)
-	}
-	if len(st.feeds) != 1 {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestRemoveStoreFailuresAreSomethingWentWrong(t *testing.T) {
-	st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"})
-	st.failRemove = errors.New("db down")
-	if r := lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))); r.Content != interaction.SomethingWentWrong {
-		t.Errorf("remove failure reply = %+v", r)
-	}
-	st.failGet = errors.New("db down")
-	if r := lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))); r.Content != interaction.SomethingWentWrong {
-		t.Errorf("load failure reply = %+v", r)
-	}
-}
-
-func TestRemoveAutocompleteMatchesAnywhereAndClipsTo100(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "manga", PostType: "hot", ChannelID: "c2"},
-		guilds.FeedEntry{Subreddit: strings.Repeat("x", 150), PostType: "hot", ChannelID: "c2"})
-	got := subredditChoices(t.Context(), st, "g", "nim")
-	if len(got) != 1 || got[0].Value != "anime" || got[0].Name != "r/anime" {
-		t.Errorf("subreddit choices = %+v", got)
-	}
-	for _, c := range subredditChoices(t.Context(), st, "g", "") {
-		if len([]rune(c.Name)) > 100 || len([]rune(c.Value.(string))) > 100 {
-			t.Errorf("choice %q is over 100 characters", c.Name)
-		}
-	}
-	names := map[string]string{"c1": "general"}
-	ch := channelChoices(t.Context(), st, func(id string) string { return names[id] }, "g", "ener")
-	if len(ch) != 1 || ch[0].Value != "c1" || ch[0].Name != "#general" {
-		t.Errorf("channel choices = %+v", ch)
-	}
-	if ch := channelChoices(t.Context(), st, func(string) string { return "" }, "g", "c2"); len(ch) != 1 || ch[0].Name != "#c2" {
-		t.Errorf("unnamed channel choices = %+v", ch)
-	}
-	if got := subredditChoices(t.Context(), st, "", "a"); got != nil {
-		t.Errorf("no guild: %+v", got)
-	}
-	if pts := autocompletePostType(t.Context(), nil, nil, nil, "post-type", "IS"); len(pts) != 1 || pts[0].Value != "rising" {
-		t.Errorf("post types = %+v", pts)
 	}
 }
 

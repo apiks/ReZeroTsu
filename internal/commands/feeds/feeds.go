@@ -20,6 +20,7 @@ import (
 const (
 	embedTitle = "Reddit feeds"
 
+	optFeed      = "feed"
 	optChannel   = "channel"
 	optSubreddit = "subreddit"
 	optPostType  = "post-type"
@@ -39,7 +40,6 @@ var feedChannelTypes = []discordgo.ChannelType{discordgo.ChannelTypeGuildText, d
 type store interface {
 	GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error)
 	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
-	RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error)
 	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
 	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
 	// SetFeedPin changes only the auto-pin setting of the one feed with that identity.
@@ -56,10 +56,6 @@ func (s dbStore) GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEnt
 
 func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error {
 	return s.db.Guilds().AddFeed(ctx, guildID, feed)
-}
-
-func (s dbStore) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
-	return s.db.Guilds().RemoveFeed(ctx, guildID, channelID, subreddit, postType, author, title)
 }
 
 func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
@@ -166,15 +162,6 @@ func logStoreFailure(ic *interaction.Context, what string, err error) {
 	logger.For("commands").Error(what, "guild_id", ic.GuildID, "err", err)
 }
 
-// postTypeOption reads the post-type option. A missing or blank one gives def; an unknown one is not ok.
-func postTypeOption(ic *interaction.Context, def string) (postType string, ok bool) {
-	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optPostType)))
-	if raw == "" {
-		return def, true
-	}
-	return raw, slices.Contains(postTypeChoices, raw)
-}
-
 // sameIdentity reports whether two feeds are the same Reddit feed: channel, subreddit, sort, author and title.
 // Auto-pin is a setting of the feed, not part of its identity.
 func sameIdentity(f, g guilds.FeedEntry) bool {
@@ -192,15 +179,3 @@ func sortOption(ic *interaction.Context) (sort string, ok bool) {
 }
 
 const msgInvalidPostType = "Invalid post type. Use one of: hot, rising, new."
-
-func autocompletePostType(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	names := commands.MatchAnywhere(postTypeChoices, focusedValue, func(n string) []string { return []string{n} })
-	if len(names) == 0 {
-		names = postTypeChoices
-	}
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(names))
-	for _, name := range names {
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
-	}
-	return choices
-}
