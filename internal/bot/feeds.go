@@ -637,31 +637,39 @@ func buildFeedEmbed(feed guilds.FeedEntry, item *gofeed.Item) *discordgo.Message
 	return emb
 }
 
-// permissionPinMessages is Discord's Pin Messages permission (bit 51); the pinned discordgo version predates it.
-const permissionPinMessages int64 = 1 << 51
-
 // handleFeedPinning pins messageID after unpinning the bot's older pins for the subreddit. It does nothing unless
-// the gateway state says the bot has Pin Messages on the channel. REST failures are logged, never returned.
+// the gateway state says the bot has Pin Messages on the channel (the parent channel for a thread, since threads
+// carry no overwrites of their own). REST failures are logged, never returned.
 func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit string) {
 	if s.State == nil || s.State.User == nil {
 		return
 	}
-	perms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
-	if err != nil || perms&permissionPinMessages != permissionPinMessages {
+	ch, err := s.State.Channel(channelID)
+	if err != nil {
+		logger.For("feeds").Debug("feed pin skipped: channel not in state", "channel_id", channelID, "subreddit", subreddit, "err", err)
 		return
 	}
-	guildID := ""
-	if ch, err := s.State.Channel(channelID); err == nil {
-		s.State.RLock()
-		guildID = ch.GuildID
-		s.State.RUnlock()
+	s.State.RLock()
+	guildID, permChannelID := ch.GuildID, channelID
+	if (ch.Type == discordgo.ChannelTypeGuildPublicThread || ch.Type == discordgo.ChannelTypeGuildPrivateThread) && ch.ParentID != "" {
+		permChannelID = ch.ParentID
 	}
-	warn := func(msg string, err error) {
-		logger.For("feeds").Warn(msg, append([]any{"guild_id", guildID, "channel_id", channelID, "subreddit", subreddit}, discord.RESTAttrs(err)...)...)
+	s.State.RUnlock()
+	perms, err := s.State.UserChannelPermissions(s.State.User.ID, permChannelID)
+	if err != nil {
+		logger.For("feeds").Debug("feed pin skipped: permissions not in state", "channel_id", channelID, "subreddit", subreddit, "err", err)
+		return
+	}
+	// discordgo grants Administrator every bit it knows, which excludes Pin Messages.
+	if perms&discordgo.PermissionAdministrator == 0 && perms&discord.PermissionPinMessages != discord.PermissionPinMessages {
+		return
+	}
+	logPinFailure := func(msg string, err error) {
+		logger.For("feeds").Warn(msg, append([]any{"guild_id", guildID, "channel_id", channelID, "subreddit", subreddit, "err", err}, discord.RESTAttrs(err)...)...)
 	}
 	pins, err := s.ChannelMessagesPinned(channelID)
 	if err != nil {
-		warn("feed pin: could not list pinned messages", err)
+		logPinFailure("feed pin: could not list pinned messages", err)
 		return
 	}
 	time.Sleep(feedPinThrottle)
@@ -675,12 +683,12 @@ func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit str
 		}
 		if strings.HasPrefix(strings.ToLower(pin.Embeds[0].Author.URL), strings.ToLower(prefix)) {
 			if err := s.ChannelMessageUnpin(channelID, pin.ID); err != nil {
-				warn("feed unpin failed", err)
+				logPinFailure("feed unpin failed", err)
 			}
 			time.Sleep(feedPinThrottle)
 		}
 	}
 	if err := s.ChannelMessagePin(channelID, messageID); err != nil {
-		warn("feed pin failed", err)
+		logPinFailure("feed pin failed", err)
 	}
 }
