@@ -188,12 +188,14 @@ func TestRemoveTellsAMemberWhoIsNotSubscribed(t *testing.T) {
 	}
 }
 
-func TestClearRemovesEverythingTheMemberHas(t *testing.T) {
-	st := newFakeStore().with("user", "A", "B").with("other", "C")
+func TestRemoveOfAShowNotFollowedPointsToTheListCommand(t *testing.T) {
+	commands.SetCommandIDs([]*discordgo.ApplicationCommand{{ID: "123", Name: "subscription", Type: discordgo.ChatApplicationCommand}})
+	t.Cleanup(func() { commands.SetCommandIDs(nil) })
+	st := newFakeStore().with("user", "Dandadan")
 	useStore(t, st)
-	got := text(reply(t, invoke(t, "clear")))
-	if !strings.Contains(got, "cleared") || len(st.docs["user"]) != 0 || strings.Join(st.names("other"), ",") != "C" {
-		t.Errorf("reply %q, user %v, other %v", got, st.names("user"), st.names("other"))
+	got := text(reply(t, invoke(t, "remove", animeOption("Frieren")...)))
+	if !strings.Contains(got, "See </subscription list:123> for the shows you follow.") {
+		t.Errorf("reply %q lacks the list pointer with a command mention", got)
 	}
 }
 
@@ -439,5 +441,145 @@ func TestPickerIgnoresAChoiceThatIsNoLongerSubscribed(t *testing.T) {
 	calls := ic.Port.(*interactiontest.Fake).Calls()
 	if len(calls) != 1 || calls[0].Op != "UpdateMessage" || len(st.calls) != 0 {
 		t.Errorf("calls %+v, store calls %v: a stale choice just re-renders", calls, st.calls)
+	}
+}
+
+func buttons(r interaction.Response) []discordgo.Button {
+	var out []discordgo.Button
+	for _, row := range r.Components {
+		for _, c := range row.(discordgo.ActionsRow).Components {
+			if b, ok := c.(discordgo.Button); ok {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
+func TestClearAsksBeforeRemovingAnything(t *testing.T) {
+	st := newFakeStore().with("user", "A", "B", "C")
+	useStore(t, st)
+	r := reply(t, invoke(t, "clear"))
+	bs := buttons(r)
+	if !strings.Contains(text(r), "Remove all 3 subscriptions?") || len(bs) != 2 {
+		t.Fatalf("reply %q, buttons %+v", text(r), bs)
+	}
+	if bs[0].Label != "Remove all" || bs[0].Style != discordgo.DangerButton || bs[1].Label != "Keep them" || bs[1].Style != discordgo.SecondaryButton {
+		t.Errorf("buttons = %+v", bs)
+	}
+	for _, b := range bs {
+		if len(b.CustomID) >= 100 || !strings.Contains(b.CustomID, "user") || strings.Count(b.CustomID, ":") != 2 {
+			t.Errorf("custom ID %q must carry only the author and stay under 100 characters", b.CustomID)
+		}
+	}
+	if len(st.docs["user"]) != 3 || len(st.calls) != 0 {
+		t.Errorf("asking must change nothing: %v, calls %v", st.names("user"), st.calls)
+	}
+}
+
+func TestClearAsksAboutOneSubscriptionToo(t *testing.T) {
+	useStore(t, newFakeStore().with("user", "A"))
+	r := reply(t, invoke(t, "clear"))
+	if !strings.Contains(text(r), "Remove all 1 subscriptions?") || len(buttons(r)) != 2 {
+		t.Errorf("reply %q", text(r))
+	}
+}
+
+func TestClearWithNothingAnswersWithoutButtons(t *testing.T) {
+	useStore(t, newFakeStore())
+	r := reply(t, invoke(t, "clear"))
+	if !strings.Contains(text(r), "no active") || len(buttons(r)) != 0 {
+		t.Errorf("reply %q, buttons %+v", text(r), buttons(r))
+	}
+}
+
+func clearButtonID(t *testing.T, label string) string {
+	t.Helper()
+	st := newFakeStore().with("user", "A")
+	useStore(t, st)
+	for _, b := range buttons(reply(t, invoke(t, "clear"))) {
+		if b.Label == label {
+			return b.CustomID
+		}
+	}
+	t.Fatalf("no %q button", label)
+	return ""
+}
+
+func press(user, id string) *interaction.Context {
+	i := &discordgo.Interaction{Type: discordgo.InteractionMessageComponent, GuildID: "g", ChannelID: "c",
+		Member: &discordgo.Member{User: &discordgo.User{ID: user}},
+		Data:   discordgo.MessageComponentInteractionData{CustomID: id, ComponentType: discordgo.ButtonComponent}}
+	return interaction.NewContext(&interactiontest.Fake{}, i, nil, interaction.Private, interaction.Direct)
+}
+
+func TestRemoveAllClearsTheCurrentListAndDropsTheButtons(t *testing.T) {
+	removeID := clearButtonID(t, "Remove all")
+	st := newFakeStore().with("user", "A", "B").with("other", "C")
+	useStore(t, st)
+	ic := press("user", removeID)
+	if err := handleClearButton(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	calls := ic.Port.(*interactiontest.Fake).Calls()
+	if len(calls) != 1 || calls[0].Op != "UpdateMessage" {
+		t.Fatalf("calls = %+v", calls)
+	}
+	r := calls[0].Response
+	if !strings.Contains(text(r), "All your subscriptions were removed.") || r.Components == nil || len(r.Components) != 0 {
+		t.Errorf("response = %+v", r)
+	}
+	if len(st.docs["user"]) != 0 || strings.Join(st.names("other"), ",") != "C" {
+		t.Errorf("user %v other %v", st.names("user"), st.names("other"))
+	}
+}
+
+func TestKeepThemChangesNothingAndDropsTheButtons(t *testing.T) {
+	keepID := clearButtonID(t, "Keep them")
+	st := newFakeStore().with("user", "A")
+	useStore(t, st)
+	ic := press("user", keepID)
+	if err := handleClearButton(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	r := ic.Port.(*interactiontest.Fake).Calls()[0].Response
+	if !strings.Contains(text(r), "Nothing was removed.") || r.Components == nil || len(r.Components) != 0 || len(st.docs["user"]) != 1 {
+		t.Errorf("response = %+v, subscriptions %v", r, st.names("user"))
+	}
+}
+
+func TestAnotherMembersPressOnClearIsRefusedPrivately(t *testing.T) {
+	removeID := clearButtonID(t, "Remove all")
+	st := newFakeStore().with("user", "A").with("stranger", "B")
+	useStore(t, st)
+	ic := press("stranger", removeID)
+	if err := handleClearButton(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	calls := ic.Port.(*interactiontest.Fake).Calls()
+	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private {
+		t.Fatalf("calls = %+v, want one private refusal", calls)
+	}
+	if len(st.calls) != 0 || len(st.docs["user"]) != 1 || len(st.docs["stranger"]) != 1 {
+		t.Errorf("a refused press must not change the store: %v", st.calls)
+	}
+}
+
+func TestRemoveAllClearsShowsAddedAfterTheQuestion(t *testing.T) {
+	removeID := clearButtonID(t, "Remove all")
+	st := newFakeStore().with("user", "A", "B", "Added later")
+	useStore(t, st)
+	if err := handleClearButton(press("user", removeID), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.docs["user"]) != 0 {
+		t.Errorf("left %v", st.names("user"))
+	}
+}
+
+func TestClearButtonsAreRegisteredForTheirPrefix(t *testing.T) {
+	id := clearButtonID(t, "Remove all")
+	if !strings.HasPrefix(id, clearPrefix) {
+		t.Errorf("custom ID %q lacks prefix %q", id, clearPrefix)
 	}
 }

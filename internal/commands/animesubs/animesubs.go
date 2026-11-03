@@ -166,6 +166,11 @@ func subscribe(ctx context.Context, store subsStore, uid, animeInput string) (re
 	return desc, true, nil
 }
 
+// notSubscribed is the reply for removing a show the member does not follow, pointing at the list.
+func notSubscribed(input string) string {
+	return fmt.Sprintf("You are not subscribed to `%s`. See %s for the shows you follow.", input, commands.CommandMention("subscription", "list"))
+}
+
 func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
@@ -176,7 +181,7 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		return "Could not load your subscriptions.", err
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
+		return notSubscribed(animeInput), nil
 	}
 
 	// Resolve the stored titles (exact case) the input names, then remove exactly those.
@@ -198,27 +203,13 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		}
 	}
 	if len(stored) == 0 {
-		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
+		return notSubscribed(animeInput), nil
 	}
 
 	if err := store.RemoveShows(ctx, uid, stored); err != nil {
 		return "Could not update subscriptions.", err
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
-}
-
-func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDesc string, logErr error) {
-	doc, err := store.GetByID(ctx, uid)
-	if err != nil {
-		return "Could not load your subscriptions.", err
-	}
-	if doc == nil || len(doc.Shows) == 0 {
-		return "You have no active anime subscriptions.", nil
-	}
-	if err := store.ClearShows(ctx, uid); err != nil {
-		return "Could not clear subscriptions.", err
-	}
-	return "Success! All your anime subscriptions have been cleared.", nil
 }
 
 // airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched

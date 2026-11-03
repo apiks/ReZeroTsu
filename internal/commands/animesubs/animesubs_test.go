@@ -167,35 +167,6 @@ func TestUnsubCore(t *testing.T) {
 	}
 }
 
-func TestClearsubsCore(t *testing.T) {
-	tests := []struct {
-		name      string
-		store     *fakeStore
-		wantMsg   string
-		wantCalls []string
-	}{
-		{"clears all", newFakeStore().with("u", "A", "B"), "cleared", []string{"clear"}},
-		{"nothing to clear", newFakeStore(), "no active", nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg, err := clearsubsCore(context.Background(), tt.store, "u")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(msg, tt.wantMsg) {
-				t.Errorf("msg = %q, want %q", msg, tt.wantMsg)
-			}
-			if len(tt.store.docs["u"]) != 0 {
-				t.Errorf("shows remain: %v", tt.store.names("u"))
-			}
-			if strings.Join(tt.store.calls, ",") != strings.Join(tt.wantCalls, ",") {
-				t.Errorf("calls = %v, want %v", tt.store.calls, tt.wantCalls)
-			}
-		})
-	}
-}
-
 // A legacy stored entry with stray surrounding space is the same show to the notifier, so /sub must treat it as
 // already subscribed instead of adding a duplicate.
 func TestSubCoreLegacyTrimmedEntryIsAlreadySubscribed(t *testing.T) {
