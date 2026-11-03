@@ -19,7 +19,7 @@ func removeVoiceRoleFromSettings(ctx context.Context, db *database.Client, setti
 	if len(settings.VoiceChas[chaIdx].Roles) == 0 {
 		settings.VoiceChas = append(settings.VoiceChas[:chaIdx], settings.VoiceChas[chaIdx+1:]...)
 	}
-	_ = db.Guilds().SetGuildSettings(ctx, guildID, settings)
+	_ = db.Guilds().SetVoiceChas(ctx, guildID, settings.VoiceChas)
 }
 
 // OnVoiceStateUpdate toggles voice-channel roles on join/leave; user gets channel's roles while in it, removed when leaving.

@@ -187,20 +187,6 @@ func (r *Repo) GetGuildSettings(ctx context.Context, guildID string) (*GuildSett
 	return g.GuildSettings, nil
 }
 
-// SetGuildSettings updates guild_settings; upserts guild if missing. Nil uses DefaultGuildSettings().
-func (r *Repo) SetGuildSettings(ctx context.Context, guildID string, settings *GuildSettings) error {
-	if settings == nil {
-		settings = DefaultGuildSettings()
-	}
-	filter := bson.M{"_id": guildID}
-	update := bson.M{"$set": bson.M{"guild_settings": settings}}
-	_, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
-	if err != nil {
-		return fmt.Errorf("SetGuildSettings: %w", err)
-	}
-	return nil
-}
-
 // setSettingsField sets one guild_settings field and nothing else, so a write that lands between a read and this
 // call is not lost. The guild document is created with default settings when missing.
 func (r *Repo) setSettingsField(ctx context.Context, guildID, field string, value any) error {
@@ -212,8 +198,28 @@ func (r *Repo) setSettingsField(ctx context.Context, guildID, field string, valu
 		bson.M{"$set": bson.M{"guild_settings": DefaultGuildSettings()}}); err != nil {
 		return err
 	}
-	_, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, bson.M{"$set": bson.M{"guild_settings." + field: value}})
+	_, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, settingsFieldUpdate(field, value))
 	return err
+}
+
+// settingsFieldUpdate is the update of a one-field settings write. It never replaces the guild_settings
+// subdocument, so keys the struct no longer has (command_roles, mod_only, reacts_module) stay stored.
+func settingsFieldUpdate(field string, value any) bson.M {
+	return bson.M{"$set": bson.M{"guild_settings." + field: value}}
+}
+
+// voiceChasField is the guild_settings key of GuildSettings.VoiceChas.
+const voiceChasField = "voice_chas"
+
+// SetVoiceChas sets guild_settings.voice_chas alone.
+func (r *Repo) SetVoiceChas(ctx context.Context, guildID string, chas []VoiceCha) error {
+	if chas == nil {
+		chas = []VoiceCha{}
+	}
+	if err := r.setSettingsField(ctx, guildID, voiceChasField, chas); err != nil {
+		return fmt.Errorf("SetVoiceChas: %w", err)
+	}
+	return nil
 }
 
 // SetBotLog sets guild_settings.bot_log_id alone; nil clears it.
@@ -244,16 +250,9 @@ func (r *Repo) SetPingMessage(ctx context.Context, guildID, text string) error {
 	return nil
 }
 
+// ClearBotLog clears guild_settings.bot_log_id alone.
 func (r *Repo) ClearBotLog(ctx context.Context, guildID string) error {
-	settings, err := r.GetGuildSettings(ctx, guildID)
-	if err != nil {
-		return fmt.Errorf("ClearBotLog: %w", err)
-	}
-	if settings == nil {
-		return nil
-	}
-	settings.BotLogID = nil
-	if err := r.SetGuildSettings(ctx, guildID, settings); err != nil {
+	if err := r.SetBotLog(ctx, guildID, nil); err != nil {
 		return fmt.Errorf("ClearBotLog: %w", err)
 	}
 	return nil

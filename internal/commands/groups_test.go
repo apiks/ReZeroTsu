@@ -29,7 +29,7 @@ func noRun(*interaction.Context) error { return nil }
 func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	register(t, &Command{Name: "t-flat", Desc: "d", Visibility: Public, Response: Direct, Run: noRun,
 		Options: []*discordgo.ApplicationCommandOption{{Name: "o", Description: "od", Type: discordgo.ApplicationCommandOptionString}}})
-	register(t, &Command{Name: "t-flat-admin", Desc: "d", Permission: PermMod, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
+	register(t, &Command{Name: "t-flat-mod", Desc: "d", Permission: PermMod, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
 
 	manageServer := int64(discordgo.PermissionManageGuild)
 	serverOnly := &[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
@@ -39,10 +39,10 @@ func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	if got := definition(t, "t-flat"); !reflect.DeepEqual(got, want) {
 		t.Errorf("flat = %+v, want %+v", got, want)
 	}
-	wantMod := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &manageServer, IntegrationTypes: serverOnly,
+	wantMod := &discordgo.ApplicationCommand{Name: "t-flat-mod", Description: "d", DefaultMemberPermissions: &manageServer, IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild}}
-	if got := definition(t, "t-flat-admin"); !reflect.DeepEqual(got, wantMod) {
-		t.Errorf("admin = %+v, want %+v", got, wantMod)
+	if got := definition(t, "t-flat-mod"); !reflect.DeepEqual(got, wantMod) {
+		t.Errorf("mod = %+v, want %+v", got, wantMod)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestRightClickKindsRegisterWithTheirType(t *testing.T) {
 func TestDefaultPermissionsInstallTypesAndContextsRegisterAsDeclared(t *testing.T) {
 	manage := int64(discordgo.PermissionManageGuild)
 	register(t, &Command{Name: "t-mod", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
-		DefaultMemberPermissions: &manage, Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}, Context: ContextGuildOnly})
+		Permission: PermMod, Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}, Context: ContextGuildOnly})
 	register(t, &Command{Name: "t-both", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
 		Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}, Context: ContextBoth})
 
@@ -123,6 +123,14 @@ func TestAddRejectsInconsistentGroupsAndRightClickCommands(t *testing.T) {
 		"right-click with subcommand": base(Command{Kind: KindMessage, Run: noRun, Subcommands: []*Subcommand{sub}}),
 		"right-click without Run":     base(Command{Kind: KindUser}),
 		"install types without value": base(Command{Run: noRun, Installs: []discordgo.ApplicationIntegrationType{}}),
+		// Discord's default member permission is the only gate on a mod command, and it does not apply in bot DMs
+		// or under a user install, so a mod command must register for servers only.
+		"mod command in any context": base(Command{Run: noRun, Permission: PermMod}),
+		"mod command in bot DMs":     base(Command{Run: noRun, Permission: PermMod, Context: ContextDMOnly}),
+		"mod command user-installable": base(Command{Run: noRun, Permission: PermMod, Context: ContextGuildOnly,
+			Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}}),
+		"mod command user install only": base(Command{Run: noRun, Permission: PermMod, Context: ContextGuildOnly,
+			Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationUserInstall}}),
 	}
 	for name, cmd := range tests {
 		t.Run(name, func(t *testing.T) {

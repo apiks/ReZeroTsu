@@ -110,16 +110,6 @@ func (f *fakeStore) write(set func(*guilds.GuildSettings)) error {
 	return nil
 }
 
-func (f *fakeStore) SetGuildSettings(_ context.Context, _ string, gs *guilds.GuildSettings) error {
-	if f.failSet != nil {
-		return f.failSet
-	}
-	f.sets++
-	c := *gs
-	f.gs = &c
-	return nil
-}
-
 func useStore(t *testing.T, st *fakeStore) {
 	t.Helper()
 	old := panelStoreOf
@@ -475,27 +465,38 @@ func TestBlankPingMessageIsRefused(t *testing.T) {
 }
 
 // Discord gates /settings by its default member permissions and server overrides, so a press, choice or
-// submission is not re-checked by the bot: no guild fetch, no refusal, whatever the member's permissions.
+// submission is not re-checked by the bot: no guild fetch, no refusal, whatever the member's permissions. Each
+// press also has its effect, so a press that silently does nothing fails here.
 func TestPanelComponentsAreNotRecheckedByTheBot(t *testing.T) {
 	ch := &discordgo.Channel{ID: "222", Name: "x", Type: discordgo.ChannelTypeGuildText}
-	actions := map[string]func(*interactiontest.Fake) error{
-		"picker": func(f *interactiontest.Fake) error { return pick(t, f, member, idBotLog, ch) },
-		"toggle": func(f *interactiontest.Fake) error { return click(t, f, member, idDonghua) },
-		"edit":   func(f *interactiontest.Fake) error { return click(t, f, member, idPingEdit) },
-		"form":   func(f *interactiontest.Fake) error { return submit(t, f, member, "new text") },
+	cases := map[string]struct {
+		act   func(*interactiontest.Fake) error
+		saved func(*guilds.GuildSettings) bool
+	}{
+		"picker": {func(f *interactiontest.Fake) error { return pick(t, f, member, idBotLog, ch) },
+			func(gs *guilds.GuildSettings) bool { return gs.BotLogID != nil && gs.BotLogID.ID == "222" }},
+		"toggle": {func(f *interactiontest.Fake) error { return click(t, f, member, idDonghua) },
+			func(gs *guilds.GuildSettings) bool { return !gs.Donghua }},
+		"edit": {func(f *interactiontest.Fake) error { return click(t, f, member, idPingEdit) },
+			func(gs *guilds.GuildSettings) bool { return true }}, // opens the form; nothing is saved yet
+		"form": {func(f *interactiontest.Fake) error { return submit(t, f, member, "new text") },
+			func(gs *guilds.GuildSettings) bool { return gs.PingMessage == "new text" }},
 	}
-	for name, act := range actions {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			st := &fakeStore{gs: stored()}
 			useStore(t, st)
 			fake := &interactiontest.Fake{StallGuild: true}
-			if err := act(fake); err != nil {
+			if err := tc.act(fake); err != nil {
 				t.Fatal(err)
 			}
 			for _, c := range fake.Calls() {
 				if c.Op == "Guild" || c.Op == "Reply" || c.Op == "FollowUp" {
 					t.Errorf("calls = %v, want no permission lookup and no refusal", fake.Ops())
 				}
+			}
+			if !tc.saved(st.gs) {
+				t.Errorf("settings after the press = %+v, want the change applied", st.gs)
 			}
 		})
 	}

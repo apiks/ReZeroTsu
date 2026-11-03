@@ -36,12 +36,12 @@ func (f *fakeVoiceStore) GetGuildSettings(context.Context, string) (*guilds.Guil
 	return cp, nil
 }
 
-func (f *fakeVoiceStore) SetGuildSettings(_ context.Context, _ string, s *guilds.GuildSettings) error {
+func (f *fakeVoiceStore) SetVoiceChas(_ context.Context, _ string, chas []guilds.VoiceCha) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
 	f.saves++
-	f.settings = s
+	f.settings = &guilds.GuildSettings{VoiceChas: chas}
 	return nil
 }
 

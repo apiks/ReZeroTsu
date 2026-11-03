@@ -193,6 +193,9 @@ func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 // Guard homes, moved from /bot-log, /donghua and /ping-message:
 //   - the moderator check is Discord's: /settings registers with default member permissions of Manage Server, and
 //     a panel is private to the member who ran it, so a press, choice or submission is not re-checked;
+//   - the guild-only refusal of the old check has its home in the declarations: /settings is ContextGuildOnly with
+//     server install only (commands.Add enforces both for a mod command), and its panel exists only as a private
+//     message in a server, so a press without a server cannot reach this handler;
 //   - the "channel not found" refusal of /bot-log is bot-log choice's resolved-channel check;
 //   - the "could not load" and "could not save" answers are failedLoad and apply.
 func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {

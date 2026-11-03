@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -191,6 +192,33 @@ func isCommandsAdd(fun ast.Expr) bool {
 	return false
 }
 
+// removedModeratorSettings matches the settings fields that ADR-0001 removed (moderator roles, mod-only and
+// reacts-module), their bson keys, and the bot-side moderator refusal. Stored documents keep the old values, but no
+// code reads or writes them: servers set access in Discord's command permissions.
+var removedModeratorSettings = regexp.MustCompile(`\b(CommandRoles|ModOnly|ReactsModule|ModeratorRefusal|command_roles|mod_only|reacts_module)\b`)
+
+// checkRemovedModeratorSettings reports identifiers and string literals (struct tags included) that name a removed
+// moderator setting. Comments may still mention them.
+func checkRemovedModeratorSettings(fset *token.FileSet, file *ast.File, name string) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		var text string
+		switch n := n.(type) {
+		case *ast.Ident:
+			text = n.Name
+		case *ast.BasicLit:
+			text = n.Value
+		default:
+			return true
+		}
+		if m := removedModeratorSettings.FindString(text); m != "" {
+			out = append(out, fmt.Sprintf("%s:%d: %s is a removed moderator setting", name, fset.Position(n.Pos()).Line, m))
+		}
+		return true
+	})
+	return out
+}
+
 type check func(*token.FileSet, *ast.File, string) []string
 
 // scanTree runs check over the non-test Go files under root (recursively). The name handed to check is the path
@@ -267,6 +295,12 @@ func TestEveryRegisteredCommandDeclaresAVisibility(t *testing.T) {
 	}
 }
 
+func TestRemovedModeratorSettingsAreNotReferenced(t *testing.T) {
+	for _, v := range scanTree(t, "..", checkRemovedModeratorSettings) {
+		t.Error(v)
+	}
+}
+
 func TestShowNamesAreComparedWithMatchKey(t *testing.T) {
 	for _, dir := range []string{"../bot", "../commands/animesubs"} {
 		for _, v := range scanDir(t, dir, checkShowNameMatching) {
@@ -317,6 +351,12 @@ func init() {
 	wg.Add(1)
 }
 `
+	const moderating = "package settings\n\n" +
+		"// CommandRoles and mod_only may be named in a comment.\n" +
+		"type GuildSettings struct {\n" +
+		"\tCommandRoles []string `bson:\"command_roles\"`\n" +
+		"}\n\n" +
+		"func f(gs *GuildSettings) bool { return gs.ModOnly }\n"
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "sample.go", src, 0)
@@ -342,6 +382,8 @@ func init() {
 		{"command helpers may not respond", responding, checkInteractionResponses, "commands/helpers.go", 3},
 		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
+		{"removed moderator settings are flagged in code and tags, not comments", moderating, checkRemovedModeratorSettings, "x.go", 3},
+		{"unrelated code is not a removed moderator setting", clean, checkRemovedModeratorSettings, "x.go", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
