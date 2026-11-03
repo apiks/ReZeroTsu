@@ -2,7 +2,6 @@ package autopost
 
 import (
 	"context"
-	"fmt"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -89,7 +88,7 @@ func handleDailySchedule(ctx context.Context, db *database.Client, s *discordgo.
 			commands.RespondEmbed(s, i, embedTitleDaily, "Could not save. Try again.")
 			return
 		}
-		commands.RespondEmbed(s, i, embedTitleDaily, fmt.Sprintf("Daily schedule autopost set to **#%s** (ID: %s).", ch.Name, ch.ID), hintDailySchedule)
+		commands.RespondEmbed(s, i, embedTitleDaily, dailyMessage("Daily schedule autopost set to", ch.ID), hintDailySchedule)
 		return
 	}
 
@@ -102,5 +101,5 @@ func handleDailySchedule(ctx context.Context, db *database.Client, s *discordgo.
 		commands.RespondEmbed(s, i, embedTitleDaily, "Daily anime schedule autopost is not set.", hintDailySchedule)
 		return
 	}
-	commands.RespondEmbed(s, i, embedTitleDaily, fmt.Sprintf("Current daily schedule autopost channel: **#%s** (ID: %s).", ap.Name, ap.ID), hintDailySchedule)
+	commands.RespondEmbed(s, i, embedTitleDaily, dailyMessage("Current daily schedule autopost channel:", ap.ID), hintDailySchedule)
 }

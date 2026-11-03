@@ -148,6 +148,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 				logger.For("bot").Error("ApplicationCommandBulkOverwrite failed", "err", err)
 				return
 			}
+			commands.SetCommandIDs(createdCommands)
 			logger.For("bot").Info("slash commands registered", "guild_id", slashCommandGuildID, "count", len(createdCommands))
 		})
 		logger.For("bot").Info("shard ready", "shard_id", s.ShardID)
