@@ -29,21 +29,28 @@ type nextEpisode struct {
 	Found bool
 	// Upcoming is true when Entry airs at or after now.
 	Upcoming bool
+	// Premiere is true when Entry is an upcoming-list show; Entry.AirTimeUnix is then its premiere, 0 while undated.
+	Premiere bool
+}
+
+// sameShow reports whether e is the show with this route and title: by route when both sides have one, else by
+// title under anime_subs.MatchKey.
+func sameShow(e animeschedule.ShowEntry, route, title string) bool {
+	if route != "" && e.Route != "" {
+		return e.Route == route
+	}
+	return anime_subs.MatchKey(e.Name) == anime_subs.MatchKey(title)
 }
 
 // findNextEpisode applies the next-episode rule over entries (every loaded week). A show matches by route when
-// both sides have one, else by title under anime_subs.MatchKey. Upcoming shows are not covered yet.
-func findNextEpisode(entries []animeschedule.ShowEntry, route, title string, now time.Time) nextEpisode {
-	key := anime_subs.MatchKey(title)
+// both sides have one, else by title under anime_subs.MatchKey. A show with no timetable entry falls back to the
+// upcoming list's premiere.
+func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, now time.Time) nextEpisode {
 	nowUnix := now.Unix()
 	var next, last animeschedule.ShowEntry
 	var haveNext, haveLast bool
 	for _, e := range entries {
-		if route != "" && e.Route != "" {
-			if e.Route != route {
-				continue
-			}
-		} else if anime_subs.MatchKey(e.Name) != key {
+		if !sameShow(e, route, title) {
 			continue
 		}
 		if e.AirTimeUnix >= nowUnix {
@@ -60,6 +67,11 @@ func findNextEpisode(entries []animeschedule.ShowEntry, route, title string, now
 	case haveLast:
 		return nextEpisode{Entry: last, Found: true}
 	}
+	for _, u := range upcoming {
+		if e := upcomingEntry(u); sameShow(e, route, title) {
+			return nextEpisode{Entry: e, Found: true, Upcoming: true, Premiere: true}
+		}
+	}
 	return nextEpisode{}
 }
 
@@ -71,6 +83,12 @@ func (n nextEpisode) confirmationLine() string {
 	unix := n.Entry.AirTimeUnix
 	movie := n.Entry.MediaType == animeschedule.MediaMovie
 	switch {
+	case n.Premiere && unix == 0 && movie:
+		return "Its release date isn't announced yet."
+	case n.Premiere && unix == 0:
+		return "Its premiere date isn't announced yet. You'll get a DM when episode 1 airs."
+	case n.Premiere && !movie:
+		return fmt.Sprintf("It premieres <t:%d:F> (<t:%d:R>). You'll get a DM when episode 1 airs.", unix, unix)
 	case movie && n.Upcoming:
 		return fmt.Sprintf("It releases <t:%d:F> (<t:%d:R>).", unix, unix)
 	case movie:
@@ -93,6 +111,12 @@ func (n nextEpisode) listStatus() string {
 	}
 	movie := n.Entry.MediaType == animeschedule.MediaMovie
 	switch {
+	case n.Premiere && unix == 0 && movie:
+		return out + " · release date TBA"
+	case n.Premiere && unix == 0:
+		return out + " · premiere date TBA"
+	case n.Premiere && !movie:
+		return out + fmt.Sprintf(" · premieres <t:%d:R>", unix)
 	case movie && n.Upcoming:
 		return out + fmt.Sprintf(" · releases <t:%d:R>", unix)
 	case movie:

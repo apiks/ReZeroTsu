@@ -19,12 +19,12 @@ const (
 func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
 	var b strings.Builder
 	end := min(start+discord.MaxEmbedFields, len(list))
-	entries, now := animeschedule.AllEntries(), animeschedule.Now()
+	entries, upcoming, now := animeschedule.AllEntries(), animeschedule.UpcomingShows(), animeschedule.Now()
 	for j := start; j < end; j++ {
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s%s\n", j+1, list[j].Show, findNextEpisode(entries, list[j].Route, list[j].Show, now).listStatus())
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, list[j].Show, findNextEpisode(entries, upcoming, list[j].Route, list[j].Show, now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
@@ -48,13 +48,18 @@ func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
 	return list
 }
 
-// findShowIn returns the show whose display title matches input under anime_subs.MatchKey (case-insensitive and
+// findShowIn returns the show whose route is input (a suggestion's value), else whose display title matches input under anime_subs.MatchKey (case-insensitive and
 // trimmed like the notifier matches names). Failing that, the first show whose romaji, English or native name
 // matches; a title cut to Discord's choice limit also matches. It returns the zero value and false if none.
 func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
 	key := anime_subs.MatchKey(input)
 	if key == "" {
 		return animeschedule.ShowEntry{}, false
+	}
+	for _, show := range shows {
+		if show.Route != "" && anime_subs.MatchKey(show.Route) == key {
+			return show, true
+		}
 	}
 	for _, show := range shows {
 		if anime_subs.MatchKey(show.Name) == key || anime_subs.MatchKey(clip(show.Name)) == key {
@@ -143,7 +148,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
 	}
 	desc := fmt.Sprintf("Subscribed to **%s**.", showName)
-	if line := findNextEpisode(animeschedule.AllEntries(), show.Route, showName, now).confirmationLine(); line != "" {
+	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, now).confirmationLine(); line != "" {
 		desc += "\n" + line
 	}
 	return desc, true, nil

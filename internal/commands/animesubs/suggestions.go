@@ -35,9 +35,49 @@ type candidate struct {
 	Premiere string
 }
 
-// candidateSources list where suggestions come from, in the order they are offered. Another source of shows
-// (the upcoming list) is added here.
-var candidateSources = []func() []candidate{timetableCandidates}
+// candidateSources list where suggestions come from, in the order they are offered: timetable shows, then
+// upcoming shows.
+var candidateSources = []func() []candidate{timetableCandidates, upcomingCandidates}
+
+// upcomingEntry is an upcoming show as a ShowEntry: its air time is the premiere, 0 while AnimeSchedule has no date.
+func upcomingEntry(u animeschedule.UpcomingShow) animeschedule.ShowEntry {
+	e := animeschedule.ShowEntry{Name: u.Name, Route: u.Route, Romaji: u.Romaji, English: u.English, Native: u.Native, MediaType: u.MediaType}
+	if !u.Premiere.IsZero() {
+		e.AirTimeUnix = u.Premiere.Unix()
+	}
+	return e
+}
+
+// premiereLabel is "premieres 10 Jan" (a UTC day, like the timetable) or "premiere date TBA".
+func premiereLabel(u animeschedule.UpcomingShow) string {
+	if u.Premiere.IsZero() {
+		return "premiere date TBA"
+	}
+	return "premieres " + u.Premiere.UTC().Format("2 Jan")
+}
+
+// upcomingCandidates are the upcoming shows that are not on the loaded timetable; a show on both is offered once, as
+// a timetable show, matched by route when both sides have one and by title otherwise.
+func upcomingCandidates() []candidate {
+	onTimetable := animeschedule.AllEntries()
+	var out []candidate
+	for _, u := range animeschedule.UpcomingShows() {
+		e := upcomingEntry(u)
+		if slices.ContainsFunc(onTimetable, func(t animeschedule.ShowEntry) bool { return sameShow(t, e.Route, e.Name) }) {
+			continue
+		}
+		out = append(out, candidate{ShowEntry: e, Premiere: premiereLabel(u)})
+	}
+	return out
+}
+
+// choiceValue identifies a suggested show: its route, or its title when no route is known, within Discord's limit.
+func choiceValue(c candidate) string {
+	if c.Route != "" {
+		return clip(c.Route)
+	}
+	return clip(c.Name)
+}
 
 func timetableCandidates() []candidate {
 	var out []candidate
@@ -110,8 +150,8 @@ func labelledName(c candidate, subscribed bool) string {
 }
 
 // autocompleteAdd offers the candidate shows matched anywhere in any of their four names, narrowed by the `type`
-// option, with the invoker's followed shows labelled and last. A choice's value is the display title, which is
-// what subscriptions are keyed by. The invoker's subscriptions are read once.
+// option, with the invoker's followed shows labelled and last. A choice's value is the show's route, or its
+// title when it has none. The invoker's subscriptions are read once.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	matched := commands.MatchAnywhere(candidates(typeFilter(i.ApplicationCommandData().Options)), typed, func(c candidate) []string { return c.AllNames() })
 	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
@@ -121,7 +161,7 @@ func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Sess
 	var rest, followed []*discordgo.ApplicationCommandOptionChoice
 	for _, c := range matched {
 		isFollowed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return follows(s, c) })
-		choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isFollowed), Value: clip(c.Name)}
+		choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isFollowed), Value: choiceValue(c)}
 		if isFollowed {
 			followed = append(followed, choice)
 		} else {
