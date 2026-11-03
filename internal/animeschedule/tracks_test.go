@@ -155,3 +155,34 @@ func TestFetchKeepsEveryTrackAndTheOtherReadersSeeTheSubView(t *testing.T) {
 		t.Errorf("SnapshotWeeks.This = %+v, want the sub row", snap.This)
 	}
 }
+
+func TestEpisodeSpansReadFirstDashLastAndTheFinaleGetsF(t *testing.T) {
+	resetTimetable(t)
+	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
+	rowJSON := func(route string, first, last, total int, at string) string {
+		return fmt.Sprintf(`{"title":%q,"route":%q,"airType":"sub","subtractedEpisodeNumber":%d,"episodeNumber":%d,"episodes":%d,"episodeDate":%q}`,
+			route, route, first, last, total, at)
+	}
+	newTimetableServer(t, map[string]any{
+		"2026-45": "[" + rowJSON("span", 1, 12, 24, "2026-11-02T10:00:00Z") +
+			"," + rowJSON("spanfinale", 1, 12, 12, "2026-11-02T11:00:00Z") +
+			"," + rowJSON("zerofirst", 0, 5, 12, "2026-11-02T12:00:00Z") +
+			"," + rowJSON("equal", 5, 5, 12, "2026-11-02T13:00:00Z") +
+			"," + rowJSON("above", 9, 5, 12, "2026-11-02T14:00:00Z") +
+			"," + rowJSON("unknowntotal", 1, 12, 0, "2026-11-02T15:00:00Z") +
+			"," + rowJSON("single", 12, 12, 12, "2026-11-02T16:00:00Z") + "]",
+	})
+	UpdateAnimeSchedule(context.Background(), "key")
+	want := "span:sub:Ep 1-12,spanfinale:sub:Ep 1-12F,zerofirst:sub:Ep 5,equal:sub:Ep 5,above:sub:Ep 5,unknowntotal:sub:Ep 1-12,single:sub:Ep 12F"
+	if got := strings.Join(readWeek(PreferSub, true), ","); got != want {
+		t.Errorf("labels = %s, want %s", got, want)
+	}
+	for _, e := range AllEntries() {
+		if e.Name == "spanfinale" && !e.Final {
+			t.Errorf("span ending on the total is not final")
+		}
+		if e.Name == "span" && e.Final {
+			t.Errorf("span short of the total is final")
+		}
+	}
+}
