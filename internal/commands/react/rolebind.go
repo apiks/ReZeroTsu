@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
@@ -70,10 +71,25 @@ func init() {
 	commands.AddComponent(formPrefix, handleAddForm)
 }
 
+// customEmojiReactionRegex matches <:name:id> or <a:name:id>; submatches: prefix, name, id.
+var customEmojiReactionRegex = regexp.MustCompile(`(?i)<(a?):([a-zA-Z0-9_]+):(\d+)>`)
+
+// parseEmojiToStoredValue parses <:name:id> or <a:name:id>, returns stored value with original case, or ("", false).
+func parseEmojiToStoredValue(input string) (stored string, ok bool) {
+	input = strings.TrimSpace(input)
+	if m := customEmojiReactionRegex.FindStringSubmatch(input); len(m) == 4 {
+		nameID := m[2] + ":" + m[3]
+		if strings.EqualFold(m[1], "a") {
+			return "a:" + nameID, true
+		}
+		return nameID, true
+	}
+	return "", false
+}
+
 // emojiFromInput turns what a moderator typed into the stored emoji: "name:id" or "a:name:id" for a server emoji
 // pasted in its <:name:id> or <a:name:id> form, and anything else not starting with "<" as typed. ok is false for
-// an empty box and for text that starts like a server emoji but is not one. These are the rules
-// /add-react-autorole applies.
+// an empty box and for text that starts like a server emoji but is not one.
 func emojiFromInput(input string) (stored string, ok bool) {
 	input = strings.TrimSpace(input)
 	if s, parsed := parseEmojiToStoredValue(input); parsed {
