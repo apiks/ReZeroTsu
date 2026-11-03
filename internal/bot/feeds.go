@@ -127,7 +127,7 @@ func RunFeedLoop(ctx context.Context, db *database.Client, session *discordgo.Se
 	}
 }
 
-// RunRedditFetchLoop fetches one subreddit feed whenever Reddit's rate limit allows.
+// RunRedditFetchLoop fetches one subreddit's listing whenever Reddit's rate limit allows.
 func RunRedditFetchLoop(ctx context.Context) {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -595,10 +595,7 @@ func isImageURL(u string) bool {
 }
 
 func buildFeedEmbed(feed guilds.FeedEntry, item *gofeed.Item) *discordgo.MessageEmbed {
-	title := item.Title
-	if len(title) > discord.MaxEmbedAuthorNameLength {
-		title = title[:discord.MaxEmbedAuthorNameLength-1] + "…"
-	}
+	title := discord.Fit(item.Title, discord.MaxEmbedAuthorNameLength)
 	emb := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{
 			URL:     item.Link,
@@ -608,11 +605,7 @@ func buildFeedEmbed(feed guilds.FeedEntry, item *gofeed.Item) *discordgo.Message
 		Color: discord.EmbedColor,
 	}
 	if item.Description != "" {
-		desc := item.Description
-		if len(desc) > discord.MaxEmbedDescriptionLength {
-			desc = desc[:discord.MaxEmbedDescriptionLength-1] + "…"
-		}
-		emb.Description = desc
+		emb.Description = discord.Fit(item.Description, discord.MaxEmbedDescriptionLength)
 	}
 	var imageLink string
 	if item.Content != "" {
@@ -625,10 +618,7 @@ func buildFeedEmbed(feed guilds.FeedEntry, item *gofeed.Item) *discordgo.Message
 	if feed.Author != "" {
 		footerText += " - u/" + feed.Author
 	}
-	if len(footerText) > discord.MaxEmbedFooterLength {
-		footerText = footerText[:discord.MaxEmbedFooterLength]
-	}
-	emb.Footer = &discordgo.MessageEmbedFooter{Text: footerText}
+	emb.Footer = &discordgo.MessageEmbedFooter{Text: discord.Fit(footerText, discord.MaxEmbedFooterLength)}
 	if item.Published != "" {
 		emb.Timestamp = item.Published
 	} else if item.PublishedParsed != nil {

@@ -91,15 +91,12 @@ func entrantCount(r *guilds.Raffle) string {
 func pageFields(raffles []*guilds.Raffle, guildID string) []*discordgo.MessageEmbedField {
 	fields := make([]*discordgo.MessageEmbedField, 0, len(raffles))
 	for _, r := range raffles {
-		name := []rune(r.Name)
-		if len(name) > discord.MaxEmbedFieldNameLength {
-			name = append(name[:discord.MaxEmbedFieldNameLength-1], '…')
-		}
+		name := discord.Fit(r.Name, discord.MaxEmbedFieldNameLength)
 		value := entrantCount(r)
 		if r.MessageID != "" {
 			value += " - " + commands.MessageLink(guildID, r.ChannelID, r.MessageID)
 		}
-		fields = append(fields, &discordgo.MessageEmbedField{Name: string(name), Value: value})
+		fields = append(fields, &discordgo.MessageEmbedField{Name: name, Value: value})
 	}
 	return fields
 }

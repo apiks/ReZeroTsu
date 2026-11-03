@@ -48,11 +48,8 @@ func run(ic *interaction.Context) error {
 	msg := "**Picked:** " + parsed[rand.Intn(len(parsed))]
 	first := true
 	for len(msg) > 0 {
-		chunk := msg
-		if len(chunk) > discord.MaxContentLength {
-			chunk = msg[:discord.MaxContentLength]
-		}
-		msg = msg[len(chunk):]
+		var chunk string
+		chunk, msg = discord.Head(msg, discord.MaxContentLength)
 		var err error
 		if first {
 			err = ic.Reply(interaction.Response{Content: chunk})

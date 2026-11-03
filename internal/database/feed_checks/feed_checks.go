@@ -70,7 +70,7 @@ func (r *Repo) DeleteByChannelID(ctx context.Context, guildID, channelID string)
 	return res.DeletedCount, nil
 }
 
-// DeleteBySubredditAndPostType deletes feed_checks for the guild, subreddit, and post type.
+// DeleteBySubredditAndPostType deletes feed_checks for the guild, subreddit and sort (stored as post_type).
 func (r *Repo) DeleteBySubredditAndPostType(ctx context.Context, guildID, subreddit, postType string) (int64, error) {
 	res, err := r.coll.DeleteMany(ctx, bson.M{"guild_id": guildID, "feed.subreddit": subreddit, "feed.post_type": postType})
 	if err != nil {

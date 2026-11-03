@@ -1,3 +1,6 @@
+// Package animeschedule holds the timetable (three UTC weeks keyed by date) and the upcoming-show list, both read
+// from AnimeSchedule.net. Read docs/animeschedule-api.md before changing a request or a response shape: week
+// boundaries follow the tz parameter, the rate limit is 120 requests per minute, and the docs are split across pages.
 package animeschedule
 
 import (

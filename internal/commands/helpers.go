@@ -29,12 +29,9 @@ func NewEmbed(s *discordgo.Session, title, description string, footer ...string)
 }
 
 func NewEmbedWithFields(s *discordgo.Session, title, description string, fields []*discordgo.MessageEmbedField, footer ...string) *discordgo.MessageEmbed {
-	if len(description) > discord.MaxEmbedDescriptionLength {
-		description = description[:discord.MaxEmbedDescriptionLength]
-	}
 	emb := &discordgo.MessageEmbed{
 		Title:       title,
-		Description: description,
+		Description: discord.Fit(description, discord.MaxEmbedDescriptionLength),
 		Color:       discord.EmbedColor,
 	}
 	if len(fields) > 0 {
@@ -44,11 +41,7 @@ func NewEmbedWithFields(s *discordgo.Session, title, description string, fields 
 		emb.Fields = fields
 	}
 	if len(footer) > 0 && footer[0] != "" {
-		text := footer[0]
-		if len(text) > discord.MaxEmbedFooterLength {
-			text = text[:discord.MaxEmbedFooterLength]
-		}
-		emb.Footer = &discordgo.MessageEmbedFooter{Text: text}
+		emb.Footer = &discordgo.MessageEmbedFooter{Text: discord.Fit(footer[0], discord.MaxEmbedFooterLength)}
 	}
 	return emb
 }

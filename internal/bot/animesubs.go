@@ -251,7 +251,7 @@ func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]in
 
 func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now time.Time) error {
 	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
-		logger.For("animesubs").Debug("backfill skipped: no schedule data")
+		logger.For("animesubs").Debug("backfill skipped: timetable not loaded")
 		return nil
 	}
 	shows := make(map[string]int64)
