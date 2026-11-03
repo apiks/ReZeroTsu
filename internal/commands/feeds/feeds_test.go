@@ -20,8 +20,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// fakeStore is an in-memory feed list. RemoveFeed matches the way the real one does: an empty author or title
-// does not narrow the match.
+// fakeStore is an in-memory feed list. RemoveExactFeed matches whole entries only, as the real one does.
 type fakeStore struct {
 	feeds      []guilds.FeedEntry
 	checksGone []string
@@ -29,6 +28,7 @@ type fakeStore struct {
 	failAdd    error
 	failRemove error
 	addCalls   int
+	pinCalls   int
 }
 
 func (f *fakeStore) RemoveExactFeed(_ context.Context, _ string, feed guilds.FeedEntry) (int64, error) {
@@ -58,15 +58,14 @@ func (f *fakeStore) AddFeed(_ context.Context, _ string, feed guilds.FeedEntry) 
 	return nil
 }
 
-func (f *fakeStore) RemoveFeed(_ context.Context, _, channelID, subreddit, postType, author, title string) (int64, error) {
-	if f.failRemove != nil {
-		return 0, f.failRemove
+func (f *fakeStore) SetFeedPin(_ context.Context, _ string, feed guilds.FeedEntry, pin bool) error {
+	f.pinCalls++
+	for i, g := range f.feeds {
+		if g.SameIdentity(feed) {
+			f.feeds[i].Pin = pin
+		}
 	}
-	before := len(f.feeds)
-	f.feeds = slices.DeleteFunc(f.feeds, func(g guilds.FeedEntry) bool {
-		return sameFeedScope(guilds.FeedEntry{ChannelID: channelID, Subreddit: subreddit, PostType: postType, Author: author, Title: title}, g)
-	})
-	return int64(before - len(f.feeds)), nil
+	return nil
 }
 
 func (f *fakeStore) DeleteChecks(_ context.Context, _, channelID, subreddit, postType, author, title string) error {
@@ -210,15 +209,8 @@ func TestAddKeepsEveryOption(t *testing.T) {
 	for _, o := range subcommand(t, "add").Options {
 		names = append(names, o.Name)
 	}
-	if !slices.Equal(names, []string{"channel", "subreddit", "post-type", "author", "title", "pin"}) {
+	if !slices.Equal(names, []string{"channel", "subreddit", "sort", "author", "title", "pin"}) {
 		t.Errorf("add options = %v", names)
-	}
-	names = nil
-	for _, o := range subcommand(t, "remove").Options {
-		names = append(names, o.Name)
-	}
-	if !slices.Equal(names, []string{"channel", "subreddit", "post-type", "author", "title"}) {
-		t.Errorf("remove options = %v", names)
 	}
 }
 
@@ -226,7 +218,7 @@ func TestAddSavesTheFeedWithNormalizedFiltersAndPin(t *testing.T) {
 	st := useStore(t)
 	var checked []string
 	checkFeed = func(_ context.Context, sub, pt string) error { checked = append(checked, sub+"/"+pt); return nil }
-	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", " /r/Anime "), strOpt("post-type", "New"),
+	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", " /r/Anime "), strOpt("sort", "New"),
 		strOpt("author", "u/SomeOne"), strOpt("title", " Episode "), boolOpt("pin", true))
 	want := guilds.FeedEntry{Subreddit: "anime", PostType: "new", Author: "someone", Title: "episode", Pin: true, ChannelID: "c1"}
 	if !slices.Equal(st.feeds, []guilds.FeedEntry{want}) {
@@ -258,7 +250,7 @@ func TestAddRefusesBadInputBeforeAskingRedditOrSaving(t *testing.T) {
 		{"no subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1")}, "Pick a channel"},
 		{"blank subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "r/")}, "valid subreddit"},
 		{"bad characters", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "a b!")}, "letters, numbers"},
-		{"bad post type", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "top")}, "hot, rising, new"},
+		{"bad sort", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}, "hot, rising, new"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -309,108 +301,6 @@ func TestAddStoreFailureIsSomethingWentWrong(t *testing.T) {
 	}
 }
 
-func TestRemoveDeletesTheMatchingFeedForOneTypeAndItsDeliveryRecords(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "new", ChannelID: "c1"})
-	fake := invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "r/Anime"), strOpt("post-type", "hot"))
-	if len(st.feeds) != 1 || st.feeds[0].PostType != "new" {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-	if !slices.Equal(st.checksGone, []string{"c1|anime|hot||"}) {
-		t.Errorf("records forgotten %v", st.checksGone)
-	}
-	if got := text(lastReply(t, fake)); !strings.Contains(got, "<#c1>") {
-		t.Errorf("reply = %q", got)
-	}
-}
-
-func TestRemoveWithoutPostTypeRemovesAllThree(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "rising", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "new", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c2"})
-	got := text(lastReply(t, func() *interactiontest.Fake {
-		return invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))
-	}()))
-	if len(st.feeds) != 1 || st.feeds[0].ChannelID != "c2" || !strings.Contains(got, "all post types") {
-		t.Errorf("feeds = %+v, reply %q", st.feeds, got)
-	}
-}
-
-func TestRemoveNarrowsByAuthorAndTitle(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob"},
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "amy", Title: "ep"})
-	invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "hot"), strOpt("author", "u/Amy"), strOpt("title", "EP"))
-	if len(st.feeds) != 1 || st.feeds[0].Author != "bob" {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestRemoveRepliesForNoFeedsNoMatchAndBadInput(t *testing.T) {
-	st := useStore(t)
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime")))); !strings.Contains(got, "no Reddit feeds") {
-		t.Errorf("empty: %q", got)
-	}
-	st.feeds = []guilds.FeedEntry{{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c2"), strOpt("subreddit", "anime")))); !strings.Contains(got, "No matching feed") {
-		t.Errorf("no match: %q", got)
-	}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "top")))); !strings.Contains(got, "hot, rising, new") {
-		t.Errorf("bad type: %q", got)
-	}
-	if got := text(lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "r/")))); !strings.Contains(got, "valid subreddit") {
-		t.Errorf("blank: %q", got)
-	}
-	if len(st.feeds) != 1 {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestRemoveStoreFailuresAreSomethingWentWrong(t *testing.T) {
-	st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"})
-	st.failRemove = errors.New("db down")
-	if r := lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))); r.Content != interaction.SomethingWentWrong {
-		t.Errorf("remove failure reply = %+v", r)
-	}
-	st.failGet = errors.New("db down")
-	if r := lastReply(t, invoke(t, "remove", chanOpt("c1"), strOpt("subreddit", "anime"))); r.Content != interaction.SomethingWentWrong {
-		t.Errorf("load failure reply = %+v", r)
-	}
-}
-
-func TestRemoveAutocompleteMatchesAnywhereAndClipsTo100(t *testing.T) {
-	st := useStore(t,
-		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"},
-		guilds.FeedEntry{Subreddit: "manga", PostType: "hot", ChannelID: "c2"},
-		guilds.FeedEntry{Subreddit: strings.Repeat("x", 150), PostType: "hot", ChannelID: "c2"})
-	got := subredditChoices(t.Context(), st, "g", "nim")
-	if len(got) != 1 || got[0].Value != "anime" || got[0].Name != "r/anime" {
-		t.Errorf("subreddit choices = %+v", got)
-	}
-	for _, c := range subredditChoices(t.Context(), st, "g", "") {
-		if len([]rune(c.Name)) > 100 || len([]rune(c.Value.(string))) > 100 {
-			t.Errorf("choice %q is over 100 characters", c.Name)
-		}
-	}
-	names := map[string]string{"c1": "general"}
-	ch := channelChoices(t.Context(), st, func(id string) string { return names[id] }, "g", "ener")
-	if len(ch) != 1 || ch[0].Value != "c1" || ch[0].Name != "#general" {
-		t.Errorf("channel choices = %+v", ch)
-	}
-	if ch := channelChoices(t.Context(), st, func(string) string { return "" }, "g", "c2"); len(ch) != 1 || ch[0].Name != "#c2" {
-		t.Errorf("unnamed channel choices = %+v", ch)
-	}
-	if got := subredditChoices(t.Context(), st, "", "a"); got != nil {
-		t.Errorf("no guild: %+v", got)
-	}
-	if pts := autocompletePostType(t.Context(), nil, nil, nil, "post-type", "IS"); len(pts) != 1 || pts[0].Value != "rising" {
-		t.Errorf("post types = %+v", pts)
-	}
-}
-
 func TestListShowsFeedsWithChannelMentionsAndAPickerPrivately(t *testing.T) {
 	useStore(t,
 		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob", Title: "ep", Pin: true},
@@ -453,7 +343,7 @@ func TestListPagesCarryTheirOwnPickerOfAtMost25(t *testing.T) {
 	}
 	second := RenderFeedsPage(t.Context(), nil, nil, &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{GuildID: "g"}}, 1, 30, "user")
 	got, _ := pickerOf(second.Response)
-	if second.Refusal != "" || len(got.Options) != 5 || !strings.Contains(got.Options[0].Value, "sub25") {
+	if second.Refusal != "" || len(got.Options) != 5 || got.Options[0].Value != shortCode(manyFeeds(30)[25]) {
 		t.Errorf("second page = %+v", second)
 	}
 }
@@ -549,7 +439,7 @@ func TestChoosingAnUnfilteredFeedKeepsItsFilteredSiblings(t *testing.T) {
 	st := useStore(t, plain, sibling)
 	st.failAdd = errors.New("AddFeed must not be called")
 	picker := firstPicker(t, "user")
-	if err := handleRemovePicker(pick("user", picker.CustomID, pickValue(plain)), nil); err != nil {
+	if err := handleRemovePicker(pick("user", picker.CustomID, shortCode(plain)), nil); err != nil {
 		t.Fatal(err)
 	}
 	if st.addCalls != 0 {
@@ -632,22 +522,32 @@ func TestPickerIgnoresAFeedThatIsAlreadyGone(t *testing.T) {
 	}
 }
 
-func TestPickerRemovesNothingWhenTwoFeedsClipToTheSameChoice(t *testing.T) {
+func TestPickerRemovesTheChosenFeedWhenIdentitiesShareTheirFirst100Characters(t *testing.T) {
 	prefix := strings.Repeat("t", 120)
 	a := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Title: prefix + "a"}
 	b := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Title: prefix + "b"}
-	st := useStore(t, a, b)
-	if pickValue(a) != pickValue(b) || len([]rune(pickValue(a))) > 100 {
-		t.Fatal("the test needs two feeds that clip alike")
+	if shortCode(a) == shortCode(b) {
+		t.Fatal("two different feeds need different short codes")
 	}
-	ic := pick("user", pickerPrefix+"user:0", pickValue(a))
-	if err := handleRemovePicker(ic, nil); err != nil {
-		t.Fatal(err)
+	for _, chosen := range []guilds.FeedEntry{a, b} {
+		st := useStore(t, a, b)
+		ic := pick("user", pickerPrefix+"user:0", shortCode(chosen))
+		if err := handleRemovePicker(ic, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.feeds) != 1 || st.feeds[0] == chosen {
+			t.Errorf("feeds %+v: want only the other feed left", st.feeds)
+		}
 	}
-	calls := ic.Port.(*interactiontest.Fake).Calls()
-	if len(st.feeds) != 2 || len(st.checksGone) != 0 || len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private ||
-		!strings.Contains(calls[0].Response.Content, "removed nothing") {
-		t.Errorf("feeds %+v, calls %+v", st.feeds, calls)
+}
+
+func TestShortCodeFitsDiscordLimits(t *testing.T) {
+	f := guilds.FeedEntry{Subreddit: strings.Repeat("s", 300), PostType: "hot", ChannelID: "c1", Author: strings.Repeat("a", 300), Title: strings.Repeat("t", 300)}
+	if n := len([]rune(shortCode(f))); n == 0 || n > 100 {
+		t.Errorf("short code length %d", n)
+	}
+	if len(pickerPrefix+strings.Repeat("9", 20)+":99") > 100 {
+		t.Error("picker custom ID too long")
 	}
 }
 

@@ -129,6 +129,13 @@ type FeedEntry struct {
 	ChannelID string `bson:"channel_id,omitempty"`
 }
 
+// SameIdentity reports whether two entries are the same Reddit feed: channel, subreddit, sort, author and title.
+// Auto-pin is a setting of the feed, not part of its identity.
+func (f FeedEntry) SameIdentity(g FeedEntry) bool {
+	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
+		f.Author == g.Author && f.Title == g.Title
+}
+
 type GuildSettings struct {
 	BotLogID    *ChannelRef `bson:"bot_log_id,omitempty"`
 	VoiceChas   []VoiceCha  `bson:"voice_chas,omitempty"`
@@ -410,31 +417,34 @@ func (r *Repo) AddFeed(ctx context.Context, guildID string, feed FeedEntry) erro
 	return nil
 }
 
-// RemoveFeed removes one feed matching channel, subreddit, post_type; optional author/title narrow match. Call three times for hot/rising/new when user omits post-type.
-func (r *Repo) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
-	filter := bson.M{"_id": guildID}
-	pull := bson.M{
-		"subreddit":  subreddit,
-		"channel_id": channelID,
-		"post_type":  postType,
+// SetFeedPin sets the auto-pin setting of exactly one feed, identified by channel, subreddit, sort, author and
+// title (an empty author or title matches a missing field), in one update.
+func (r *Repo) SetFeedPin(ctx context.Context, guildID string, feed FeedEntry, pin bool) error {
+	match := bson.M{
+		"subreddit":  feed.Subreddit,
+		"channel_id": feed.ChannelID,
+		"post_type":  feed.PostType,
+		"author":     nil,
+		"title":      nil,
 	}
-	if author != "" {
-		pull["author"] = author
+	if feed.Author != "" {
+		match["author"] = feed.Author
 	}
-	if title != "" {
-		pull["title"] = title
+	if feed.Title != "" {
+		match["title"] = feed.Title
 	}
-	update := bson.M{"$pull": bson.M{"feeds": pull}}
-	res, err := r.coll.UpdateOne(ctx, filter, update)
+	_, err := r.coll.UpdateOne(ctx,
+		bson.M{"_id": guildID, "feeds": bson.M{"$elemMatch": match}},
+		bson.M{"$set": bson.M{"feeds.$.pin": pin}})
 	if err != nil {
-		return 0, fmt.Errorf("RemoveFeed: %w", err)
+		return fmt.Errorf("SetFeedPin: %w", err)
 	}
-	return res.ModifiedCount, nil
+	return nil
 }
 
-// RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and post type match, and author and
-// title match their value, or a missing field when empty (nil matches an omitted omitempty field). Unlike
-// RemoveFeed, an empty author or title does not widen the match to its filtered siblings.
+// RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and sort match, and author and
+// title match their value, or a missing field when empty (nil matches an omitted omitempty field). An empty author
+// or title never widens the match to its filtered siblings.
 func (r *Repo) RemoveExactFeed(ctx context.Context, guildID string, feed FeedEntry) (int64, error) {
 	pull := bson.M{
 		"subreddit":  feed.Subreddit,
