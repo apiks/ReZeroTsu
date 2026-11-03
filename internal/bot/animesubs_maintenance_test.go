@@ -16,8 +16,10 @@ func rosterFixture(t *testing.T, upcomingLoaded bool, lastWeek, thisWeek, nextWe
 	t.Helper()
 	t.Cleanup(animeschedule.SetClock(func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }))
 	monday := animeschedule.DateInWeek(time.Monday)
-	// An unrelated show keeps the loaded timetable from being empty, which the cleanup treats as a failed load.
-	thisWeek = append(thisWeek[:len(thisWeek):len(thisWeek)], animeschedule.ShowEntry{Name: "Filler", Route: "filler"})
+	// An unrelated show in each of this week and next week keeps both weeks loaded, which the cleanup requires.
+	filler := animeschedule.ShowEntry{Name: "Filler", Route: "filler"}
+	thisWeek = append(thisWeek[:len(thisWeek):len(thisWeek)], filler)
+	nextWeek = append(nextWeek[:len(nextWeek):len(nextWeek)], filler)
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
 		animeschedule.DateKey(monday.AddDate(0, 0, -7)): lastWeek,
 		animeschedule.DateKey(monday):                   thisWeek,
@@ -67,6 +69,36 @@ func TestKeepRosterNotReadyUntilUpcomingLoads(t *testing.T) {
 	_, ok := rosterFixture(t, false, nil, []animeschedule.ShowEntry{{Name: "A", Route: "a"}}, nil, nil)
 	if ok {
 		t.Error("roster ready before the upcoming list loaded")
+	}
+}
+
+func TestKeepRosterNotReadyUnlessThisAndNextWeekAreLoaded(t *testing.T) {
+	entry := []animeschedule.ShowEntry{{Name: "A", Route: "a"}}
+	upcoming := []animeschedule.UpcomingShow{{Name: "U", Route: "u"}}
+	tests := []struct {
+		name             string
+		last, this, next []animeschedule.ShowEntry
+		wantReady        bool
+	}{
+		{"only last week loaded", entry, nil, nil, false},
+		{"this week loaded, next week missing", nil, entry, nil, false},
+		{"next week loaded, this week missing", nil, nil, entry, false},
+		{"this and next week loaded", nil, entry, entry, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(animeschedule.SetClock(func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }))
+			monday := animeschedule.DateInWeek(time.Monday)
+			t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+				animeschedule.DateKey(monday.AddDate(0, 0, -7)): tc.last,
+				animeschedule.DateKey(monday):                   tc.this,
+				animeschedule.DateKey(monday.AddDate(0, 0, 7)):  tc.next,
+			}))
+			t.Cleanup(animeschedule.SeedUpcoming(upcoming, true))
+			if _, ok := buildKeepRoster(); ok != tc.wantReady {
+				t.Errorf("roster ready = %v, want %v", ok, tc.wantReady)
+			}
+		})
 	}
 }
 
@@ -144,7 +176,7 @@ func TestCleanupFinishedShows(t *testing.T) {
 }
 
 // Cleanup must call a show finished exactly when the notifier (anime_subs.MatchKey) cannot match it to an airing
-// schedule name. airing is keyed as animeschedule.GetAiringShowNames builds it: lowercased, not trimmed.
+// schedule name. airing is keyed by lowercased, untrimmed names.
 func TestCleanupFinishedShowsMatchesLikeTheNotifier(t *testing.T) {
 	tests := []struct {
 		name        string

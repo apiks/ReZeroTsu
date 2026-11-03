@@ -69,12 +69,12 @@ func entryJSON(route, at string) string {
 	return `{"title":"` + route + `","route":"` + route + `","airType":"sub","episodeNumber":1,"episodeDate":"` + at + `"}`
 }
 
-func resetCache(t *testing.T) {
+func resetTimetable(t *testing.T) {
 	t.Helper()
 	t.Cleanup(Seed(map[string][]ShowEntry{}))
-	cacheMu.Lock()
-	cachePopulated = false
-	cacheMu.Unlock()
+	timetableMu.Lock()
+	timetablePopulated = false
+	timetableMu.Unlock()
 }
 
 func at(t time.Time) func() {
@@ -106,7 +106,7 @@ func TestRefreshRequestsThreeISOWeeksInUTC(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resetCache(t)
+			resetTimetable(t)
 			defer at(tc.now)()
 			srv := newTimetableServer(t, nil)
 			UpdateAnimeSchedule(context.Background(), "key")
@@ -118,7 +118,7 @@ func TestRefreshRequestsThreeISOWeeksInUTC(t *testing.T) {
 }
 
 func TestRefreshKeepsLateSundayEntryOnItsSundayAndDropsStrays(t *testing.T) {
-	resetCache(t)
+	resetTimetable(t)
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
 	// Week 45 runs 2026-11-02 to 2026-11-08. The first entry carries a +01:00 offset but is 23:30 UTC on Sunday;
 	// the second is the previous Sunday and belongs to no loaded date.
@@ -138,7 +138,7 @@ func TestRefreshKeepsLateSundayEntryOnItsSundayAndDropsStrays(t *testing.T) {
 }
 
 func TestRefreshReadsAllThreeWeeksAndAppliesSubOverRawAndDubDropping(t *testing.T) {
-	resetCache(t)
+	resetTimetable(t)
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
 	raw := `{"title":"dual","route":"dual","airType":"raw","episodeNumber":1,"episodeDate":"2026-11-10T10:00:00Z"}`
 	dub := `{"title":"dubbed","route":"dubbed","airType":"dub","episodeNumber":1,"episodeDate":"2026-11-10T11:00:00Z"}`
@@ -160,7 +160,7 @@ func TestRefreshReadsAllThreeWeeksAndAppliesSubOverRawAndDubDropping(t *testing.
 }
 
 func TestFailedWeekKeepsItsPreviousEntries(t *testing.T) {
-	resetCache(t)
+	resetTimetable(t)
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
 	srv := newTimetableServer(t, map[string]any{
 		"2026-44": "[" + entryJSON("last", "2026-10-28T10:00:00Z") + "]",
@@ -187,6 +187,33 @@ func TestFailedWeekKeepsItsPreviousEntries(t *testing.T) {
 	}
 }
 
+func TestSnapshotWeeksCountsAWeekLoadedOnlyAfterItsOwnFetch(t *testing.T) {
+	resetTimetable(t)
+	restore := at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))
+	defer func() { restore() }()
+	srv := newTimetableServer(t, map[string]any{
+		"2026-45": "[" + entryJSON("this", "2026-11-04T10:00:00Z") + "]",
+		"2026-46": "[" + entryJSON("next", "2026-11-10T10:00:00Z") + "]",
+	})
+	UpdateAnimeSchedule(context.Background(), "key")
+	if s := SnapshotWeeks(); !s.ThisLoaded || !s.NextLoaded {
+		t.Fatalf("after a full fetch: this=%v next=%v, want both loaded", s.ThisLoaded, s.NextLoaded)
+	}
+
+	// Two weeks later every fetch fails: the old entries stay, but the new weeks were never fetched.
+	restore()
+	restore = at(time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC))
+	srv.mu.Lock()
+	srv.weeks["2026-47"] = http.StatusInternalServerError
+	srv.weeks["2026-48"] = http.StatusInternalServerError
+	srv.weeks["2026-49"] = http.StatusInternalServerError
+	srv.mu.Unlock()
+	UpdateAnimeSchedule(context.Background(), "key")
+	if s := SnapshotWeeks(); s.ThisLoaded || s.NextLoaded {
+		t.Errorf("after failed fetches: this=%v next=%v, want neither loaded", s.ThisLoaded, s.NextLoaded)
+	}
+}
+
 func TestLoadedRangeRunsLastMondayToNextSunday(t *testing.T) {
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
 	first, last := LoadedRange()
@@ -196,7 +223,7 @@ func TestLoadedRangeRunsLastMondayToNextSunday(t *testing.T) {
 }
 
 func TestRateLimitedRequestWaitsForResetAndRetriesOnce(t *testing.T) {
-	resetCache(t)
+	resetTimetable(t)
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()
 	var calls int32
 	old := newClient

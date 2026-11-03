@@ -63,6 +63,7 @@ func TestAllNamesIgnoresEmptyAndRepeatedNames(t *testing.T) {
 }
 
 func TestAiringShowsListsEachShowOnceAcrossTheWeek(t *testing.T) {
+	defer SetClock(func() time.Time { return time.Date(2025, 1, 8, 12, 0, 0, 0, time.UTC) })()
 	restore := Seed(map[string][]ShowEntry{
 		"2025-01-09": {{Name: "A", Route: "a"}},
 		"2025-01-06": {{Name: "A", Route: "a"}, {Name: "B", Route: "b"}},
@@ -74,6 +75,23 @@ func TestAiringShowsListsEachShowOnceAcrossTheWeek(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "A,B" {
 		t.Errorf("AiringShows = %v", names)
+	}
+}
+
+func TestAiringShowsCoverThisWeekAndNextWeekOnly(t *testing.T) {
+	// 2026-11-04 is a Wednesday; this week runs 2026-11-02 to 2026-11-08.
+	defer SetClock(func() time.Time { return time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC) })()
+	defer Seed(map[string][]ShowEntry{
+		"2026-10-28": {{Name: "Ended", Route: "ended", Final: true}, {Name: "Old Ep", Route: "both", Episode: "Ep 1"}},
+		"2026-11-04": {{Name: "Now", Route: "now"}, {Name: "New Ep", Route: "both", Episode: "Ep 2"}},
+		"2026-11-11": {{Name: "Later", Route: "later"}},
+	})()
+	var got []string
+	for _, e := range AiringShows() {
+		got = append(got, e.Name)
+	}
+	if want := "Now,New Ep,Later"; strings.Join(got, ",") != want {
+		t.Errorf("AiringShows = %v, want %s (nothing from last week)", got, want)
 	}
 }
 
@@ -158,6 +176,10 @@ func TestUpdateAnimeScheduleClosesBothBodiesOn429(t *testing.T) {
 	old := newClient
 	newClient = func() *http.Client { return &http.Client{Transport: rt} }
 	defer func() { newClient = old }()
+	// The 429 carries no reset header, so the retry waits the fallback; do not sleep it for real.
+	oldSleep := upcomingSleep
+	upcomingSleep = func(ctx context.Context, d time.Duration) error { return ctx.Err() }
+	defer func() { upcomingSleep = oldSleep }()
 
 	UpdateAnimeSchedule(context.Background(), "key")
 

@@ -87,7 +87,8 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	if !animeschedule.HasData() {
 		return
 	}
-	today := animeschedule.Today()
+	now := animeschedule.Now()
+	today := animeschedule.DayOf(now)
 	st := newMongoSentState(db)
 	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
@@ -113,7 +114,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 				if g == nil || g.ID == "" {
 					continue
 				}
-				if err := processDailyScheduleForGuild(ctx, d, senders, st, g.ID, dayShows, animeschedule.Now()); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processDailyScheduleForGuild(ctx, d, senders, st, g.ID, dayShows, now); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("schedule").Error("processDailyScheduleForGuild failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
 				}
 			}
@@ -144,7 +145,7 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 		return nil
 	}
 	shardID := d.ShardID()
-	today := now.UTC().Format("2006-01-02")
+	today := animeschedule.DateKey(now)
 	ap, err := st.GetAutopost(ctx, guildID, postTypeDailySchedule)
 	if err != nil || ap == nil || ap.ID == "" {
 		return nil
