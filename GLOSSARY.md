@@ -30,9 +30,35 @@ _Avoid_: mod role, command role, moderator role
 A user's request for a DM whenever a new episode of one show airs.
 _Avoid_: sub, guild subscription, channel subscription
 
+**Timetable**:
+AnimeSchedule's week-by-week list of episode air times. The bot holds last week's, this week's and next week's, with days counted in UTC.
+_Avoid_: schedule data, cache
+
+**Upcoming show**:
+A show listed on AnimeSchedule whose first episode has not aired yet. It can be subscribed to before it reaches the timetable.
+_Avoid_: unaired show, announced anime
+
+**Donghua**:
+Chinese animation. A server can hide it from its schedule pages.
+_Avoid_: Chinese anime, ONA (Chinese)
+
+**Daily-schedule autopost**:
+A server's standing order to post each UTC day's timetable page to one channel at the start of that day.
+_Avoid_: daily post, schedule feed
+
 **New-episodes autopost**:
 A server's standing order to post every newly aired episode to one channel, optionally pinging a role. It is never called a subscription.
 _Avoid_: episode feed, server subscription
+
+### Reddit
+
+**Reddit feed**:
+A server's standing order to post new posts from one subreddit, in one sort, to one channel, optionally narrowed to one author or a title prefix. Its channel, subreddit, sort, author and title identify it; auto-pin is a setting of the feed, not part of its identity.
+_Avoid_: subreddit feed, reddit subscription, post type feed
+
+**Sort**:
+Which of a subreddit's listings a Reddit feed follows: hot, rising or new.
+_Avoid_: post type, feed type
 
 ### Raffles
 
