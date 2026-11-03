@@ -48,7 +48,7 @@ type settingsStore interface {
 	SetPingMessage(ctx context.Context, guildID, text string) error
 	GetAutopostByType(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
-	DeleteAnimeSubs(ctx context.Context, id string) error
+	DeleteSentState(ctx context.Context, id string) error
 }
 
 // panelStoreOf picks the settings store of a database client; tests replace it.
@@ -57,7 +57,7 @@ var panelStoreOf = func(db *database.Client) settingsStore { return newDBStore(d
 // draft is a copy of the panel data that one change edits, plus the sent state it leaves behind.
 type draft struct {
 	*panelData
-	dropSubs []string
+	staleChannels []string
 }
 
 // scope names which stored records a change writes, so a change saves exactly the one setting it touches.
@@ -300,7 +300,7 @@ func apply(ic *interaction.Context, store settingsStore, sc scope, change func(*
 func save(ctx context.Context, store settingsStore, guildID string, sc scope, d *draft) error {
 	switch sc {
 	case scopeNewEpisodes:
-		dropSentState(ctx, store, guildID, d.dropSubs)
+		dropSentState(ctx, store, guildID, d.staleChannels)
 		return store.SetAutopost(ctx, guildID, postTypeNewEpisodes, d.newEpisodes)
 	case scopeDailySchedule:
 		return store.SetAutopost(ctx, guildID, postTypeDailySchedule, d.dailySchedule)

@@ -25,10 +25,10 @@ type fakeStore struct {
 	// afterGet runs once after the settings are read, to stand for a write by another command in between.
 	afterGet func()
 
-	// autoposts is keyed by post type; deletedSubs lists the sent-state documents that were deleted, in order.
-	autoposts    map[string]*guilds.Autopost
-	deletedSubs  []string
-	failAutopost error
+	// autoposts is keyed by post type; deletedSentState lists the sent-state documents that were deleted, in order.
+	autoposts        map[string]*guilds.Autopost
+	deletedSentState []string
+	failAutopost     error
 }
 
 func (f *fakeStore) GetAutopostByType(_ context.Context, _, postType string) (*guilds.Autopost, error) {
@@ -58,8 +58,8 @@ func (f *fakeStore) SetAutopost(_ context.Context, _, postType string, ap *guild
 	return nil
 }
 
-func (f *fakeStore) DeleteAnimeSubs(_ context.Context, id string) error {
-	f.deletedSubs = append(f.deletedSubs, id)
+func (f *fakeStore) DeleteSentState(_ context.Context, id string) error {
+	f.deletedSentState = append(f.deletedSentState, id)
 	return nil
 }
 
@@ -483,7 +483,7 @@ func TestNonModeratorsAreRefusedOnEveryComponent(t *testing.T) {
 	}
 }
 
-func TestModeratorRoleStillPassesTheRecheck(t *testing.T) {
+func TestGrantedRoleStillPassesTheRecheck(t *testing.T) {
 	gs := stored()
 	st := &fakeStore{gs: gs}
 	useStore(t, st)
@@ -495,7 +495,7 @@ func TestModeratorRoleStillPassesTheRecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.gs.Donghua {
-		t.Error("a member with a moderator role was refused")
+		t.Error("a member with a granted role was refused")
 	}
 }
 

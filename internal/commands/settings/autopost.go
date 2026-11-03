@@ -33,8 +33,8 @@ const (
 	warningLookupTimeout = 2 * time.Second
 )
 
-// dbStore is the settings store backed by the database: the guild repository plus the anime subscriptions that
-// hold a channel's sent state.
+// dbStore is the settings store backed by the database: the guild repository plus the repository that holds the
+// new-episodes sent-state record for a channel.
 type dbStore struct {
 	*guilds.Repo
 	subs *anime_subs.Repo
@@ -42,8 +42,8 @@ type dbStore struct {
 
 func newDBStore(db *database.Client) dbStore { return dbStore{Repo: db.Guilds(), subs: db.AnimeSubs()} }
 
-// DeleteAnimeSubs deletes a channel's sent state, the anime subscription document with that channel ID.
-func (s dbStore) DeleteAnimeSubs(ctx context.Context, id string) error {
+// DeleteSentState deletes the new-episodes sent-state record for a channel (stored by the older anime_subs package).
+func (s dbStore) DeleteSentState(ctx context.Context, id string) error {
 	return s.subs.DeleteByID(ctx, id)
 }
 
@@ -218,7 +218,7 @@ func chooseNewEpisodes(ic *interaction.Context, d *draft) string {
 	prev := d.newEpisodes
 	if ch == nil {
 		if prev != nil {
-			d.dropSubs = append(d.dropSubs, prev.ID)
+			d.staleChannels = append(d.staleChannels, prev.ID)
 		}
 		d.newEpisodes = nil
 		return ""
@@ -228,7 +228,7 @@ func chooseNewEpisodes(ic *interaction.Context, d *draft) string {
 		ap = &guilds.Autopost{PostType: postTypeNewEpisodes}
 	}
 	if ap.ID != "" && ap.ID != ch.ID {
-		d.dropSubs = append(d.dropSubs, ap.ID)
+		d.staleChannels = append(d.staleChannels, ap.ID)
 	}
 	ap.Name, ap.ID = ch.Name, ch.ID
 	d.newEpisodes = ap
@@ -272,7 +272,7 @@ func chooseDailySchedule(ic *interaction.Context, d *draft) string {
 // logged and does not stop the change, as before.
 func dropSentState(ctx context.Context, store settingsStore, guildID string, ids []string) {
 	for _, id := range ids {
-		if err := store.DeleteAnimeSubs(ctx, id); err != nil {
+		if err := store.DeleteSentState(ctx, id); err != nil {
 			logger.For("settings").Error("delete new-episodes sent state failed", "guild_id", guildID, "channel_id", id, "err", err)
 		}
 	}

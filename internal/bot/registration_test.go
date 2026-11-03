@@ -63,3 +63,24 @@ func TestShowAvatarRegistersAsAUserRightClickCommand(t *testing.T) {
 	}
 	t.Fatal("Show avatar is not registered")
 }
+
+func TestMergedCommandsAreRegisteredAndTheOldNamesAreGone(t *testing.T) {
+	registered := map[string]bool{}
+	for _, d := range commands.Definitions() {
+		registered[d.Name] = true
+	}
+	for _, name := range []string{"settings", "voicerole", "reddit"} {
+		if !registered[name] {
+			t.Errorf("/%s is not registered", name)
+		}
+	}
+	for _, name := range []string{
+		"bot-log", "donghua", "ping-message", "new-episodes", "daily-schedule",
+		"add-voice", "remove-voice", "voice-roles",
+		"add-reddit-feed", "remove-reddit-feed", "reddit-feeds",
+	} {
+		if registered[name] {
+			t.Errorf("old command /%s is still registered", name)
+		}
+	}
+}
