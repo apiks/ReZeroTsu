@@ -130,20 +130,13 @@ var legacyResponseFiles = map[string]bool{
 	"commands/command.go":             true, // autocomplete answers and RespondEphemeral
 	"commands/helpers.go":             true, // RespondEmbed helpers
 	"commands/pagination.go":          true, // pagination buttons
-	"commands/about/about.go":         true,
 	"commands/animesubs/animesubs.go": true,
-	"commands/avatar/avatar.go":       true,
 	"commands/feeds/feeds.go":         true,
 	"commands/help/help.go":           true,
-	"commands/invite/invite.go":       true,
-	"commands/joke/joke.go":           true,
-	"commands/pick/pick.go":           true,
-	"commands/ping/ping.go":           true,
 	"commands/prune/prune.go":         true,
 	"commands/raffle/raffle.go":       true,
 	"commands/react/react.go":         true,
 	"commands/reminders/reminders.go": true,
-	"commands/roll/roll.go":           true,
 	"commands/say/say.go":             true,
 	"commands/schedule/schedule.go":   true,
 }
@@ -381,7 +374,7 @@ func init() {
 		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
 		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
 		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
-		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/ping/ping.go", 0},
+		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/prune/prune.go", 0},
 		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 	}

@@ -4,6 +4,7 @@ package interactiontest
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"ReZeroTsu/internal/interaction"
 
@@ -30,6 +31,9 @@ type Fake struct {
 	RoleSets map[string][]*discordgo.Role
 	Channels map[string]*discordgo.Channel
 	Messages map[string]*discordgo.Message // keyed "<channelID>/<messageID>"
+	// Bot is the bot's own account and HeartbeatLatency the gateway latency, answered by BotUser and Latency.
+	Bot              *discordgo.User
+	HeartbeatLatency time.Duration
 	// Fail makes the named operation return the error instead of recording success.
 	Fail map[string]error
 }
@@ -121,6 +125,10 @@ func (f *Fake) Roles(guildID string) ([]*discordgo.Role, error) {
 	return f.RoleSets[guildID], nil
 }
 
+func (f *Fake) BotUser() *discordgo.User { return f.Bot }
+
+func (f *Fake) Latency() time.Duration { return f.HeartbeatLatency }
+
 func (f *Fake) Channel(channelID string) (*discordgo.Channel, error) {
 	if err := f.record(Call{Op: "Channel", ChannelID: channelID}); err != nil {
 		return nil, err
@@ -129,4 +137,12 @@ func (f *Fake) Channel(channelID string) (*discordgo.Channel, error) {
 		return c, nil
 	}
 	return nil, fmt.Errorf("channel %s not found", channelID)
+}
+
+// NewCommandContext builds the context a slash command receives in a guild: invoker "user", guild "g",
+// channel "c", the given command data and no stores.
+func NewCommandContext(p interaction.Port, v interaction.Visibility, mode interaction.ResponseMode, data discordgo.ApplicationCommandInteractionData) *interaction.Context {
+	i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, GuildID: "g", ChannelID: "c", Data: data,
+		Member: &discordgo.Member{User: &discordgo.User{ID: "user", Username: "invoker"}}}
+	return interaction.NewContext(p, i, nil, v, mode)
 }

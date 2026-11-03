@@ -4,6 +4,8 @@
 package interaction
 
 import (
+	"time"
+
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -75,4 +77,9 @@ type Port interface {
 	Roles(guildID string) ([]*discordgo.Role, error)
 	// Channel reads a channel's state.
 	Channel(channelID string) (*discordgo.Channel, error)
+
+	// BotUser is the bot's own account, for commands that show its name, avatar or invite link.
+	BotUser() *discordgo.User
+	// Latency is the gateway heartbeat latency.
+	Latency() time.Duration
 }

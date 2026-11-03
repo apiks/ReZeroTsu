@@ -7,7 +7,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -15,12 +15,12 @@ import (
 func init() {
 	commands.Add(&commands.Command{
 		Visibility: commands.Public,
-		Response:   commands.Deferred,
+		Response:   commands.Direct,
 		Name:       "invite",
 		Desc:       "Display my invite link.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
-		Handler:    handleInvite,
+		Run:        run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "invite",
@@ -28,23 +28,18 @@ func init() {
 		Permission: commands.PermEveryone,
 		Context:    commands.ContextDMOnly,
 		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, inviteEmbed(s))
+			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, inviteEmbed(s.State.User))
 		},
 	})
 }
 
 const hintInvite = "Use /add-moderator-role after inviting to set up moderator roles."
 
-func handleInvite(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	emb := inviteEmbed(s)
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{emb}}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("invite edit failed", args...)
-	}
+func run(ic *interaction.Context) error {
+	return ic.Reply(interaction.Response{Embeds: []*discordgo.MessageEmbed{inviteEmbed(ic.BotUser())}})
 }
 
-func inviteEmbed(s *discordgo.Session) *discordgo.MessageEmbed {
-	user := s.State.User
+func inviteEmbed(user *discordgo.User) *discordgo.MessageEmbed {
 	inviteURL := fmt.Sprintf(discord.InviteURLFormat, user.ID, discord.DefaultInvitePermissions)
 	return &discordgo.MessageEmbed{
 		URL:         inviteURL,
