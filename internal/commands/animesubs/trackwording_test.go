@@ -79,12 +79,52 @@ func TestAddNamesTheSubsNextEpisodeAndAddsTheDubSentenceWhenOnlyTheDubIsMissing(
 	}
 }
 
-func TestAddCountsARawFallbackRowAsNoSubListed(t *testing.T) {
+func TestAddCountsARawFallbackRowAsTheSubListedAndLabelsItRaw(t *testing.T) {
 	seedEntries(t, trackRow("Frieren", "frieren", "Ep 5", animeschedule.TrackRaw, at(24*time.Hour)))
-	// Neither member is listed, so the sentences replace the next-episode line.
-	want := "Subscribed to **Frieren** (Sub and Dub).\n" + noSubSentence + "\n" + noDubSentence
+	// The raw fallback row is what Sub will DM, so Sub is listed; only the dub is missing.
+	want := "Subscribed to **Frieren** (Sub and Dub).\nNext episode: Ep 5 (raw), " + fullAndRelative(at(24*time.Hour)) + ".\n" + noDubSentence
 	if got := addWithTrack(t, "Frieren", "sub_dub"); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
+	}
+	// A plain Sub subscription reads as it always did.
+	want = "Subscribed to **Frieren**.\nNext episode: Ep 5, " + fullAndRelative(at(24*time.Hour)) + "."
+	if got := addWithTrack(t, "Frieren", "sub"); got != want {
+		t.Errorf("plain Sub:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestAddWithNoSubRowNoRawRowAndNoSubTrackStillSaysNoSubIsListedYet(t *testing.T) {
+	dub := premiereIn(10 * 24 * time.Hour)
+	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Frieren", Route: "frieren", DubPremiere: dub}})
+	want := "Subscribed to **Frieren** (Sub and Dub).\nIts dub premieres " + fullAndRelative(dub.Unix()) + ". You'll get a DM when episode 1 airs.\n" + noSubSentence
+	if got := addWithTrack(t, "Frieren", "sub_dub"); got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestListLineNamesARawFallbackRowForTheSubWithItsRealTrack(t *testing.T) {
+	seedEntries(t, trackRow("Frieren", "frieren", "Ep 5", animeschedule.TrackRaw, at(24*time.Hour)))
+	st := newFakeStore()
+	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Frieren", Route: "frieren", Tracks: "sub_dub"}}
+	useStore(t, st)
+	want := fmt.Sprintf("1. Frieren · Sub and Dub · Ep 5 (raw) <t:%d:R>\n", at(24*time.Hour))
+	if got := reply(t, invoke(t, "list")).Embeds[0].Description; !strings.Contains(got, want) {
+		t.Errorf("list %q lacks %q", got, want)
+	}
+}
+
+func TestAddEveryTrackNamesRawsPremiereAsRawAndDoesNotContradictItself(t *testing.T) {
+	premiere := premiereIn(10 * 24 * time.Hour)
+	noClock := time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)
+	seedUpcoming(t, []animeschedule.UpcomingShow{{
+		Name: "Frieren", Route: "frieren", Premiere: premiere, JPNTime: premiere, SubTime: noClock, DubTime: noClock,
+	}})
+	got := addWithTrack(t, "Frieren", "every")
+	if !strings.Contains(got, "Its raw premieres "+fullAndRelative(premiere.Unix())) {
+		t.Errorf("reply %q does not name raw's premiere labelled raw", got)
+	}
+	if strings.Contains(got, "Its sub premieres") {
+		t.Errorf("reply %q labels raw's premiere sub", got)
 	}
 }
 

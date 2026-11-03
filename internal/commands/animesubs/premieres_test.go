@@ -66,7 +66,7 @@ func TestAddSuggestionsWithATrackLabelTheSetsEarliestKnownPremiere(t *testing.T)
 		{"dub", "Frieren · premieres " + day(40*24*time.Hour) + "|Dubless · premiere date TBA"},
 		{"sub", "Frieren · premieres " + day(12*24*time.Hour) + "|Dubless · premieres " + day(5*24*time.Hour)},
 		{"raw", "Frieren · premieres " + day(10*24*time.Hour) + "|Dubless · premieres " + day(5*24*time.Hour)},
-		{"sub_dub", "Frieren · premieres " + day(12*24*time.Hour) + "|Dubless · premieres " + day(5*24*time.Hour)},
+		{"sub_dub", "Frieren · premieres " + day(12*24*time.Hour) + "|Dubless · premiere date TBA"},
 		{"every", "Frieren · premieres " + day(10*24*time.Hour) + "|Dubless · premieres " + day(5*24*time.Hour)},
 	} {
 		if got := strings.Join(suggestionsWithTrack(t, "", tc.track), "|"); got != tc.want {

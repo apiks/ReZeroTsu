@@ -2,6 +2,7 @@ package animesubs
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -115,12 +116,12 @@ func loadTimetable(set animeschedule.SubscriptionTracks) timetableFor {
 // loaded weeks, else the latest aired one, else the earliest known premiere of the set's tracks on the upcoming
 // list. A show matches by the rule of sameShow. The track is named when the set has several members. Each member
 // of a set other than plain Sub that the show has no row of, and that the upcoming list does not give either, is
-// not listed yet; a raw fallback row does not list a sub.
+// not listed yet; a raw fallback row lists the Sub member, as it is the row Sub will DM.
 func findNextEpisode(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	n := placeOnTimetable(tt.Selected, upcoming, route, title, set, now)
 	n.Set = set
 	if set != animeschedule.SubscribeSub {
-		n.Unlisted = unlistedMembers(tt.Rows, upcoming, route, title, set)
+		n.Unlisted = unlistedMembers(tt, upcoming, route, title, set)
 	}
 	return n
 }
@@ -176,15 +177,22 @@ func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animesche
 
 // unlistedMembers are the members of the set the show has no row of in the loaded weeks and that the upcoming list
 // does not give it either.
-func unlistedMembers(rows []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks) []animeschedule.Track {
+func unlistedMembers(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks) []animeschedule.Track {
 	var out []animeschedule.Track
 	for _, m := range set.Members() {
 		listed := false
-		for _, e := range rows {
+		for _, e := range tt.Rows {
 			if e.Track.Known() == m && sameShow(e, route, title) {
 				listed = true
 				break
 			}
+		}
+		// The Sub member is listed by its raw fallback row too: that row is what the Sub member will DM.
+		for _, r := range tt.Selected {
+			if listed || m != animeschedule.TrackSub {
+				break
+			}
+			listed = slices.Contains(r.Members, animeschedule.TrackSub) && sameShow(r.ShowEntry, route, title)
 		}
 		for _, u := range upcoming {
 			if listed {

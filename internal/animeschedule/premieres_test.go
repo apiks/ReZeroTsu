@@ -122,3 +122,18 @@ func TestUpcomingSetPremiereOfSubFallsBackToRawAndIsUnknownWhenNothingIsKnown(t 
 		t.Error("an existing dub with no known premiere reads as known")
 	}
 }
+
+// A set of several tracks never lends raw's premiere to Sub: it belongs to the Raw member and is labelled raw.
+func TestUpcomingSetPremiereLabelsRawsPremiereRawInASetOfSeveralTracks(t *testing.T) {
+	u := loadUpcomingItem(t, `"premier":"2027-01-10T15:00:00Z","jpnTime":"2027-01-10T15:00:00Z",`+
+		`"subTime":"2027-01-10T00:00:00Z","dubTime":"2027-01-10T00:00:00Z"`)
+	if got, member, ok := u.SetPremiere(SubscribeSub); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || member != TrackSub {
+		t.Errorf("plain Sub = %v (%v, known %v), want raw's premiere read as Sub's", got, member, ok)
+	}
+	if got, member, ok := u.SetPremiere(SubscribeSubDub); ok {
+		t.Errorf("Sub and Dub = %v (%v), want none: Sub has no premiere of its own and raw is not in the set", got, member)
+	}
+	if got, member, ok := u.SetPremiere(SubscribeEvery); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || member != TrackRaw {
+		t.Errorf("Every track = %v (%v, known %v), want raw's premiere labelled raw", got, member, ok)
+	}
+}
