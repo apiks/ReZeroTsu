@@ -7,10 +7,42 @@ import (
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
+	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
+
+// reactRaffleStore is the part of the guild repository the legacy reaction raffles use.
+type reactRaffleStore interface {
+	GetRaffles(ctx context.Context, guildID string) ([]*guilds.Raffle, error)
+	UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) (bool, error)
+}
+
+// reactRaffleStoreOf picks the reaction raffle store of a database client; tests replace it.
+var reactRaffleStoreOf = func(db *database.Client) reactRaffleStore { return db.Guilds() }
+
+// handleSlotReaction enters (or, with remove, removes) the reacting member of the reaction raffle whose message
+// was reacted to. It reports whether the emoji is the raffle's slot emoji, which ends the handler whether or not
+// a raffle matched; any other emoji returns false and changes nothing. A store failure is dropped, as before.
+// Guard homes: the guild-only and own-reaction checks stay in the two handlers, before this runs; the message
+// match (ReactMessageID) is below.
+func handleSlotReaction(ctx context.Context, store reactRaffleStore, guildID, messageID, userID, emoji string, remove bool) bool {
+	if emoji != "🎰" {
+		return false
+	}
+	raffles, err := store.GetRaffles(ctx, guildID)
+	if err != nil {
+		return true
+	}
+	for _, raffle := range raffles {
+		if raffle != nil && raffle.ReactMessageID == messageID {
+			_, _ = store.UpdateRaffleParticipant(ctx, guildID, raffle.Name, userID, remove)
+			return true
+		}
+	}
+	return true
+}
 
 // OnMessageReactionAdd adds role on bound emoji reaction, or adds user to raffle on slot emoji.
 func OnMessageReactionAdd(ctx context.Context, db *database.Client) func(*discordgo.Session, *discordgo.MessageReactionAdd) {
@@ -18,16 +50,7 @@ func OnMessageReactionAdd(ctx context.Context, db *database.Client) func(*discor
 		if r.GuildID == "" || r.UserID == s.State.User.ID {
 			return
 		}
-		if r.Emoji.APIName() == "🎰" {
-			raffles, err := db.Guilds().GetRaffles(ctx, r.GuildID)
-			if err == nil {
-				for _, raffle := range raffles {
-					if raffle != nil && raffle.ReactMessageID == r.MessageID {
-						_ = db.Guilds().UpdateRaffleParticipant(ctx, r.GuildID, raffle.Name, r.UserID, false)
-						return
-					}
-				}
-			}
+		if handleSlotReaction(ctx, reactRaffleStoreOf(db), r.GuildID, r.MessageID, r.UserID, r.Emoji.APIName(), false) {
 			return
 		}
 		reactLower := strings.TrimPrefix(strings.ToLower(r.Emoji.APIName()), "a:")
@@ -48,16 +71,7 @@ func OnMessageReactionRemove(ctx context.Context, db *database.Client) func(*dis
 		if r.GuildID == "" || r.UserID == s.State.User.ID {
 			return
 		}
-		if r.Emoji.APIName() == "🎰" {
-			raffles, err := db.Guilds().GetRaffles(ctx, r.GuildID)
-			if err == nil {
-				for _, raffle := range raffles {
-					if raffle != nil && raffle.ReactMessageID == r.MessageID {
-						_ = db.Guilds().UpdateRaffleParticipant(ctx, r.GuildID, raffle.Name, r.UserID, true)
-						return
-					}
-				}
-			}
+		if handleSlotReaction(ctx, reactRaffleStoreOf(db), r.GuildID, r.MessageID, r.UserID, r.Emoji.APIName(), true) {
 			return
 		}
 		reactLower := strings.TrimPrefix(strings.ToLower(r.Emoji.APIName()), "a:")

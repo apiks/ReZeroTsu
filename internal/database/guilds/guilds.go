@@ -57,12 +57,48 @@ type RaffleMongo struct {
 	Name           string   `bson:"name"`
 	ParticipantIDs []string `bson:"participant_ids,omitempty"`
 	ReactMessageID string   `bson:"react_message_id,omitempty"`
+	// ChannelID and MessageID locate the raffle's button message; WinnerID is the latest draw's winner.
+	// All three are optional, so records stored before button raffles load unchanged.
+	ChannelID string `bson:"channel_id,omitempty"`
+	MessageID string `bson:"message_id,omitempty"`
+	WinnerID  string `bson:"winner_id,omitempty"`
 }
 
 type Raffle struct {
 	Name           string
 	ParticipantIDs []string
 	ReactMessageID string
+	// ChannelID and MessageID locate the button message; empty for a raffle that has none.
+	ChannelID string
+	MessageID string
+	// WinnerID is the user ID of the latest draw's winner; empty before the first draw.
+	WinnerID string
+}
+
+func raffleFromMongo(m *RaffleMongo) *Raffle {
+	return &Raffle{
+		Name:           m.Name,
+		ParticipantIDs: append([]string(nil), m.ParticipantIDs...),
+		ReactMessageID: m.ReactMessageID,
+		ChannelID:      m.ChannelID,
+		MessageID:      m.MessageID,
+		WinnerID:       m.WinnerID,
+	}
+}
+
+func raffleToMongo(r *Raffle) RaffleMongo {
+	m := RaffleMongo{
+		Name:           r.Name,
+		ParticipantIDs: r.ParticipantIDs,
+		ReactMessageID: r.ReactMessageID,
+		ChannelID:      r.ChannelID,
+		MessageID:      r.MessageID,
+		WinnerID:       r.WinnerID,
+	}
+	if m.ParticipantIDs == nil {
+		m.ParticipantIDs = []string{}
+	}
+	return m
 }
 
 // FeedEntry is one Reddit feed in a guild's feeds array.
@@ -243,12 +279,7 @@ func (r *Repo) GetRaffles(ctx context.Context, guildID string) ([]*Raffle, error
 	}
 	out := make([]*Raffle, len(g.Raffles))
 	for i := range g.Raffles {
-		m := &g.Raffles[i]
-		out[i] = &Raffle{
-			Name:           m.Name,
-			ParticipantIDs: append([]string(nil), m.ParticipantIDs...),
-			ReactMessageID: m.ReactMessageID,
-		}
+		out[i] = raffleFromMongo(&g.Raffles[i])
 	}
 	return out, nil
 }
@@ -258,14 +289,7 @@ func (r *Repo) SetRaffle(ctx context.Context, guildID string, raffle *Raffle) er
 	if raffle == nil {
 		return nil
 	}
-	mongoRaffle := RaffleMongo{
-		Name:           raffle.Name,
-		ParticipantIDs: raffle.ParticipantIDs,
-		ReactMessageID: raffle.ReactMessageID,
-	}
-	if mongoRaffle.ParticipantIDs == nil {
-		mongoRaffle.ParticipantIDs = []string{}
-	}
+	mongoRaffle := raffleToMongo(raffle)
 	filter := bson.M{"_id": guildID, "raffles.name": raffle.Name}
 	update := bson.M{"$set": bson.M{"raffles.$": mongoRaffle}}
 	res, err := r.coll.UpdateOne(ctx, filter, update)
@@ -280,6 +304,16 @@ func (r *Repo) SetRaffle(ctx context.Context, guildID string, raffle *Raffle) er
 	_, err = r.coll.UpdateOne(ctx, filter, push, options.UpdateOne().SetUpsert(true))
 	if err != nil {
 		return fmt.Errorf("SetRaffle: %w", err)
+	}
+	return nil
+}
+
+// SetRaffleWinner stores the latest draw's winner in one statement, leaving the entrants untouched.
+func (r *Repo) SetRaffleWinner(ctx context.Context, guildID, raffleName, winnerID string) error {
+	filter := bson.M{"_id": guildID, "raffles.name": raffleName}
+	update := bson.M{"$set": bson.M{"raffles.$.winner_id": winnerID}}
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return fmt.Errorf("SetRaffleWinner: %w", err)
 	}
 	return nil
 }
@@ -420,7 +454,9 @@ func (r *Repo) MarkAutopostPosted(ctx context.Context, guildID, postType, date s
 	return nil
 }
 
-func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) error {
+// UpdateRaffleParticipant adds the user to the named raffle's entrants, or removes them, in one single-statement
+// update. It reports whether a raffle matched, so a caller can tell a raffle deleted meanwhile from a no-op.
+func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) (bool, error) {
 	filter := bson.M{"_id": guildID, "raffles.name": raffleName}
 	var update bson.M
 	if remove {
@@ -428,11 +464,11 @@ func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName,
 	} else {
 		update = bson.M{"$addToSet": bson.M{"raffles.$.participant_ids": userID}}
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
+	res, err := r.coll.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return fmt.Errorf("UpdateRaffleParticipant: %w", err)
+		return false, fmt.Errorf("UpdateRaffleParticipant: %w", err)
 	}
-	return nil
+	return res.MatchedCount > 0, nil
 }
 
 // ListBotLogChannelIDs returns all non-empty bot log channel IDs.
