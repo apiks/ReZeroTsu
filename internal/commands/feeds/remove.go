@@ -3,7 +3,6 @@ package feeds
 import (
 	"context"
 	"sort"
-	"strconv"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
@@ -177,14 +176,6 @@ func runRemove(ic *interaction.Context) error {
 	return answer(ic, "Removed r/"+subreddit+" ("+postTypes[0]+") from "+commands.ChannelMention(channelID)+".")
 }
 
-// pickKey identifies a feed in the Remove picker: its channel, post type, subreddit and filters. The picker value
-// is this cut to the select limit.
-func pickKey(f guilds.FeedEntry) string {
-	return strings.Join([]string{f.ChannelID, f.PostType, f.Subreddit, f.Author, f.Title}, "|")
-}
-
-func pickValue(f guilds.FeedEntry) string { return clip(pickKey(f)) }
-
 // sameFeedScope reports whether RemoveFeed with f's fields also removes g: it matches on channel, subreddit and
 // post type, and narrows by author and title only when they are not empty.
 func sameFeedScope(f, g guilds.FeedEntry) bool {
@@ -211,19 +202,4 @@ func removeChosen(ic *interaction.Context, st store, feeds []guilds.FeedEntry, c
 		}
 	}
 	return nil
-}
-
-// ambiguousChoice is the private notice for a Remove choice that more than one feed clips to.
-func ambiguousChoice(matches []guilds.FeedEntry) string {
-	var b strings.Builder
-	b.WriteString("More than one feed looks the same as far as the list can show it, so I removed nothing:")
-	for i, f := range matches {
-		if i == 5 {
-			b.WriteString("\n...and " + strconv.Itoa(len(matches)-5) + " more")
-			break
-		}
-		b.WriteString("\n- " + ellipsize(describe(f), 300))
-	}
-	b.WriteString("\nUse /reddit remove with the channel, subreddit and filters instead.")
-	return b.String()
 }
