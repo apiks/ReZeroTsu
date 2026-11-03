@@ -98,7 +98,7 @@ func seedAiredToday(t *testing.T, rows ...animeschedule.ShowEntry) {
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{animeschedule.DateKey(now): rows}))
 }
 
-func TestAddSeedsEachMemberFromItsOwnAiredRowToday(t *testing.T) {
+func TestAddSeedsEachTrackFromItsOwnAiredRowToday(t *testing.T) {
 	withLookup(t, "Frieren")
 	subAir := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC).Unix()
 	dubAir := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
@@ -152,7 +152,7 @@ func TestAddSeedsSubFromTodaysRawFallbackRow(t *testing.T) {
 	}
 }
 
-func TestAddSeedsEachMemberWithItsLatestAiredRowToday(t *testing.T) {
+func TestAddSeedsEachTrackWithItsLatestAiredRowToday(t *testing.T) {
 	withLookup(t, "Frieren")
 	first := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
 	second := time.Date(2026, 11, 4, 10, 30, 0, 0, time.UTC).Unix()
@@ -170,7 +170,7 @@ func TestAddSeedsEachMemberWithItsLatestAiredRowToday(t *testing.T) {
 	}
 }
 
-func TestReplaceSeedsANewMemberWithItsLatestAiredRowToday(t *testing.T) {
+func TestReplaceSeedsANewTrackWithItsLatestAiredRowToday(t *testing.T) {
 	withLookup(t, "Frieren")
 	first := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
 	second := time.Date(2026, 11, 4, 10, 30, 0, 0, time.UTC).Unix()

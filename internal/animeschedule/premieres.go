@@ -66,15 +66,15 @@ func (u UpcomingShow) TrackPremiere(t Track) time.Time {
 // SetPremiere is the earliest known premiere among the set's tracks, with the track that has it. A plain Sub
 // subscription reads raw's premiere when the sub has none, as Sub falls back to raw; in a set of several tracks raw's
 // premiere belongs to the Raw track alone. ok is false when no premiere is known.
-func (u UpcomingShow) SetPremiere(set SubscriptionTracks) (premiere time.Time, member Track, ok bool) {
-	for _, m := range set.Members() {
+func (u UpcomingShow) SetPremiere(set SubscriptionTracks) (premiere time.Time, track Track, ok bool) {
+	for _, m := range set.Tracks() {
 		p := u.TrackPremiere(m)
 		if p.IsZero() && m == TrackSub && set == SubscribeSub {
 			p = u.Premiere
 		}
 		if !p.IsZero() && (!ok || p.Before(premiere)) {
-			premiere, member, ok = p, m, true
+			premiere, track, ok = p, m, true
 		}
 	}
-	return premiere, member, ok
+	return premiere, track, ok
 }

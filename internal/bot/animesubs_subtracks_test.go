@@ -9,12 +9,12 @@ import (
 	"ReZeroTsu/internal/database/anime_subs"
 )
 
-// subRows is a selection that serves the rows as the Sub member's, whatever the set: the rows of a test that
+// subRows is a selection that serves the rows as the Sub track's, whatever the set: the rows of a test that
 // predates subscription tracks.
 func subRows(rows []animeschedule.ShowEntry) []animeschedule.SelectedRow {
 	var sel []animeschedule.SelectedRow
 	for _, r := range rows {
-		sel = append(sel, animeschedule.SelectedRow{ShowEntry: r, Members: []animeschedule.Track{animeschedule.TrackSub}})
+		sel = append(sel, animeschedule.SelectedRow{ShowEntry: r, Tracks: []animeschedule.Track{animeschedule.TrackSub}})
 	}
 	return sel
 }
@@ -80,7 +80,7 @@ func TestADubSubscriptionGetsNoSubOrRawDM(t *testing.T) {
 	}
 }
 
-func TestARowTwoMembersSelectIsSentOnceAndBothMembersRememberIt(t *testing.T) {
+func TestARowTwoTracksSelectIsSentOnceAndBothTracksRememberIt(t *testing.T) {
 	sel := seedToday(t, trackedAt("Ep 1", animeschedule.TrackRaw, 600))
 	got, st := dmTexts(t, &anime_subs.ShowSub{Show: "Frieren", Tracks: "every"}, sel, 2)
 	if len(got) != 1 {

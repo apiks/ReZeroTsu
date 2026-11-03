@@ -28,7 +28,7 @@ type ShowSub struct {
 	// Tracks is the subscription tracks of a user's entry, in the stored form of animeschedule.SubscriptionTracks;
 	// optional (an entry without one reads as Sub).
 	Tracks string `bson:"tracks,omitempty"`
-	// The Dub and Raw members' memory of what was last DMed; the Sub member's is LastNotifiedAirUnix and
+	// The Dub and Raw tracks' memory of what was last DMed; the Sub track's is LastNotifiedAirUnix and
 	// LastNotifiedEpisode. Optional.
 	LastNotifiedDubAirUnix int64  `bson:"last_notified_dub_air_unix,omitempty"`
 	LastNotifiedDubEpisode string `bson:"last_notified_dub_episode,omitempty"`
@@ -219,7 +219,7 @@ func identityFilter(shows []*ShowSub) bson.M {
 }
 
 // MarkShowNotified records one show of the document as notified, with the air time and episode key of each given
-// member, in a single update statement. The show is matched by exact name.
+// track, in a single update statement. The show is matched by exact name.
 func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks []Mark) error {
 	if len(marks) == 0 {
 		return nil
@@ -232,8 +232,8 @@ func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks 
 }
 
 // SetShowTracks replaces the track set of the named show, in the stored form of animeschedule.SubscriptionTracks,
-// and writes each given member's memory (the seed of a member newly in the set; a zero Mark clears stale memory),
-// in a single update statement. The show is matched by exact name. Members not named keep their memory.
+// and writes each given track's memory (the seed of a track newly in the set; a zero Mark clears stale memory),
+// in a single update statement. The show is matched by exact name. Tracks not named keep their memory.
 func (r *Repo) SetShowTracks(ctx context.Context, id, showName, tracks string, marks []Mark) error {
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
 	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, setShowTracksUpdate(tracks, marks), opts); err != nil {

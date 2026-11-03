@@ -23,7 +23,7 @@ const (
 	noSubSentence = "No sub is listed yet. You'll get a DM when a subbed episode airs."
 )
 
-func TestAddNamesTheEarliestSelectedRowAcrossTheSetsTracksAndLabelsItWithSeveralMembers(t *testing.T) {
+func TestAddNamesTheEarliestSelectedRowAcrossTheSetsTracksAndLabelsItWithSeveralTracks(t *testing.T) {
 	seedEntries(t,
 		trackRow("Frieren", "frieren", "Ep 6", animeschedule.TrackSub, at(2*24*time.Hour)),
 		trackRow("Frieren", "frieren", "Ep 2", animeschedule.TrackDub, at(24*time.Hour)))
@@ -59,7 +59,7 @@ func TestAddLabelsAMoviesReleaseWithItsTrack(t *testing.T) {
 	}
 }
 
-func TestAddSaysNoDubIsListedYetInPlaceOfTheNextEpisodeWhenNoMemberIsListed(t *testing.T) {
+func TestAddSaysNoDubIsListedYetInPlaceOfTheNextEpisodeWhenNoTrackIsListed(t *testing.T) {
 	seedEntries(t, trackRow("Frieren", "frieren", "Ep 6", animeschedule.TrackSub, at(24*time.Hour)))
 	for _, tc := range []struct{ track, want string }{
 		{"dub", "Subscribed to **Frieren** (Dub).\n" + noDubSentence},
@@ -142,7 +142,7 @@ func TestAddCountsAnUpcomingTrackThatExistsAsListedAndOneThatDoesNotAsMissing(t 
 	}
 }
 
-func TestListLinesInsertTheSetAndLabelTheNextEpisodeWithSeveralMembers(t *testing.T) {
+func TestListLinesInsertTheSetAndLabelTheNextEpisodeWithSeveralTracks(t *testing.T) {
 	seedEntries(t,
 		trackRow("Both", "both", "Ep 6", animeschedule.TrackSub, at(2*24*time.Hour)),
 		trackRow("Both", "both", "Ep 2", animeschedule.TrackDub, at(24*time.Hour)),

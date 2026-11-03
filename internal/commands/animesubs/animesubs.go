@@ -186,8 +186,8 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 }
 
 // replaceTracks answers a re-add of a show the member already follows. The same set is already subscribed; a
-// different set replaces the stored one in a single statement. Members kept from the old set keep their memory;
-// each member new to the set is seeded from its own row that aired today (or cleared, if none), so switching
+// different set replaces the stored one in a single statement. Tracks kept from the old set keep their memory;
+// each track new to the set is seeded from its own row that aired today (or cleared, if none), so switching
 // never DMs something that aired earlier today. It never counts against the subscription limit.
 func replaceTracks(ctx context.Context, store subsStore, uid string, existing *anime_subs.ShowSub, showName string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
 	old, _ := animeschedule.ParseSubscriptionTracks(existing.Tracks)
@@ -197,8 +197,8 @@ func replaceTracks(ctx context.Context, store subsStore, uid string, existing *a
 	seeded := &anime_subs.ShowSub{Show: existing.Show, Route: existing.Route}
 	seedMemory(seeded, set, now)
 	var marks []anime_subs.Mark
-	for _, m := range set.Members() {
-		if slices.Contains(old.Members(), m) {
+	for _, m := range set.Tracks() {
+		if slices.Contains(old.Tracks(), m) {
 			continue
 		}
 		air, episode := seeded.Memory(string(m))
@@ -260,17 +260,17 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
 }
 
-// seedMemory marks, for each member of the set, the row of that member that already aired today as sent, so
-// subscribing after an airing never DMs it. A member with no aired row today keeps no memory.
+// seedMemory marks, for each track of the set, the row of that track that already aired today as sent, so
+// subscribing after an airing never DMs it. A track with no aired row today keeps no memory.
 func seedMemory(sub *anime_subs.ShowSub, set animeschedule.SubscriptionTracks, now time.Time) {
-	byMember := make(map[animeschedule.Track][]animeschedule.ShowEntry)
+	byTrack := make(map[animeschedule.Track][]animeschedule.ShowEntry)
 	for _, row := range animeschedule.SelectRows(now, set) {
-		for _, m := range row.MembersIn(set) {
-			byMember[m] = append(byMember[m], row.ShowEntry)
+		for _, m := range row.TracksIn(set) {
+			byTrack[m] = append(byTrack[m], row.ShowEntry)
 		}
 	}
-	for _, m := range set.Members() {
-		if aired, ok := airedTodayEntry(byMember[m], sub.Route, sub.Show, now.Unix()); ok {
+	for _, m := range set.Tracks() {
+		if aired, ok := airedTodayEntry(byTrack[m], sub.Route, sub.Show, now.Unix()); ok {
 			sub.Remember(anime_subs.Mark{Track: string(m), AirUnix: aired.AirTimeUnix})
 		}
 	}

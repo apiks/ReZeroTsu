@@ -24,15 +24,15 @@ type nextEpisode struct {
 	// Premiere is true when Entry is an upcoming-list show; Entry.AirTimeUnix is then its premiere, 0 while undated.
 	Premiere bool
 	// Track names the track of Entry ("sub", "dub" or "raw"), a row's or a premiere's, when the subscription's set
-	// has several members; empty otherwise.
+	// has several tracks; empty otherwise.
 	Track animeschedule.Track
 	// Set is the subscription's tracks.
 	Set animeschedule.SubscriptionTracks
-	// Unlisted are the members of a non-Sub set that are not listed yet.
+	// Unlisted are the tracks of a non-Sub set that are not listed yet.
 	Unlisted []animeschedule.Track
 }
 
-// episode is the entry's episode label, with its track when the set has several members: "Ep 2 (dub)".
+// episode is the entry's episode label, with its track when the set has several tracks: "Ep 2 (dub)".
 func (n nextEpisode) episode() string {
 	if n.Track == "" {
 		return n.Entry.Episode
@@ -51,7 +51,7 @@ func trackNoun(t animeschedule.Track) string {
 	return "raw"
 }
 
-// unlistedSentences are the confirmation sentences for each member not listed yet.
+// unlistedSentences are the confirmation sentences for each track not listed yet.
 func (n nextEpisode) unlistedSentences() string {
 	var out []string
 	for _, m := range n.Unlisted {
@@ -60,12 +60,12 @@ func (n nextEpisode) unlistedSentences() string {
 	return strings.Join(out, "\n")
 }
 
-// noneListed is true when the set is not plain Sub and no member is listed.
+// noneListed is true when the set is not plain Sub and no track is listed.
 func (n nextEpisode) noneListed() bool {
-	return len(n.Unlisted) > 0 && len(n.Unlisted) == len(n.Set.Members())
+	return len(n.Unlisted) > 0 && len(n.Unlisted) == len(n.Set.Tracks())
 }
 
-// unlistedList is the list-line phrase for members not listed yet: "no dub listed yet", "no sub or dub listed
+// unlistedList is the list-line phrase for tracks not listed yet: "no dub listed yet", "no sub or dub listed
 // yet".
 func (n nextEpisode) unlistedList() string {
 	names := make([]string, len(n.Unlisted))
@@ -114,21 +114,21 @@ func loadTimetable(set animeschedule.SubscriptionTracks) timetableFor {
 
 // findNextEpisode applies the next-episode rule: the earliest row the set selects at or after now across the
 // loaded weeks, else the latest aired one, else the earliest known premiere of the set's tracks on the upcoming
-// list. A show matches by the rule of sameShow. The track is named when the set has several members. Each member
+// list. A show matches by the rule of sameShow. The track is named when the set has several tracks. Each track
 // of a set other than plain Sub that the show has no row of, and that the upcoming list does not give either, is
-// not listed yet; a raw fallback row lists the Sub member, as it is the row Sub will DM.
+// not listed yet; a raw fallback row lists the Sub track, as it is the row Sub will DM.
 func findNextEpisode(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	n := placeOnTimetable(tt.Selected, upcoming, route, title, set, now)
 	n.Set = set
 	if set != animeschedule.SubscribeSub {
-		n.Unlisted = unlistedMembers(tt, upcoming, route, title, set)
+		n.Unlisted = unlistedTracks(tt, upcoming, route, title, set)
 	}
 	return n
 }
 
 func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	nowUnix := now.Unix()
-	several := len(set.Members()) > 1
+	several := len(set.Tracks()) > 1
 	var next, last animeschedule.ShowEntry
 	var haveNext, haveLast bool
 	for _, r := range selected {
@@ -164,10 +164,10 @@ func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animesche
 		// The premiere is the set's earliest known one, labelled with its track when the set has several.
 		e.AirTimeUnix = 0
 		var track animeschedule.Track
-		if p, member, ok := u.SetPremiere(set); ok {
+		if p, premiereTrack, ok := u.SetPremiere(set); ok {
 			e.AirTimeUnix = p.Unix()
 			if several {
-				track = member
+				track = premiereTrack
 			}
 		}
 		return nextEpisode{Entry: e, Found: true, Upcoming: e.AirTimeUnix == 0 || e.AirTimeUnix >= nowUnix, Premiere: true, Track: track}
@@ -175,11 +175,11 @@ func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animesche
 	return nextEpisode{}
 }
 
-// unlistedMembers are the members of the set the show has no row of in the loaded weeks and that the upcoming list
+// unlistedTracks are the tracks of the set the show has no row of in the loaded weeks and that the upcoming list
 // does not give it either.
-func unlistedMembers(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks) []animeschedule.Track {
+func unlistedTracks(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks) []animeschedule.Track {
 	var out []animeschedule.Track
-	for _, m := range set.Members() {
+	for _, m := range set.Tracks() {
 		listed := false
 		for _, e := range tt.Rows {
 			if e.Track.Known() == m && sameShow(e, route, title) {
@@ -187,12 +187,12 @@ func unlistedMembers(tt timetableFor, upcoming []animeschedule.UpcomingShow, rou
 				break
 			}
 		}
-		// The Sub member is listed by its raw fallback row too: that row is what the Sub member will DM.
+		// The Sub track is listed by its raw fallback row too: that row is what the Sub track will DM.
 		for _, r := range tt.Selected {
 			if listed || m != animeschedule.TrackSub {
 				break
 			}
-			listed = slices.Contains(r.Members, animeschedule.TrackSub) && sameShow(r.ShowEntry, route, title)
+			listed = slices.Contains(r.Tracks, animeschedule.TrackSub) && sameShow(r.ShowEntry, route, title)
 		}
 		for _, u := range upcoming {
 			if listed {

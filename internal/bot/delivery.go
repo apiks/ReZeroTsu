@@ -119,7 +119,7 @@ type SentState interface {
 	// --- ticket #7 (user DMs) ---
 
 	// MarkUserShowNotified records one show of a user's document as notified, with the air time and episode key
-	// of each given track member, in a single-statement update (matched by show name).
+	// of each given track, in a single-statement update (matched by show name).
 	MarkUserShowNotified(ctx context.Context, id, showName string, marks []anime_subs.Mark) error
 	// SetUserShowRoute records route on one show of a user's document that has none, in a single-statement
 	// update (matched by show name).

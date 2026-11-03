@@ -92,9 +92,9 @@ func TestUpcomingSetPremiereIsTheEarliestKnownAmongTheSet(t *testing.T) {
 	u := loadUpcomingItem(t, `"premier":"2027-01-10T15:00:00Z","jpnTime":"2027-01-10T15:00:00Z",`+
 		`"subPremier":"2027-01-12T10:00:00Z","dubPremier":"2027-03-01T10:00:00Z"`)
 	for _, tc := range []struct {
-		set    SubscriptionTracks
-		want   time.Time
-		member Track
+		set   SubscriptionTracks
+		want  time.Time
+		track Track
 	}{
 		{SubscribeSub, utc("2027-01-12T10:00:00Z"), TrackSub},
 		{SubscribeDub, utc("2027-03-01T10:00:00Z"), TrackDub},
@@ -102,9 +102,9 @@ func TestUpcomingSetPremiereIsTheEarliestKnownAmongTheSet(t *testing.T) {
 		{SubscribeSubDub, utc("2027-01-12T10:00:00Z"), TrackSub},
 		{SubscribeEvery, utc("2027-01-10T15:00:00Z"), TrackRaw},
 	} {
-		got, member, ok := u.SetPremiere(tc.set)
-		if !ok || !got.Equal(tc.want) || member != tc.member {
-			t.Errorf("%v: premiere = %v (%v, known %v), want %v (%v)", tc.set, got, member, ok, tc.want, tc.member)
+		got, track, ok := u.SetPremiere(tc.set)
+		if !ok || !got.Equal(tc.want) || track != tc.track {
+			t.Errorf("%v: premiere = %v (%v, known %v), want %v (%v)", tc.set, got, track, ok, tc.want, tc.track)
 		}
 	}
 }
@@ -123,17 +123,17 @@ func TestUpcomingSetPremiereOfSubFallsBackToRawAndIsUnknownWhenNothingIsKnown(t 
 	}
 }
 
-// A set of several tracks never lends raw's premiere to Sub: it belongs to the Raw member and is labelled raw.
+// A set of several tracks never lends raw's premiere to Sub: it belongs to the Raw track and is labelled raw.
 func TestUpcomingSetPremiereLabelsRawsPremiereRawInASetOfSeveralTracks(t *testing.T) {
 	u := loadUpcomingItem(t, `"premier":"2027-01-10T15:00:00Z","jpnTime":"2027-01-10T15:00:00Z",`+
 		`"subTime":"2027-01-10T00:00:00Z","dubTime":"2027-01-10T00:00:00Z"`)
-	if got, member, ok := u.SetPremiere(SubscribeSub); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || member != TrackSub {
-		t.Errorf("plain Sub = %v (%v, known %v), want raw's premiere read as Sub's", got, member, ok)
+	if got, track, ok := u.SetPremiere(SubscribeSub); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || track != TrackSub {
+		t.Errorf("plain Sub = %v (%v, known %v), want raw's premiere read as Sub's", got, track, ok)
 	}
-	if got, member, ok := u.SetPremiere(SubscribeSubDub); ok {
-		t.Errorf("Sub and Dub = %v (%v), want none: Sub has no premiere of its own and raw is not in the set", got, member)
+	if got, track, ok := u.SetPremiere(SubscribeSubDub); ok {
+		t.Errorf("Sub and Dub = %v (%v), want none: Sub has no premiere of its own and raw is not in the set", got, track)
 	}
-	if got, member, ok := u.SetPremiere(SubscribeEvery); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || member != TrackRaw {
-		t.Errorf("Every track = %v (%v, known %v), want raw's premiere labelled raw", got, member, ok)
+	if got, track, ok := u.SetPremiere(SubscribeEvery); !ok || !got.Equal(utc("2027-01-10T15:00:00Z")) || track != TrackRaw {
+		t.Errorf("Every track = %v (%v, known %v), want raw's premiere labelled raw", got, track, ok)
 	}
 }

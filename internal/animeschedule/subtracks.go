@@ -63,8 +63,8 @@ func (s SubscriptionTracks) Title() string {
 	return strings.ToUpper(str[:1]) + str[1:]
 }
 
-// Members lists the tracks in the set: Sub, then Dub, then Raw.
-func (s SubscriptionTracks) Members() []Track {
+// Tracks lists the tracks in the set: Sub, then Dub, then Raw.
+func (s SubscriptionTracks) Tracks() []Track {
 	switch s {
 	case SubscribeDub:
 		return []Track{TrackDub}
@@ -78,17 +78,17 @@ func (s SubscriptionTracks) Members() []Track {
 	return []Track{TrackSub}
 }
 
-// SelectedRow is a timetable row a subscription's set selects, with every member of the set that selected it.
+// SelectedRow is a timetable row a subscription's set selects, with every track of the set that selected it.
 type SelectedRow struct {
 	ShowEntry
-	Members []Track
+	Tracks []Track
 }
 
-// MembersIn are the members of the row that belong to set.
-func (r SelectedRow) MembersIn(set SubscriptionTracks) []Track {
+// TracksIn are the tracks of the row that belong to set.
+func (r SelectedRow) TracksIn(set SubscriptionTracks) []Track {
 	var out []Track
-	for _, m := range r.Members {
-		if slices.Contains(set.Members(), m) {
+	for _, m := range r.Tracks {
+		if slices.Contains(set.Tracks(), m) {
 			out = append(out, m)
 		}
 	}
@@ -97,7 +97,7 @@ func (r SelectedRow) MembersIn(set SubscriptionTracks) []Track {
 
 // SelectRows returns the rows of the UTC date of day that the set selects, in timetable order, donghua included.
 // Sub selects its sub rows, or the show's raw rows in a week the show has no sub row; Dub and Raw select exactly
-// their track. A row more than one member selects is returned once, with each of them.
+// their track. A row more than one track of the set selects is returned once, with each of them.
 func SelectRows(day time.Time, set SubscriptionTracks) []SelectedRow {
 	key := DateKey(day)
 	timetableMu.RLock()
@@ -115,7 +115,7 @@ func SelectRows(day time.Time, set SubscriptionTracks) []SelectedRow {
 }
 
 // SelectLoaded returns every loaded row the set selects, in date then air-time order, donghua included, by the
-// same rule as SelectRows. A row more than one member selects is returned once, with each of them.
+// same rule as SelectRows. A row more than one track of the set selects is returned once, with each of them.
 func SelectLoaded(set SubscriptionTracks) []SelectedRow {
 	timetableMu.RLock()
 	defer timetableMu.RUnlock()
@@ -139,24 +139,24 @@ func LoadedTrackRows() []ShowEntry {
 	return out
 }
 
-// selectFrom keeps the rows of one date that some member of the set selects. Sub's pick is the chain's: the Sub
+// selectFrom keeps the rows of one date that some track of the set selects. Sub's pick is the chain's: the Sub
 // preference's track for the show that week.
 func selectFrom(date string, rows []ShowEntry, weeks map[showWeek]weekTracks, set SubscriptionTracks) []SelectedRow {
 	monday := mondayKeyOf(date)
 	var out []SelectedRow
 	for _, e := range rows {
-		var members []Track
-		for _, m := range set.Members() {
+		var tracks []Track
+		for _, m := range set.Tracks() {
 			if m == TrackSub && e.Track != PreferSub.shown(weeks[showWeek{show: showID(e), monday: monday}]) {
 				continue
 			}
 			if m != TrackSub && e.Track != m {
 				continue
 			}
-			members = append(members, m)
+			tracks = append(tracks, m)
 		}
-		if len(members) > 0 {
-			out = append(out, SelectedRow{ShowEntry: e, Members: members})
+		if len(tracks) > 0 {
+			out = append(out, SelectedRow{ShowEntry: e, Tracks: tracks})
 		}
 	}
 	return out
@@ -170,7 +170,7 @@ type TrackWeekSnapshot struct {
 }
 
 // SnapshotTrackWeeks reads the rows of one track around the shared clock's now. The daily cleanup uses it to judge
-// a Dub or Raw member of a subscription's set.
+// a Dub or Raw track of a subscription's set.
 func SnapshotTrackWeeks(track Track) TrackWeekSnapshot {
 	weeks := weekLayout(Now())
 	timetableMu.RLock()

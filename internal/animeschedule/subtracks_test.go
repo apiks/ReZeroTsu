@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// selectDay lists "name:track:episode[members]" of the rows SelectRows returns for one 2026-11 day.
+// selectDay lists "name:track:episode[tracks]" of the rows SelectRows returns for one 2026-11 day.
 func selectDay(day int, set SubscriptionTracks) string {
 	var out []string
 	for _, r := range SelectRows(time.Date(2026, 11, day, 0, 0, 0, 0, time.UTC), set) {
 		var ms []string
-		for _, m := range r.Members {
+		for _, m := range r.Tracks {
 			ms = append(ms, string(m))
 		}
 		out = append(out, fmt.Sprintf("%s:%s:%s[%s]", r.Name, r.Track, r.Episode, strings.Join(ms, "+")))

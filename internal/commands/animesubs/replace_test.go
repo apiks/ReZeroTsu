@@ -60,7 +60,7 @@ func TestReaddWithTheSameSetStaysAlreadySubscribed(t *testing.T) {
 	}
 }
 
-func TestReplaceKeepsKeptMemoryAndSeedsAddedMembers(t *testing.T) {
+func TestReplaceKeepsKeptMemoryAndSeedsAddedTracks(t *testing.T) {
 	withLookup(t, "Frieren")
 	subAir := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC).Unix()
 	dubAir := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
@@ -81,7 +81,7 @@ func TestReplaceKeepsKeptMemoryAndSeedsAddedMembers(t *testing.T) {
 	}
 }
 
-func TestReplaceClearsStaleMemoryOfARejoiningMember(t *testing.T) {
+func TestReplaceClearsStaleMemoryOfARejoiningTrack(t *testing.T) {
 	withLookup(t, "Frieren")
 	seedAiredToday(t)
 	st := newFakeStore()
@@ -92,7 +92,7 @@ func TestReplaceClearsStaleMemoryOfARejoiningMember(t *testing.T) {
 		t.Errorf("dub memory = %d %q, want cleared: no dub aired today", air, ep)
 	}
 	if st.docs["user"][0].Notified {
-		t.Error("clearing a member's memory marked the subscription notified, as Mongo does not")
+		t.Error("clearing a track's memory marked the subscription notified, as Mongo does not")
 	}
 }
 

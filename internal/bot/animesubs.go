@@ -69,11 +69,10 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 				continue
 			}
-			keep, ready := buildKeepRoster()
+			updated, ready, err := cleanupWhenReady(ctx, db.AnimeSubs())
 			if !ready {
 				continue
 			}
-			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), keep)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.For("animesubs").Error("finished cleanup IterateUserSubs failed", "err", err)
 			}
@@ -82,6 +81,17 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			}
 		}
 	}
+}
+
+// cleanupWhenReady runs the finished-show cleanup once. ready is false, and nothing is removed, while the keep
+// roster is not ready.
+func cleanupWhenReady(ctx context.Context, st userSubsStore) (updated int, ready bool, err error) {
+	keep, ready := buildKeepRoster()
+	if !ready {
+		return 0, false, nil
+	}
+	updated, err = cleanupFinishedShows(ctx, st, keep)
+	return updated, true, err
 }
 
 // userSubsStore is the narrow persistence surface of the user-subscription maintenance jobs. It has no
@@ -100,7 +110,7 @@ type userSubsStore interface {
 // anime_subs.MatchKey of their title.
 //
 // routes and keys hold what keeps a Sub subscription (the Sub chain's rows) and, for every subscription, the
-// upcoming list. A Dub or Raw member of a subscription's set is judged by its own strict rows in strict.
+// upcoming list. A Dub or Raw track of a subscription's set is judged by its own strict rows in strict.
 type keepRoster struct {
 	routes map[string]struct{}
 	keys   map[string]struct{}
@@ -109,7 +119,7 @@ type keepRoster struct {
 	strict   map[animeschedule.Track]*strictKeep
 }
 
-// strictKeep is what a Dub or Raw member keeps: the shows with a selected row this or next week or a non-final
+// strictKeep is what a Dub or Raw track keeps: the shows with a selected row this or next week or a non-final
 // latest row last week, and the shows with a row of the track in any loaded week (the track has started).
 type strictKeep struct {
 	airing, started showSet
@@ -144,14 +154,14 @@ func (s showSet) add(route, title string) {
 	}
 }
 
-// keeps reports whether the subscription is kept: the show is on the upcoming list, or some member of its set
+// keeps reports whether the subscription is kept: the show is on the upcoming list, or some track of its set
 // keeps it. Sub keeps it by the Sub chain's rows; Dub and Raw by their own rows, or while the track has not started.
 func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
 	if r.upcoming.has(sub.Route, sub.Show) {
 		return true
 	}
 	set, _ := animeschedule.ParseSubscriptionTracks(sub.Tracks)
-	for _, m := range set.Members() {
+	for _, m := range set.Tracks() {
 		if m == animeschedule.TrackSub {
 			if (showSet{routes: r.routes, keys: r.keys}).has(sub.Route, sub.Show) {
 				return true
@@ -472,7 +482,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	gwg.Wait()
 }
 
-// processAnimeSubUser DMs one user the rows of todayRows (every row today with every member that selects it, from
+// processAnimeSubUser DMs one user the rows of todayRows (every row today with every track that selects it, from
 // animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due.
 func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayRows []animeschedule.SelectedRow, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
@@ -536,17 +546,17 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 				}
 			}
 		}
-		// The members of the subscription's set that select this row; a row sent for any of them is not sent again.
+		// The tracks of the subscription's set that select this row; a row sent for any of them is not sent again.
 		set, _ := animeschedule.ParseSubscriptionTracks(sub.Tracks)
 		var marks []anime_subs.Mark
 		alreadySent := false
-		for _, member := range row.MembersIn(set) {
-			key := memberEpisodeKey(member, show)
-			if userShowAlreadyNotified(sub, string(member), show, key) {
+		for _, track := range row.TracksIn(set) {
+			key := trackEpisodeKey(track, show)
+			if userShowAlreadyNotified(sub, string(track), show, key) {
 				alreadySent = true
 				break
 			}
-			marks = append(marks, anime_subs.Mark{Track: string(member), AirUnix: show.AirTimeUnix, Episode: key})
+			marks = append(marks, anime_subs.Mark{Track: string(track), AirUnix: show.AirTimeUnix, Episode: key})
 		}
 		if alreadySent || len(marks) == 0 {
 			continue
@@ -621,20 +631,20 @@ func episodeKey(show animeschedule.ShowEntry) string {
 	return show.Route + "|" + show.Episode
 }
 
-// memberEpisodeKey identifies one episode of a show for one track member of a subscription: the Sub member's key is
+// trackEpisodeKey identifies one episode of a show for one track of a subscription: the Sub track's key is
 // episodeKey, the one every entry stored before subscription tracks holds; the others carry their track.
-func memberEpisodeKey(member animeschedule.Track, show animeschedule.ShowEntry) string {
-	if member == animeschedule.TrackSub {
+func trackEpisodeKey(track animeschedule.Track, show animeschedule.ShowEntry) string {
+	if track == animeschedule.TrackSub {
 		return episodeKey(show)
 	}
-	return show.Route + "|" + string(member) + "|" + show.Episode
+	return show.Route + "|" + string(track) + "|" + show.Episode
 }
 
-// userShowAlreadyNotified reports whether the named member of the subscription was already notified of this
-// episode: either the member's stored episode key matches, or (legacy documents) the air time is not later than
-// the member's last-notified one. Another member's memory never counts.
-func userShowAlreadyNotified(sub *anime_subs.ShowSub, member string, show animeschedule.ShowEntry, epKey string) bool {
-	airUnix, episode := sub.Memory(member)
+// userShowAlreadyNotified reports whether the named track of the subscription was already notified of this
+// episode: either the track's stored episode key matches, or (legacy documents) the air time is not later than
+// the track's last-notified one. Another track's memory never counts.
+func userShowAlreadyNotified(sub *anime_subs.ShowSub, track string, show animeschedule.ShowEntry, epKey string) bool {
+	airUnix, episode := sub.Memory(track)
 	if episode != "" && episode == epKey {
 		return true
 	}
