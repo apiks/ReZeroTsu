@@ -8,7 +8,7 @@
 
 * **New Anime Episodes feed (subbed).** Optional DM notifications when new episodes release; optional channel autopost with role ping. Source: [AnimeSchedule.net](https://animeschedule.net).
 
-* **Daily Anime Schedule.** View or autopost the daily schedule; `/schedule` has a day picker for the three loaded weeks plus Previous and Next buttons. Source: [AnimeSchedule.net](https://animeschedule.net).
+* **Daily Anime Schedule.** View or autopost the daily schedule; `/schedule` has a day picker for the three loaded weeks plus Previous and Next buttons, and an optional `track` option (Sub, Dub or Raw) that picks which track a day shows. Source: [AnimeSchedule.net](https://animeschedule.net).
 
 * **Customizable Reddit RSS autopost.** Post threads by subreddit, sort (hot / rising / new), optional author or title filters, and optional auto-pin of the latest post.
 

@@ -2,6 +2,10 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Raw, sub and dub tracks (spec #108)
+
+- `/schedule` track (#110): `/schedule` takes an optional `track` option, Sub, Dub or Raw. Sub shows sub, else raw (what the bot always showed). Dub shows a show's dub in a week it airs one, else its sub, else raw. Raw shows raw only. Previous, Next and the day picker keep the track you chose. Every line is labelled `RAW`, `SUB` or `DUB`, and the footer says "Dub preferred" or "Raw preferred" for those two. Schedule messages posted before this release open the Sub view when pressed. Subscriptions, the daily schedule autopost and the new-episodes autopost are unchanged. A dub episode alert reads "**Ep 5** dubbed is out!" (a dubbed movie, "**Title** is out, dubbed!").
+
 ## Subscription UX (spec #79)
 
 - Next episode (#92): `/subscription add` says when the show airs next, or when the latest episode aired and that you get a DM for the next one. The reply ends with a reminder that alerts arrive by DM and DMs from ZeroTsu must stay open, also when you are already subscribed. `/subscription list` shows each subscription's next episode, or "no upcoming episode listed".

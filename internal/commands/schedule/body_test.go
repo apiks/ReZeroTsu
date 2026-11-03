@@ -51,6 +51,7 @@ func TestScheduleFooterCountsShowsAndExplainsTimeZones(t *testing.T) {
 			shows := make([]animeschedule.ShowEntry, n)
 			for i := range shows {
 				shows[i] = entry
+				shows[i].Name = fmt.Sprintf("show %d", i)
 			}
 			emb := openDay(t, "wednesday", map[string][]animeschedule.ShowEntry{"2026-11-04": shows})
 			want := count + " · days run on UTC, times show in your time zone"
@@ -165,7 +166,7 @@ func TestScheduleDescriptionWhenNotEvenTheFirstLineFitsHasNoLeadingNewline(t *te
 }
 
 func TestScheduleEmptyDayTextIsTrueWhereThereAreNoButtons(t *testing.T) {
-	emb := BuildScheduleEmbed(mustDate("2026-11-05"), mustDate("2026-11-04"), nil)
+	emb := BuildScheduleEmbed(mustDate("2026-11-05"), mustDate("2026-11-04"), nil, animeschedule.PreferSub)
 	if strings.Contains(emb.Description, "buttons") || !strings.Contains(emb.Description, "/schedule") {
 		t.Errorf("description = %q, want a pointer to /schedule instead of the buttons", emb.Description)
 	}
@@ -217,7 +218,7 @@ func TestScheduleDonghuaSettingHidesDonghuaOnTheCommandAndOnPagePresses(t *testi
 				t.Errorf("/schedule read the server setting %d times, want 1", *reads)
 			}
 
-			press := pressNavIn(t, "sched:2026-11-05:user", "user", "guild", publicMsg())
+			press := pressNavIn(t, "sched:2026-11-05:user:sub", "user", "guild", publicMsg())
 			check("page press", press[0].Response.Embeds[0])
 			if *reads != 2 {
 				t.Errorf("page press read the server setting %d times in total, want 2", *reads)

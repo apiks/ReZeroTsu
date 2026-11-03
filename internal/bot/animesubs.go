@@ -211,8 +211,12 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	switch {
 	case show.MediaType == animeschedule.MediaMovie && show.AirType == "sub":
 		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
+	case show.MediaType == animeschedule.MediaMovie && show.AirType == animeschedule.TrackDub:
+		desc = fmt.Sprintf("**%s** is out, dubbed!", show.Name)
 	case show.MediaType == animeschedule.MediaMovie:
 		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
+	case show.AirType == animeschedule.TrackDub:
+		desc = fmt.Sprintf("**%s** dubbed is out!", show.Episode)
 	case show.AirType == "sub":
 		desc = fmt.Sprintf("**%s** subbed is out!", show.Episode)
 	default:
@@ -284,12 +288,14 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	now := animeschedule.Now()
 	today := animeschedule.DayOf(now)
 	todayKey := animeschedule.DateKey(today)
-	todayShows := animeschedule.GetDayShows(today, true)
+	todayShows := animeschedule.GetDayShows(today, true, animeschedule.PreferSub)
 	if len(todayShows) == 0 {
 		return
 	}
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
+	dayShows := func(donghua bool) []animeschedule.ShowEntry {
+		return animeschedule.GetDayShows(today, donghua, animeschedule.PreferSub)
+	}
 
 	// Per-shard guild seed for the current UTC date (once per day); missing shard entry = not yet seeded.
 	lastGuildSeedDateMu.RLock()
