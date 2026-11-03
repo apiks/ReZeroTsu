@@ -7,6 +7,7 @@ import (
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database/guilds"
+	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
@@ -17,28 +18,30 @@ import (
 // missing, the bot is an Administrator or the permissions cannot be read.
 func missingPostPermissions(ic *interaction.Context, channelID string) []string {
 	perms, err := ic.BotChannelPermissions(channelID)
-	if err != nil || perms&discordgo.PermissionAdministrator != 0 {
+	if err != nil {
 		return nil
 	}
-	send, sendName := int64(discordgo.PermissionSendMessages), "Send Messages"
-	if ch, err := ic.Channel(channelID); err == nil && ch != nil &&
-		(ch.Type == discordgo.ChannelTypeGuildPublicThread || ch.Type == discordgo.ChannelTypeGuildPrivateThread) {
-		send, sendName = discordgo.PermissionSendMessagesInThreads, "Send Messages in Threads"
-	}
-	var missing []string
-	for _, p := range []struct {
-		bit  int64
-		name string
-	}{
-		{discordgo.PermissionViewChannel, "View Channel"},
-		{send, sendName},
-		{discordgo.PermissionEmbedLinks, "Embed Links"},
-	} {
-		if perms&p.bit == 0 {
-			missing = append(missing, p.name)
+	thread, known := channelIsThread(ic, channelID)
+	return discord.MissingNames(perms, []discord.NamedPermission{
+		{Bit: discordgo.PermissionViewChannel, Name: "View Channel"},
+		discord.SendPermission(perms, thread, known),
+		{Bit: discordgo.PermissionEmbedLinks, Name: "Embed Links"},
+	})
+}
+
+// channelIsThread reports whether the channel is a thread, and whether that is known. A channel the picker just
+// resolved carries its type; otherwise the type comes from a lookup, and a failed lookup leaves it unknown so it
+// cannot change the result.
+func channelIsThread(ic *interaction.Context, channelID string) (thread, known bool) {
+	if data, ok := ic.Interaction.Data.(discordgo.MessageComponentInteractionData); ok {
+		if ch := data.Resolved.Channels[channelID]; ch != nil {
+			return discord.IsThreadType(ch.Type), true
 		}
 	}
-	return missing
+	if ch, err := ic.Channel(channelID); err == nil && ch != nil {
+		return discord.IsThreadType(ch.Type), true
+	}
+	return false, false
 }
 
 // channelWarnings is the panel lines for autopost channels the bot cannot post in, in the order given. The

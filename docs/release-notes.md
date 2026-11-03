@@ -2,9 +2,13 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
-## Reddit settings UX (spec #80, ticket #98)
+## Reddit settings UX (spec #80, tickets #96 to #100)
 
-- `/reddit add`: the `post-type` option is renamed `sort`, with fixed choices Hot, Rising and New (default Hot). Existing feeds keep working.
+- `/reddit list` and `/reddit remove` (#96): every feed has a short code. Pick a feed from the `/reddit remove` suggestions, or from the list's menu, instead of typing its filters.
+- `/reddit remove` (#97) now takes one `feed` option. The `channel`, `subreddit`, `post-type`, `author` and `title` options are gone. Moderators pick a feed from the suggestions, or type a subreddit when it has exactly one feed; with several, the bot lists them and asks to pick one. Removing a subreddit used to remove all three sorts at once; now remove each sort's feed separately. A feed's delivery history is kept while a sibling feed in the same channel still uses it.
+- `/reddit add` (#99): the bot checks its permissions in the channel first. If it cannot post there, the feed is refused and the missing permissions are named; grant them and run `/reddit add` again. With `pin` on, a missing Manage Messages or Pin Messages permission saves the feed and adds a warning that nothing will be pinned.
+- `/settings` (#100): the panel warns when the bot cannot post in the new-episodes or daily-schedule channel and names the missing permissions. Grant them, or pick another channel.
+- `/reddit add` (#98): the `post-type` option is renamed `sort`, with fixed choices Hot, Rising and New (default Hot). Existing feeds keep working.
 - Re-adding an identical feed saves nothing and says it is already set up; re-adding it with a different `pin` only updates the pin setting.
 - The reply describes the whole saved feed: subreddit, sort, channel, author, title and pin.
 

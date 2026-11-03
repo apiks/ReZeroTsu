@@ -23,7 +23,6 @@ const (
 	optFeed      = "feed"
 	optChannel   = "channel"
 	optSubreddit = "subreddit"
-	optPostType  = "post-type"
 	optSort      = "sort"
 	optAuthor    = "author"
 	optTitle     = "title"
@@ -162,13 +161,6 @@ func logStoreFailure(ic *interaction.Context, what string, err error) {
 	logger.For("commands").Error(what, "guild_id", ic.GuildID, "err", err)
 }
 
-// sameIdentity reports whether two feeds are the same Reddit feed: channel, subreddit, sort, author and title.
-// Auto-pin is a setting of the feed, not part of its identity.
-func sameIdentity(f, g guilds.FeedEntry) bool {
-	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
-		f.Author == g.Author && f.Title == g.Title
-}
-
 // sortOption reads the sort option of /reddit add. A missing or blank one is hot; an unknown one is not ok.
 func sortOption(ic *interaction.Context) (sort string, ok bool) {
 	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optSort)))
@@ -178,4 +170,4 @@ func sortOption(ic *interaction.Context) (sort string, ok bool) {
 	return raw, slices.Contains(postTypeChoices, raw)
 }
 
-const msgInvalidPostType = "Invalid post type. Use one of: hot, rising, new."
+const msgInvalidSort = "Invalid sort. Use one of: hot, rising, new."

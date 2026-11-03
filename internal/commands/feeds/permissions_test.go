@@ -79,6 +79,28 @@ func TestAddChecksSendMessagesInThreadsForAThread(t *testing.T) {
 	}
 }
 
+// A thread the bot cannot look up (uncached, lookup failing) is still a thread: the add option's resolved channel
+// carries its type, so Send Messages in Threads decides.
+func TestAddUsesTheResolvedChannelTypeWhenTheLookupFails(t *testing.T) {
+	st := useStore(t)
+	perms := postPerms&^discordgo.PermissionSendMessages | discordgo.PermissionSendMessagesInThreads
+	fake := &interactiontest.Fake{BotPerms: map[string]int64{"t1": perms}} // no Channels: Channel("t1") errors
+	cmd := redditCommand(t)
+	data := discordgo.ApplicationCommandInteractionData{Name: "reddit",
+		Options:  []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("t1"), strOpt("subreddit", "anime")},
+		Resolved: &discordgo.ApplicationCommandInteractionDataResolved{Channels: map[string]*discordgo.Channel{"t1": {ID: "t1", Type: discordgo.ChannelTypeGuildPublicThread}}}}
+	ic := interactiontest.NewCommandContext(fake, cmd.Visibility, cmd.Response, data)
+	if err := ic.Defer(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := subcommand(t, "add").Run(ic); err != nil {
+		t.Fatal(err)
+	}
+	if got := text(lastReply(t, fake)); len(st.feeds) != 1 || strings.Contains(got, "missing") {
+		t.Errorf("feeds %+v, reply %q", st.feeds, got)
+	}
+}
+
 func TestAddWarnsAboutPinningButSavesTheFeed(t *testing.T) {
 	cases := []struct {
 		name    string

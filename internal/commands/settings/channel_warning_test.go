@@ -38,6 +38,9 @@ func TestAutopostChannelWarningNamesMissingPermissions(t *testing.T) {
 			nil, []string{"<#500>", "View Channel", "Send Messages", "Embed Links"}, false},
 		{"thread needs send in threads", map[string]int64{"300": canPostPerms, "500": canPostPerms},
 			map[string]*discordgo.Channel{"300": {ID: "300", Type: discordgo.ChannelTypeGuildPublicThread}}, []string{"<#300>", "Send Messages in Threads"}, false},
+		// The lookup of 300 fails (no Channels entry): the channel type is unknown, so either send permission passes.
+		{"uncached thread with send in threads only", map[string]int64{"300": discordgo.PermissionViewChannel | discordgo.PermissionSendMessagesInThreads | discordgo.PermissionEmbedLinks, "500": canPostPerms},
+			nil, nil, true},
 		{"all present", map[string]int64{"300": canPostPerms, "500": canPostPerms}, nil, nil, true},
 		{"administrator", map[string]int64{"300": discordgo.PermissionAdministrator, "500": discordgo.PermissionAdministrator}, nil, nil, true},
 		{"unreadable", nil, nil, nil, true},

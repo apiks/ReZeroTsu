@@ -14,7 +14,7 @@ import (
 func addSubcommand() *commands.Subcommand {
 	return &commands.Subcommand{
 		Name: "add",
-		Desc: "Add a Reddit feed to a channel, with a sort (formerly post-type), optional filters and pin.",
+		Desc: "Add a Reddit feed to a channel, with a sort, optional filters and pin.",
 		Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionChannel, Name: optChannel, Description: "The channel to add the feed to.", Required: true, ChannelTypes: feedChannelTypes},
 			{Type: discordgo.ApplicationCommandOptionString, Name: optSubreddit, Description: "The subreddit (e.g. r/anime or anime).", Required: true},
@@ -46,7 +46,7 @@ func feedUnavailableText(err error, subreddit string) string {
 //   - "only in a server": the command's ContextGuildOnly;
 //   - "Channel and subreddit are required" and "Invalid or missing channel": the options are Required, and the
 //     missing-channel and blank-subreddit checks below stay for a malformed interaction;
-//   - the subreddit name rules (reddit.ValidateSubreddit) and the post-type check run before any Reddit request;
+//   - the subreddit name rules (reddit.ValidateSubreddit) and the sort check run before any Reddit request;
 //   - the availability check (private or missing subreddit, rate limiting, unreachable) is checkFeed, which runs
 //     before the feed is saved;
 //   - the saved-feed failure is Fail, which logs it and shows "Something went wrong.". The old command also posted
@@ -67,7 +67,7 @@ func runAdd(ic *interaction.Context) error {
 	}
 	postType, ok := sortOption(ic)
 	if !ok {
-		return ic.Refuse(msgInvalidPostType)
+		return ic.Refuse(msgInvalidSort)
 	}
 	pin := false
 	if o := commands.ParseOption(ic.Command.Options, optPin); o != nil {
@@ -92,7 +92,7 @@ func runAdd(ic *interaction.Context) error {
 	}
 	mention := commands.ChannelMention(channelID)
 	for _, g := range existing {
-		if !sameIdentity(g, feed) {
+		if !g.SameIdentity(feed) {
 			continue
 		}
 		if g.Pin == feed.Pin {

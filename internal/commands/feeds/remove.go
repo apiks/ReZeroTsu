@@ -40,21 +40,16 @@ func autocompleteRemove(ctx context.Context, db *database.Client, s *discordgo.S
 
 // channelName looks a channel's name up through the session; a nil session or a channel the bot cannot see gives "".
 func channelName(s *discordgo.Session) func(id string) string {
-	return func(id string) string {
-		if s == nil {
-			return ""
-		}
-		if ch, err := s.Channel(id); err == nil && ch != nil {
-			return ch.Name
-		}
-		return ""
+	if s == nil {
+		return func(string) string { return "" }
 	}
+	return channelNamer(func(id string) (*discordgo.Channel, error) { return s.Channel(id) })
 }
 
-// portChannelName is channelName through the interaction port.
-func portChannelName(p interaction.Port) func(id string) string {
+// channelNamer turns a channel lookup into a name function; a failed lookup gives "".
+func channelNamer(lookup func(id string) (*discordgo.Channel, error)) func(id string) string {
 	return func(id string) string {
-		if ch, err := p.Channel(id); err == nil && ch != nil {
+		if ch, err := lookup(id); err == nil && ch != nil {
 			return ch.Name
 		}
 		return ""
@@ -142,19 +137,32 @@ func runRemove(ic *interaction.Context) error {
 	}
 	switch len(matches) {
 	case 0:
-		return ic.Refuse("No feed for r/" + subreddit + ". See /reddit list.")
+		return ic.Refuse("No feed for r/" + subreddit + ". See " + commands.CommandMention("reddit", "list") + ".")
 	case 1:
 		return removeAndConfirm(ic, st, feeds, matches[0])
 	}
-	nameOf := portChannelName(ic.Port)
+	nameOf := channelNamer(ic.Port.Channel)
 	lines := []string{"r/" + subreddit + " has " + strconv.Itoa(len(matches)) + " feeds. Pick one from the suggestions:"}
 	for _, f := range matches[:min(len(matches), maxListedFeeds)] {
-		lines = append(lines, "- "+describeFeed(f, nameOf))
+		lines = append(lines, "- "+clipLine(describeFeed(f, nameOf)))
 	}
 	if more := len(matches) - maxListedFeeds; more > 0 {
 		lines = append(lines, "and "+strconv.Itoa(more)+" more")
 	}
 	return ic.Refuse(strings.Join(lines, "\n"))
+}
+
+// maxListedLine is the longest a feed line in the "several feeds" refusal gets, so the five lines, the header and
+// the "and N more" line stay well under Discord's 2000 characters.
+const maxListedLine = 300
+
+// clipLine cuts a listed feed to maxListedLine characters, ending in an ellipsis when it was cut.
+func clipLine(s string) string {
+	r := []rune(s)
+	if len(r) <= maxListedLine {
+		return s
+	}
+	return string(r[:maxListedLine-1]) + "…"
 }
 
 func removeAndConfirm(ic *interaction.Context, st store, feeds []guilds.FeedEntry, chosen guilds.FeedEntry) error {
@@ -165,10 +173,11 @@ func removeAndConfirm(ic *interaction.Context, st store, feeds []guilds.FeedEntr
 }
 
 // sameFeedScope reports whether two feeds share their delivery records: the same channel, subreddit and sort,
-// where an unfiltered feed also covers its filtered siblings.
+// with filters that overlap. An unfiltered feed overlaps every filtered one, whichever of the two is being removed,
+// because the records are kept per item for the whole guild.
 func sameFeedScope(f, g guilds.FeedEntry) bool {
 	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
-		(f.Author == "" || f.Author == g.Author) && (f.Title == "" || f.Title == g.Title)
+		(f.Author == "" || g.Author == "" || f.Author == g.Author) && (f.Title == "" || g.Title == "" || f.Title == g.Title)
 }
 
 // removeChosen removes exactly one feed of the list, in one update, so its filtered siblings in the same channel
