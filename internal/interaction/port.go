@@ -71,6 +71,8 @@ type Port interface {
 	ReadMessage(channelID, messageID string) (*discordgo.Message, error)
 	// AddReaction adds the bot's reaction to a message.
 	AddReaction(channelID, messageID, emoji string) error
+	// RemoveOwnReaction takes the bot's own reaction off a message.
+	RemoveOwnReaction(channelID, messageID, emoji string) error
 
 	// ListMessages lists up to limit messages of a channel, newest first, those before beforeID when it is set.
 	ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error)
