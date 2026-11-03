@@ -4,7 +4,11 @@ Newest first. Each release lists the steps the bot owner does around the deploy,
 
 ## Subscription UX (spec #79)
 
-- `/subscription add` suggestions (#94) carry the media type of non-TV shows ("· TV Short", "· ONA", "· Donghua", "· OVA", "· Special", "· Movie") and "· subscribed" for shows you already follow, which are listed last. A new optional `type` option (TV, TV Short, ONA, Donghua, OVA, Special, Movie) narrows the suggestions and the typed lookup to that type; Donghua means Chinese ONA.
+- Next episode (#92): `/subscription add` says when the show airs next, or when the latest episode aired and that you get a DM for the next one. The reply ends with a reminder that alerts arrive by DM and DMs from ZeroTsu must stay open, also when you are already subscribed. `/subscription list` shows each subscription's next episode, or "no upcoming episode listed".
+- Upcoming shows (#93): you can subscribe to a show that is on the upcoming list but not yet on the timetable. The suggestions and the typed lookup cover the three loaded weeks (last week's shows count unless their final episode aired there) and the upcoming list. The suggestion's value is the show's route, so a renamed show is still the same subscription. A subscription with a route matches only by route, and a legacy one without a route matches by title. The reply and the list say when the show premieres ("premieres ...", "premiered ...", or "premiere date TBA").
+- Movies (#93): a movie has a release, not episodes. The reply says "It releases ..." or "It released ...", and for an undated movie "Its release date isn't announced yet. You'll get a DM when it is released." The list says "releases ...", "released ..." or "release date TBA".
+- `/subscription add` suggestions (#94) carry the media type of non-TV shows ("· TV Short", "· ONA", "· Donghua", "· OVA", "· Special", "· Movie") and "· subscribed" for shows you are already subscribed to, which are listed last. Timetable shows come before upcoming shows. A new optional `type` option (TV, TV Short, ONA, Donghua, OVA, Special, Movie) narrows the suggestions and the typed lookup to that type.
+- `/subscription clear` (#95) asks first, with Remove all and Keep them buttons, and only the member whose list it is can press them. `/subscription remove` with a show you are not subscribed to points at `/subscription list`.
 
 ## Schedule UX (spec #78, tickets #88 to #91)
 

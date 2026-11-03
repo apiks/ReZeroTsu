@@ -34,6 +34,62 @@ func TestShowSubRouteIsOptionalInStoredDocuments(t *testing.T) {
 	}
 }
 
+// ADR-0002: a subscription with a route matches by route only; one without matches by title under MatchKey.
+func TestShowSubMatches(t *testing.T) {
+	tests := []struct {
+		name         string
+		sub          ShowSub
+		route, title string
+		want         bool
+	}{
+		{"same route", ShowSub{Show: "Foo", Route: "x"}, "x", "Foo Season 2", true},
+		{"different route, same title", ShowSub{Show: "Foo", Route: "a"}, "b", "Foo", false},
+		{"route subscription never title-matches a route-less entry", ShowSub{Show: "Twin", Route: "twin-a"}, "", "Twin", false},
+		{"route-less subscription matches by title key", ShowSub{Show: " Foo "}, "x", "foo", true},
+		{"route-less subscription, different title", ShowSub{Show: "Foo"}, "x", "Bar", false},
+	}
+	for _, tc := range tests {
+		if got := tc.sub.Matches(tc.route, tc.title); got != tc.want {
+			t.Errorf("%s: %+v.Matches(%q, %q) = %v, want %v", tc.name, tc.sub, tc.route, tc.title, got, tc.want)
+		}
+	}
+}
+
+// The atomic add skips only a subscription of the same route, or a route-less one of the same title: it must not
+// skip a different-route show that shares a title.
+func TestAddShowIfAbsentFilterFollowsTheRouteThenTitleRule(t *testing.T) {
+	var filters []any
+	capture := func(_ context.Context, filter, _ any, _ bool) (*mongo.UpdateResult, error) {
+		filters = append(filters, filter)
+		return &mongo.UpdateResult{ModifiedCount: 1}, nil
+	}
+	for _, sub := range []*ShowSub{{Show: "Foo", Route: "x"}, {Show: "Foo"}} {
+		if _, err := addShowIfAbsent(context.Background(), capture, "u1", sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	branches := func(f any) bson.A {
+		out, _ := f.(bson.M)["shows"].(bson.M)["$not"].(bson.M)["$elemMatch"].(bson.M)["$or"].(bson.A)
+		if out == nil {
+			t.Fatalf("filter %v has no $or of match branches inside $elemMatch", f)
+		}
+		return out
+	}
+	withRoute, routeless := branches(filters[0]), branches(filters[1])
+	if len(withRoute) != 2 || withRoute[0].(bson.M)["route"] != "x" {
+		t.Errorf("route subscription filter = %v, want a same-route branch then a route-less same-title branch", withRoute)
+	}
+	if len(routeless) != 1 {
+		t.Errorf("route-less subscription filter = %v, want only the route-less same-title branch", routeless)
+	}
+	for _, b := range []bson.A{withRoute, routeless} {
+		title := b[len(b)-1].(bson.M)
+		if _, ok := title["show"]; !ok || title["route"] == nil {
+			t.Errorf("title branch %v must require an existing subscription without a route", title)
+		}
+	}
+}
+
 func dupKeyErr() error {
 	return mongo.WriteException{WriteErrors: mongo.WriteErrors{{Code: 11000, Message: "E11000 duplicate key"}}}
 }

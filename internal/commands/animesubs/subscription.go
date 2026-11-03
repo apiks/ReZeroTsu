@@ -53,7 +53,7 @@ func init() {
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "add",
-				Desc: "Subscribe to DMs for an airing or upcoming anime; the reply says when it airs next. Filter with type.",
+				Desc: "Subscribe to DMs for an airing or upcoming anime; the reply says when it airs next.",
 				Options: []*discordgo.ApplicationCommandOption{{
 					Type:         discordgo.ApplicationCommandOptionString,
 					Name:         "anime",
@@ -83,7 +83,7 @@ func init() {
 				AutocompleteOption: autocompleteOwn,
 			},
 			{Name: "list", Desc: "Show your subscriptions and when each airs next.", Run: runList},
-			{Name: "clear", Desc: "Remove all your subscriptions.", Run: runClear},
+			{Name: "clear", Desc: "Remove all your subscriptions, after asking first.", Run: runClear},
 		},
 	})
 	// Restricted: a list belongs to its author, so another member's press is refused, not given a copy.
@@ -118,8 +118,8 @@ func animeArg(ic *interaction.Context) string {
 	return ""
 }
 
-// runAdd keeps today's rules through subCore: the show must be airing, one entry per show by match key, the
-// subscription limit, and seeding from today's aired entry.
+// runAdd keeps today's rules through subCore: the show must be on the loaded weeks or the upcoming list, one
+// subscription per show (ADR-0002), the subscription limit, and seeding from today's aired entry.
 func runAdd(ic *interaction.Context) error {
 	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic), typeArg(ic))
 	if !confirmed {
@@ -141,8 +141,12 @@ func runClear(ic *interaction.Context) error {
 	if len(list) == 0 {
 		return answer(ic, msgNoSubscriptions)
 	}
+	question := "Remove your subscription?"
+	if len(list) > 1 {
+		question = fmt.Sprintf("Remove all %d subscriptions?", len(list))
+	}
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleAnimeSubs, fmt.Sprintf("Remove all %d subscriptions?", len(list)))},
+		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleAnimeSubs, question)},
 		Components: clearButtons(ic.Invoker.ID),
 	})
 }
@@ -297,9 +301,14 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 	return ic.UpdateMessage(renderPage(list, page, authorID))
 }
 
-func finishRefusal(ic *interaction.Context, text string, err error) error {
-	logger.For("animesubs").Error("subscription picker failed", "guild_id", ic.GuildID, "err", err)
+// refuseAfter logs a failed step under logMsg, with the invoker's context, and refuses privately.
+func refuseAfter(ic *interaction.Context, logMsg, text string, err error) error {
+	logger.For("animesubs").Error(logMsg, "guild_id", ic.GuildID, "err", err)
 	return ic.Refuse(text)
+}
+
+func finishRefusal(ic *interaction.Context, text string, err error) error {
+	return refuseAfter(ic, "subscription picker failed", text, err)
 }
 
 // handleClearButton settles the clear confirmation. Guard home: only the member whose list it is may press,
@@ -315,7 +324,7 @@ func handleClearButton(ic *interaction.Context, _ *discordgo.Session) error {
 	msg := "Nothing was removed."
 	if parts[1] == clearYes {
 		if err := storeOf(ic.DB).ClearShows(ic.Context(), parts[0]); err != nil {
-			return finishRefusal(ic, "Could not clear subscriptions.", err)
+			return refuseAfter(ic, "subscription clear failed", "Could not clear subscriptions.", err)
 		}
 		msg = "All your subscriptions were removed."
 	}

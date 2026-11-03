@@ -16,16 +16,25 @@ import (
 
 const optType = "type"
 
-// typeChoices are the fixed values of the `type` option: a media-type route and its label. Donghua is
-// AnimeSchedule's Chinese ONA.
+// typeChoices are the fixed values of the `type` option: a media-type route and its label. The Donghua route is
+// AnimeSchedule's upstream name, "ona-chinese".
 var typeChoices = []*discordgo.ApplicationCommandOptionChoice{
-	{Name: "TV", Value: "tv"},
-	{Name: "TV Short", Value: "tv-short"},
-	{Name: "ONA", Value: "ona"},
-	{Name: "Donghua", Value: "ona-chinese"},
-	{Name: "OVA", Value: "ova"},
-	{Name: "Special", Value: "special"},
-	{Name: "Movie", Value: "movie"},
+	typeChoice(animeschedule.MediaTV, "tv"),
+	typeChoice(animeschedule.MediaTVShort, "tv-short"),
+	typeChoice(animeschedule.MediaONA, "ona"),
+	typeChoice(animeschedule.MediaDonghua, "ona-chinese"),
+	typeChoice(animeschedule.MediaOVA, "ova"),
+	typeChoice(animeschedule.MediaSpecial, "special"),
+	typeChoice(animeschedule.MediaMovie, "movie"),
+}
+
+// typeChoice is the choice for a media type: its label (TV carries none, so it is named here) and its route.
+func typeChoice(mt animeschedule.MediaType, route string) *discordgo.ApplicationCommandOptionChoice {
+	name := mt.Label()
+	if mt == animeschedule.MediaTV {
+		name = "TV"
+	}
+	return &discordgo.ApplicationCommandOptionChoice{Name: name, Value: route}
 }
 
 // candidate is a show that can be suggested and looked up. Premiere is the "premieres 10 Jan" label of a show not
@@ -63,12 +72,22 @@ func upcomingCandidates() []candidate {
 	var out []candidate
 	for _, u := range animeschedule.UpcomingShows() {
 		e := upcomingEntry(u)
-		if slices.ContainsFunc(onTimetable, func(t animeschedule.ShowEntry) bool { return sameShow(t, e.Route, e.Name) }) {
+		if slices.ContainsFunc(onTimetable, func(t animeschedule.ShowEntry) bool { return sameListedShow(t, e) }) {
 			continue
 		}
 		out = append(out, candidate{ShowEntry: e, Premiere: premiereLabel(u)})
 	}
 	return out
+}
+
+// sameListedShow reports whether two list entries are one show, so a show on both lists is offered once: by route
+// when both have one, else by title under anime_subs.MatchKey. This is not the subscription rule (ShowSub.Matches),
+// which trusts a subscription's route alone.
+func sameListedShow(a, b animeschedule.ShowEntry) bool {
+	if a.Route != "" && b.Route != "" {
+		return a.Route == b.Route
+	}
+	return anime_subs.MatchKey(a.Name) == anime_subs.MatchKey(b.Name)
 }
 
 // choiceValue identifies a suggested show: its route, or its title when no route is known, within Discord's limit.
@@ -79,9 +98,10 @@ func choiceValue(c candidate) string {
 	return clip(c.Name)
 }
 
+// timetableCandidates are the shows of the three loaded weeks that the daily cleanup keeps (animeschedule.LoadedShows).
 func timetableCandidates() []candidate {
 	var out []candidate
-	for _, e := range animeschedule.AiringShows() {
+	for _, e := range animeschedule.LoadedShows() {
 		out = append(out, candidate{ShowEntry: e})
 	}
 	return out
@@ -119,14 +139,6 @@ func typeFilter(opts []*discordgo.ApplicationCommandInteractionDataOption) *anim
 	return nil
 }
 
-// follows reports whether sub is the subscription for c: by route, or by title when either side has no route.
-func follows(sub *anime_subs.ShowSub, c candidate) bool {
-	if sub.Route != "" && c.Route != "" {
-		return sub.Route == c.Route
-	}
-	return anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(c.Name)
-}
-
 // labelledName is "Title (English)" then, in order, the premiere, the media type and "subscribed". The title is
 // cut so the labels survive within Discord's limit.
 func labelledName(c candidate, subscribed bool) string {
@@ -150,23 +162,32 @@ func labelledName(c candidate, subscribed bool) string {
 }
 
 // autocompleteAdd offers the candidate shows matched anywhere in any of their four names, narrowed by the `type`
-// option, with the invoker's followed shows labelled and last. A choice's value is the show's route, or its
-// title when it has none. The invoker's subscriptions are read once.
+// option, with the invoker's subscribed shows labelled and last. Each source ranks its own matches (prefix before
+// substring), timetable shows come before upcoming shows, and the 25-choice cap applies to that final order. A
+// choice's value is the show's route, or its title when it has none. The invoker's subscriptions are read once.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	matched := commands.MatchAnywhere(candidates(typeFilter(i.ApplicationCommandData().Options)), typed, func(c candidate) []string { return c.AllNames() })
+	only := typeFilter(i.ApplicationCommandData().Options)
 	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 	}
-	var rest, followed []*discordgo.ApplicationCommandOptionChoice
-	for _, c := range matched {
-		isFollowed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return follows(s, c) })
-		choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isFollowed), Value: choiceValue(c)}
-		if isFollowed {
-			followed = append(followed, choice)
-		} else {
-			rest = append(rest, choice)
+	var rest, subscribed []*discordgo.ApplicationCommandOptionChoice
+	for _, src := range candidateSources {
+		var shows []candidate
+		for _, c := range src() {
+			if only == nil || c.MediaType == *only {
+				shows = append(shows, c)
+			}
+		}
+		for _, c := range commands.MatchAnywhereAll(shows, typed, func(c candidate) []string { return c.AllNames() }) {
+			isSubscribed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return s.Matches(c.Route, c.Name) })
+			choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isSubscribed), Value: choiceValue(c)}
+			if isSubscribed {
+				subscribed = append(subscribed, choice)
+			} else {
+				rest = append(rest, choice)
+			}
 		}
 	}
-	return append(rest, followed...)
+	return commands.Cap(append(rest, subscribed...))
 }

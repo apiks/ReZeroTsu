@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"unicode/utf8"
 
 	"ReZeroTsu/internal/commands"
 
@@ -109,6 +110,37 @@ func TestShowAvatarRegistersAsAUserRightClickCommand(t *testing.T) {
 		}
 	}
 	t.Fatal("Show avatar is not registered")
+}
+
+// Discord rejects the whole bulk overwrite with a 400 when any one name or description is over its limit, so a
+// single long description takes every command down on deploy.
+func TestRegistrationPayloadStaysWithinDiscordTextLimits(t *testing.T) {
+	const maxName, maxDescription, maxChoice = 32, 100, 100
+	check := func(where, kind, text string, limit int) {
+		if n := utf8.RuneCountInString(text); n > limit {
+			t.Errorf("%s %s is %d characters, Discord allows %d: %q", where, kind, n, limit, text)
+		}
+	}
+	var walk func(path string, opts []*discordgo.ApplicationCommandOption)
+	walk = func(path string, opts []*discordgo.ApplicationCommandOption) {
+		for _, o := range opts {
+			where := path + " " + o.Name
+			check(where, "name", o.Name, maxName)
+			check(where, "description", o.Description, maxDescription)
+			for _, c := range o.Choices {
+				check(where+" choice", "name", c.Name, maxChoice)
+				if s, ok := c.Value.(string); ok {
+					check(where+" choice", "value", s, maxChoice)
+				}
+			}
+			walk(where, o.Options)
+		}
+	}
+	for _, d := range commands.Definitions() {
+		check(d.Name, "name", d.Name, maxName)
+		check(d.Name, "description", d.Description, maxDescription)
+		walk(d.Name, d.Options)
+	}
 }
 
 func TestMergedCommandsAreRegisteredAndTheOldNamesAreGone(t *testing.T) {

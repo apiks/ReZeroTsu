@@ -75,7 +75,7 @@ func TestAddSuggestionsLabelEveryNonTVMediaType(t *testing.T) {
 	}
 }
 
-func TestAddSuggestionsLabelFollowedShowsAndSortThemLastWithoutHidingThem(t *testing.T) {
+func TestAddSuggestionsLabelSubscribedShowsAndSortThemLastWithoutHidingThem(t *testing.T) {
 	seedTypes(t)
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Web One", Route: "web-one"}, {Show: "Plain Tv"}}
@@ -108,7 +108,7 @@ func TestAddSuggestionNameKeepsItsLabelsWithinOneHundredCharacters(t *testing.T)
 	}
 }
 
-func TestAddTypeFilterNarrowsSuggestionsAndDonghuaMeansChineseONA(t *testing.T) {
+func TestAddTypeFilterNarrowsSuggestionsAndTheDonghuaRouteIsOnaChinese(t *testing.T) {
 	seedTypes(t)
 	cases := map[string]string{
 		"movie":       "Film One · Movie",
@@ -164,7 +164,7 @@ func TestAddResolvesTypedTextOnlyWithinTheChosenType(t *testing.T) {
 	}
 }
 
-func TestPickingAFollowedSuggestionStillAnswersAlreadySubscribed(t *testing.T) {
+func TestPickingASubscribedSuggestionStillAnswersAlreadySubscribed(t *testing.T) {
 	seedTypes(t)
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Film One", Route: "film-one"}}

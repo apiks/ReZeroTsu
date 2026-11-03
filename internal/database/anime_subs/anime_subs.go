@@ -163,8 +163,9 @@ func appendedShowsExpr(shows []*ShowSub) bson.M {
 // updateOneFunc runs one UpdateOne against the collection; it is the seam between the add-show logic and Mongo.
 type updateOneFunc func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error)
 
-// AddShowIfAbsent adds sub to the user's document in a single upsert statement unless a show with the same
-// name (case-insensitive) is already present. It reports whether the show was added.
+// AddShowIfAbsent adds sub to the user's document in a single upsert statement unless a
+// subscription for the same show is already present, by the rule of ShowSub.Matches. It reports whether the show
+// was added.
 func (r *Repo) AddShowIfAbsent(ctx context.Context, id string, sub *ShowSub) (bool, error) {
 	return addShowIfAbsent(ctx, func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error) {
 		return r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(upsert))
@@ -172,11 +173,19 @@ func (r *Repo) AddShowIfAbsent(ctx context.Context, id string, sub *ShowSub) (bo
 }
 
 func addShowIfAbsent(ctx context.Context, updateOne updateOneFunc, id string, sub *ShowSub) (bool, error) {
+	// The rule of ShowSub.Matches (ADR-0002): an existing subscription with a route is the same show only on the
+	// same route; one without a route is the same show on the same title.
+	var same bson.A
+	if sub.Route != "" {
+		same = append(same, bson.M{"route": sub.Route})
+	}
+	same = append(same, bson.M{
+		"route": bson.M{"$in": bson.A{nil, ""}},
+		"show":  bson.Regex{Pattern: "^" + regexp.QuoteMeta(sub.Show) + "$", Options: "i"},
+	})
 	filter := bson.M{
-		"id": id,
-		"shows": bson.M{"$not": bson.M{"$elemMatch": bson.M{
-			"show": bson.Regex{Pattern: "^" + regexp.QuoteMeta(sub.Show) + "$", Options: "i"},
-		}}},
+		"id":    id,
+		"shows": bson.M{"$not": bson.M{"$elemMatch": bson.M{"$or": same}}},
 	}
 	// A pipeline update: it tolerates a stored shows of null and fills the defaults a $setOnInsert would.
 	// No "id" entry: a matched document already has it, and an upsert takes it from the equality filter.
@@ -251,6 +260,15 @@ func CollapseKey(name string) string {
 // collapse never merges entries the notifier tells apart.
 func MatchKey(name string) string {
 	return strings.ToLower(strings.Trim(name, mongoTrimSet))
+}
+
+// Matches reports whether the show with this route and title is the one s subscribes to (ADR-0002). A subscription
+// with a route matches by route only; one without matches by title under MatchKey.
+func (s *ShowSub) Matches(route, title string) bool {
+	if s.Route != "" {
+		return s.Route == route
+	}
+	return MatchKey(s.Show) == MatchKey(title)
 }
 
 // SupersedesDuplicate reports whether candidate, appearing after current in a document's shows, is the entry to
