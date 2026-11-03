@@ -6,3 +6,6 @@
 
 # Hooks run under sh, which rejects CRLF
 .githooks/* text eol=lf
+
+# Scripts run under sh, which rejects CRLF
+scripts/*.sh text eol=lf
