@@ -288,8 +288,8 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	now := animeschedule.Now()
 	today := animeschedule.DayOf(now)
 	todayKey := animeschedule.DateKey(today)
-	todayShows := animeschedule.GetDayShows(today, true, animeschedule.PreferSub)
-	if len(todayShows) == 0 {
+	todayRows := animeschedule.SelectRows(today, animeschedule.SubscribeEvery)
+	if len(todayRows) == 0 {
 		return
 	}
 	st := newMongoSentState(db)
@@ -327,7 +327,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 					if doc == nil {
 						continue
 					}
-					if err := processAnimeSubUser(ctx, d, senders, st, doc, todayShows, now); err != nil && !errors.Is(err, context.Canceled) {
+					if err := processAnimeSubUser(ctx, d, senders, st, doc, todayRows, now); err != nil && !errors.Is(err, context.Canceled) {
 						logger.For("animesubs").Error("processAnimeSubUser failed", "user_id", doc.ID, "err", err)
 					}
 				}
@@ -403,7 +403,9 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	gwg.Wait()
 }
 
-func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayShows []animeschedule.ShowEntry, now time.Time) error {
+// processAnimeSubUser DMs one user the rows of todayRows (every row today with every member that selects it, from
+// animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due.
+func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayRows []animeschedule.SelectedRow, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
@@ -434,7 +436,8 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 	throttleTimer := time.NewTimer(animeSubThrottlePerUser)
 	defer throttleTimer.Stop()
 
-	for _, show := range todayShows {
+	for _, row := range todayRows {
+		show := row.ShowEntry
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -464,10 +467,22 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 				}
 			}
 		}
-		epKey := episodeKey(show)
-		if userShowAlreadyNotified(sub, show, epKey) {
+		// The members of the subscription's set that select this row; a row sent for any of them is not sent again.
+		set, _ := animeschedule.ParseSubscriptionTracks(sub.Tracks)
+		var marks []anime_subs.Mark
+		alreadySent := false
+		for _, member := range row.MembersIn(set) {
+			key := memberEpisodeKey(member, show)
+			if userShowAlreadyNotified(sub, string(member), show, key) {
+				alreadySent = true
+				break
+			}
+			marks = append(marks, anime_subs.Mark{Track: string(member), AirUnix: show.AirTimeUnix, Episode: key})
+		}
+		if alreadySent || len(marks) == 0 {
 			continue
 		}
+		epKey := marks[0].Episode
 
 		if dmID == "" {
 			dmID, err = d.OpenDM(ctx, userID)
@@ -500,13 +515,13 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 		}
 		// Record this one show right away, on a context that survives shutdown.
 		if markErr := detachedWrite(ctx, func(wctx context.Context) error {
-			return st.MarkUserShowNotified(wctx, userID, sub.Show, show.AirTimeUnix, epKey)
+			return st.MarkUserShowNotified(wctx, userID, sub.Show, marks)
 		}); markErr != nil {
 			logger.For("animesubs").Error("mark user show notified failed", "user_id", userID, "title", show.Name, "err", markErr)
 		}
-		sub.LastNotifiedAirUnix = show.AirTimeUnix
-		sub.LastNotifiedEpisode = epKey
-		sub.Notified = true
+		for _, m := range marks {
+			sub.Remember(m)
+		}
 		logger.For("animesubs").Debug(
 			"episode notification sent",
 			"user_id", userID,
@@ -537,13 +552,24 @@ func episodeKey(show animeschedule.ShowEntry) string {
 	return show.Route + "|" + show.Episode
 }
 
-// userShowAlreadyNotified reports whether the subscriber was already notified of this episode: either the
-// stored episode key matches, or (legacy documents) the air time is not later than the last-notified one.
-func userShowAlreadyNotified(sub *anime_subs.ShowSub, show animeschedule.ShowEntry, epKey string) bool {
-	if sub.LastNotifiedEpisode != "" && sub.LastNotifiedEpisode == epKey {
+// memberEpisodeKey identifies one episode of a show for one track member of a subscription: the Sub member's key is
+// episodeKey, the one every entry stored before subscription tracks holds; the others carry their track.
+func memberEpisodeKey(member animeschedule.Track, show animeschedule.ShowEntry) string {
+	if member == animeschedule.TrackSub {
+		return episodeKey(show)
+	}
+	return show.Route + "|" + string(member) + "|" + show.Episode
+}
+
+// userShowAlreadyNotified reports whether the named member of the subscription was already notified of this
+// episode: either the member's stored episode key matches, or (legacy documents) the air time is not later than
+// the member's last-notified one. Another member's memory never counts.
+func userShowAlreadyNotified(sub *anime_subs.ShowSub, member string, show animeschedule.ShowEntry, epKey string) bool {
+	airUnix, episode := sub.Memory(member)
+	if episode != "" && episode == epKey {
 		return true
 	}
-	return show.AirTimeUnix <= sub.LastNotifiedAirUnix
+	return show.AirTimeUnix <= airUnix
 }
 
 // airing identifies one row of the new-episodes autopost's sent state: the show's match key, its track and its

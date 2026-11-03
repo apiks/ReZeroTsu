@@ -2,6 +2,10 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Subscription tracks (spec #109)
+
+- Subscribe to tracks (#114): `/subscription add` takes an optional `track` option with the choices Sub (the default), Dub, Raw, Sub and Dub, and Every track. A subscription alerts once for each airing of each chosen track: Dub means dubbed episodes only, Raw means raw only, and Sub keeps its raw alert in a week the show has no sub. An airing two chosen tracks both cover, such as the raw of a show with no sub under Every track, is one DM. The bot remembers what it sent for each track, so a dub Ep 2 is still sent after a sub Ep 5, and the other way round. Subscribing after today's airing of a chosen track does not DM it. A plain Sub confirmation reads as before; any other choice names its tracks after the title: "Subscribed to **Frieren** (Sub and Dub)." Existing subscriptions keep working as Sub, with nothing resent or skipped at the release. You still have one subscription per show and up to 100.
+
 ## Raw, sub and dub tracks (spec #108)
 
 - `/schedule` track (#110): `/schedule` takes an optional `track` option whose choices read "Sub: sub, else raw", "Dub: dub, else sub, else raw" and "Raw: raw only", and whose description says it defaults to the server's preferred track, else Sub (#122). Sub shows sub, else raw (what the bot always showed). Dub shows a show's dub in a week it airs one, else its sub, else raw. Raw shows raw only. Previous, Next and the day picker keep the track you chose. Every line is labelled `RAW`, `SUB` or `DUB`, and the footer says "Dub preferred" or "Raw preferred" for those two. Subscriptions are unchanged. What a server's preferred track, the autoposts and schedule messages from before this release do is described in the bullets below. A dub episode alert reads "**Ep 5** dubbed is out!" (a dubbed movie, "**Title** is out, dubbed!").

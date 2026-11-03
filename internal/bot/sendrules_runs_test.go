@@ -77,7 +77,7 @@ func TestSendRulesNotAttemptedSendIsNotDelivered(t *testing.T) {
 		ctx := cancelOnBlock(d)
 		doc, _ := st.GetAnimeSubs(ctx, "u1")
 		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}}
-		_ = processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, shows, now)
+		_ = processAnimeSubUser(ctx, d, newTestSenders(d), st, doc, subRows(shows), now)
 		check(t, d)
 		if st.userShow("u1", "Show A").Notified {
 			t.Error("an unsent DM was recorded as notified")
@@ -183,7 +183,7 @@ func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 		d.Webhook = testWebhook
 		doc, _ := st.GetAnimeSubs(context.Background(), "u1")
 		shows := []animeschedule.ShowEntry{{Name: "Show A", Route: "show-a", Episode: "Episode 1", AirTimeUnix: now.Unix() - 600, Track: "sub"}}
-		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, shows, now)
+		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, subRows(shows), now)
 		assertBotOnly(t, d, 1)
 	})
 	t.Run("reminder", func(t *testing.T) {
