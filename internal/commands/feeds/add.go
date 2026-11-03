@@ -46,7 +46,9 @@ func feedUnavailableText(err error, subreddit string) string {
 //   - the subreddit name rules (reddit.ValidateSubreddit) and the post-type check run before any Reddit request;
 //   - the availability check (private or missing subreddit, rate limiting, unreachable) is checkFeed, which runs
 //     before the feed is saved;
-//   - the saved-feed failure is Fail, which logs it and shows "Something went wrong.";
+//   - the saved-feed failure is Fail, which logs it and shows "Something went wrong.". The old command also posted
+//     "add-reddit-feed error: <err>" to the bot log channel; that copy is dropped on purpose, because it put a raw
+//     error into a server channel and raw errors are never shown (the error is still logged);
 //   - author and title filters are lowercased and the pin option is read exactly as before.
 func runAdd(ic *interaction.Context) error {
 	channelID := channelOption(ic)

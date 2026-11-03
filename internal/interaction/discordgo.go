@@ -136,8 +136,14 @@ func (p *DiscordgoPort) Channel(channelID string) (*discordgo.Channel, error) {
 	return p.s.Channel(channelID)
 }
 
-// BotChannelPermissions resolves the bot's permissions in a channel from the cached guild state.
+// BotChannelPermissions resolves the bot's permissions in a channel from the cached guild state, the channel's
+// overwrites included. A thread has no overwrites of its own, so its permissions are those of its parent
+// channel; a thread missing from the cache is read over REST to find the parent.
 func (p *DiscordgoPort) BotChannelPermissions(channelID string) (int64, error) {
+	if ch, err := p.Channel(channelID); err == nil && ch != nil &&
+		(ch.Type == discordgo.ChannelTypeGuildPublicThread || ch.Type == discordgo.ChannelTypeGuildPrivateThread) && ch.ParentID != "" {
+		channelID = ch.ParentID
+	}
 	return p.s.State.UserChannelPermissions(p.s.State.User.ID, channelID)
 }
 

@@ -2,7 +2,9 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -41,10 +43,14 @@ const (
 // settingsStore is the part of the guild repository the panel uses; tests replace it.
 type settingsStore interface {
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
-	SetGuildSettings(ctx context.Context, guildID string, settings *guilds.GuildSettings) error
-	GetAutopostByType(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
+	// The panel writes one setting at a time, so a write elsewhere between its read and its save is not lost.
+	SetBotLog(ctx context.Context, guildID string, ref *guilds.ChannelRef) error
+	SetDonghua(ctx context.Context, guildID string, on bool) error
+	SetPingMessage(ctx context.Context, guildID, text string) error
+	// GetGuild is the single read behind a panel render: settings and autoposts together.
+	GetGuild(ctx context.Context, guildID string) (*guilds.Guild, error)
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
-	DeleteAnimeSubs(ctx context.Context, id string) error
+	DeleteSentState(ctx context.Context, id string) error
 }
 
 // panelStoreOf picks the settings store of a database client; tests replace it.
@@ -53,14 +59,16 @@ var panelStoreOf = func(db *database.Client) settingsStore { return newDBStore(d
 // draft is a copy of the panel data that one change edits, plus the sent state it leaves behind.
 type draft struct {
 	*panelData
-	dropSubs []string
+	staleChannels []string
 }
 
 // scope names which stored records a change writes, so a change saves exactly the one setting it touches.
 type scope int
 
 const (
-	scopeSettings scope = iota
+	scopeBotLog scope = iota
+	scopeDonghua
+	scopePingMessage
 	scopeNewEpisodes
 	scopeDailySchedule
 )
@@ -195,16 +203,16 @@ func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {
 	}
 	switch ic.CustomID {
 	case idBotLog:
-		return apply(ic, store, scopeSettings, settingsChange(chooseBotLog))
+		return apply(ic, store, scopeBotLog, settingsChange(chooseBotLog))
 	case idDonghua:
-		return apply(ic, store, scopeSettings, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
+		return apply(ic, store, scopeDonghua, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
 			gs.Donghua = !gs.Donghua
 			return ""
 		}))
 	case idPingEdit:
 		return openPingForm(ic, store)
 	case idPingForm:
-		return apply(ic, store, scopeSettings, settingsChange(savePingMessage))
+		return apply(ic, store, scopePingMessage, settingsChange(savePingMessage))
 	case idNewEpisodes:
 		return apply(ic, store, scopeNewEpisodes, chooseNewEpisodes)
 	case idNewEpisodesRole:
@@ -247,9 +255,15 @@ func openPingForm(ic *interaction.Context, store settingsStore) error {
 	if err != nil || gs == nil {
 		return failedLoad(ic, err)
 	}
+	current := pingMessageOf(gs)
+	if utf8.RuneCountInString(current) > maxPingMessageLength {
+		// The old /ping-message option took up to 6000 characters; Discord rejects a longer prefill, and clipping
+		// it silently would change the text.
+		return ic.Refuse("The current ping message is over 4000 characters, too long for the form. It is left as it is; ask the bot owner to shorten it.")
+	}
 	box := interaction.TextBox(idPingText, labelPingMessage, discordgo.TextInputParagraph, true)
 	input := box.Component.(discordgo.TextInput)
-	input.Value, input.MaxLength = pingMessageOf(gs), maxPingMessageLength
+	input.Value, input.MaxLength = current, maxPingMessageLength
 	box.Component = input
 	return ic.OpenForm(interaction.Form{
 		CustomID:   idPingForm,
@@ -294,12 +308,18 @@ func apply(ic *interaction.Context, store settingsStore, sc scope, change func(*
 func save(ctx context.Context, store settingsStore, guildID string, sc scope, d *draft) error {
 	switch sc {
 	case scopeNewEpisodes:
-		dropSentState(ctx, store, guildID, d.dropSubs)
+		dropSentState(ctx, store, guildID, d.staleChannels)
 		return store.SetAutopost(ctx, guildID, postTypeNewEpisodes, d.newEpisodes)
 	case scopeDailySchedule:
 		return store.SetAutopost(ctx, guildID, postTypeDailySchedule, d.dailySchedule)
+	case scopeBotLog:
+		return store.SetBotLog(ctx, guildID, d.gs.BotLogID)
+	case scopeDonghua:
+		return store.SetDonghua(ctx, guildID, d.gs.Donghua)
+	case scopePingMessage:
+		return store.SetPingMessage(ctx, guildID, d.gs.PingMessage)
 	}
-	return store.SetGuildSettings(ctx, guildID, d.gs)
+	return errors.New("settings: unknown save scope")
 }
 
 // restore shows the stored data on the panel and then the reason, which only the invoker sees.

@@ -131,7 +131,7 @@ func voiceHintListAdd() string {
 	return "Use " + commands.CommandMention("voicerole", "list") + " to list all, " + commands.CommandMention("voicerole", "add") + " to add."
 }
 
-// runVoiceAdd is /add-voice. Guard homes: the moderator check and the server-only check are the command's
+// runVoiceAdd is /voicerole add (was /add-voice). Guard homes: the moderator check and the server-only check are the command's
 // PermMod and ContextGuildOnly; both options present, resolvable and a voice channel, the duplicate-pair refusal,
 // the merge into an existing channel entry and the load and save failures are below.
 func runVoiceAdd(ic *interaction.Context) error {
@@ -188,7 +188,7 @@ func voiceLoadErr(err error) error {
 	return fmt.Errorf("guild settings missing")
 }
 
-// runVoiceRemove is /remove-voice. Guard homes: the moderator and server-only checks are the command's PermMod
+// runVoiceRemove is /voicerole remove (was /remove-voice). Guard homes: the moderator and server-only checks are the command's PermMod
 // and ContextGuildOnly; the channel-given check, the not-in-the-list refusal, the role-not-set refusal, dropping
 // a channel that has no roles left and the load and save failures are below. Without the role option the whole
 // channel entry goes, as before. A role chosen but not resolvable no longer removes the whole channel as the old
@@ -241,7 +241,7 @@ func runVoiceRemove(ic *interaction.Context) error {
 	return voiceReply(ic, fmt.Sprintf("All roles removed from %s.", commands.ChannelMention(chID)), voiceHintListAdd())
 }
 
-// runVoiceList is /voice-roles. Guard homes: the moderator and server-only checks are the command's PermMod and
+// runVoiceList is /voicerole list (was /voice-roles). Guard homes: the moderator and server-only checks are the command's PermMod and
 // ContextGuildOnly; the empty notice and the load failure are below.
 func runVoiceList(ic *interaction.Context) error {
 	settings, err := voiceStoreOf(ic.DB).GetGuildSettings(ic.Context(), ic.GuildID)
@@ -358,7 +358,7 @@ func RenderVoiceRolePage(ctx context.Context, db *database.Client, _ *discordgo.
 	return commands.Page{Response: voicePage(entries, page, authorID)}
 }
 
-// handleVoiceRemovePicker removes the chosen channel and role pair, as /remove-voice with both options does, and
+// handleVoiceRemovePicker removes the chosen channel and role pair, as /voicerole remove with both options does, and
 // re-renders the page. Guard home: only the moderator whose list it is may remove from it, checked before the
 // store is read. A choice already gone just re-renders; a choice that more than one pair clips to removes nothing.
 func handleVoiceRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {

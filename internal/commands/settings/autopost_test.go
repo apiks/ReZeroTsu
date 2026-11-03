@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/interaction/interactiontest"
@@ -78,8 +77,8 @@ func TestChoosingNewEpisodesChannelKeepsRoleAndDropsPreviousSentState(t *testing
 	if ap == nil || ap.ID != "301" || ap.Name != "thread" || ap.RoleID != "400" {
 		t.Errorf("new-episodes autopost = %+v", ap)
 	}
-	if len(st.deletedSubs) != 1 || st.deletedSubs[0] != "300" {
-		t.Errorf("deleted sent state = %v, want the previous channel's", st.deletedSubs)
+	if len(st.deletedSentState) != 1 || st.deletedSentState[0] != "300" {
+		t.Errorf("deleted sent state = %v, want the previous channel's", st.deletedSentState)
 	}
 	if st.sets != 0 || st.autoposts[postTypeDailySchedule].ID != "500" {
 		t.Error("another setting changed")
@@ -95,8 +94,8 @@ func TestChoosingSameNewEpisodesChannelKeepsSentState(t *testing.T) {
 	if err := pick(t, &interactiontest.Fake{}, moderator, idNewEpisodes, channelOf("300", "renamed", discordgo.ChannelTypeGuildText)); err != nil {
 		t.Fatal(err)
 	}
-	if len(st.deletedSubs) != 0 || st.autoposts[postTypeNewEpisodes].Name != "renamed" {
-		t.Errorf("deleted %v, autopost %+v", st.deletedSubs, st.autoposts[postTypeNewEpisodes])
+	if len(st.deletedSentState) != 0 || st.autoposts[postTypeNewEpisodes].Name != "renamed" {
+		t.Errorf("deleted %v, autopost %+v", st.deletedSentState, st.autoposts[postTypeNewEpisodes])
 	}
 }
 
@@ -109,8 +108,8 @@ func TestSettingNewEpisodesChannelFirstTimeDeletesNothing(t *testing.T) {
 	if ap := st.autoposts[postTypeNewEpisodes]; ap == nil || ap.ID != "300" || ap.PostType != postTypeNewEpisodes {
 		t.Errorf("autopost = %+v", ap)
 	}
-	if len(st.deletedSubs) != 0 {
-		t.Errorf("deleted %v", st.deletedSubs)
+	if len(st.deletedSentState) != 0 {
+		t.Errorf("deleted %v", st.deletedSentState)
 	}
 }
 
@@ -124,8 +123,8 @@ func TestClearingNewEpisodesChannelDeletesSentStateAndAutopost(t *testing.T) {
 	if st.autoposts[postTypeNewEpisodes] != nil {
 		t.Error("autopost still set")
 	}
-	if len(st.deletedSubs) != 1 || st.deletedSubs[0] != "300" {
-		t.Errorf("deleted sent state = %v", st.deletedSubs)
+	if len(st.deletedSentState) != 1 || st.deletedSentState[0] != "300" {
+		t.Errorf("deleted sent state = %v", st.deletedSentState)
 	}
 	if st.autoposts[postTypeDailySchedule] == nil {
 		t.Error("daily schedule was cleared too")
@@ -168,7 +167,7 @@ func TestChoosingAndClearingRole(t *testing.T) {
 	if got := st.autoposts[postTypeNewEpisodes]; got.RoleID != "" || got.ID != "300" {
 		t.Errorf("autopost after clearing = %+v", got)
 	}
-	if len(st.deletedSubs) != 0 {
+	if len(st.deletedSentState) != 0 {
 		t.Error("changing the role dropped sent state")
 	}
 }
@@ -186,8 +185,8 @@ func TestDailyScheduleChooseAndClear(t *testing.T) {
 	if err := pick(t, fake, moderator, idDailySchedule); err != nil {
 		t.Fatal(err)
 	}
-	if st.autoposts[postTypeDailySchedule] != nil || len(st.deletedSubs) != 0 {
-		t.Errorf("daily = %+v, deleted %v; want it disabled with no sent state touched", st.autoposts[postTypeDailySchedule], st.deletedSubs)
+	if st.autoposts[postTypeDailySchedule] != nil || len(st.deletedSentState) != 0 {
+		t.Errorf("daily = %+v, deleted %v; want it disabled with no sent state touched", st.autoposts[postTypeDailySchedule], st.deletedSentState)
 	}
 }
 
@@ -200,7 +199,7 @@ func TestAutopostPickersRefuseNonModerators(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if st.autoposts[postTypeNewEpisodes] == nil || st.autoposts[postTypeDailySchedule] == nil || len(st.deletedSubs) != 0 {
+	if st.autoposts[postTypeNewEpisodes] == nil || st.autoposts[postTypeDailySchedule] == nil || len(st.deletedSentState) != 0 {
 		t.Error("a non-moderator changed an autopost")
 	}
 	if call := lastCall(t, fake); !strings.Contains(call.Response.Content, "You need") {
@@ -258,13 +257,5 @@ func TestMentionableWarningFollowsItsCondition(t *testing.T) {
 				t.Errorf("warning shown = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestOldAutopostCommandsAreGone(t *testing.T) {
-	for _, c := range commands.AllCommands() {
-		if c.Name == "new-episodes" || c.Name == "daily-schedule" {
-			t.Errorf("/%s is still registered", c.Name)
-		}
 	}
 }

@@ -63,9 +63,10 @@ func describe(f guilds.FeedEntry) string {
 	return s
 }
 
-func feedFields(feeds []guilds.FeedEntry) []*discordgo.MessageEmbedField {
+// feedFields numbers each field from first (1-based), so the Remove picker option with the same number is the same feed.
+func feedFields(feeds []guilds.FeedEntry, first int) []*discordgo.MessageEmbedField {
 	fields := make([]*discordgo.MessageEmbedField, 0, len(feeds))
-	for _, f := range feeds {
+	for j, f := range feeds {
 		value := commands.ChannelMention(f.ChannelID) + " | " + f.PostType
 		if f.Author != "" {
 			value += " | u/" + f.Author
@@ -77,7 +78,7 @@ func feedFields(feeds []guilds.FeedEntry) []*discordgo.MessageEmbedField {
 			value += " | Pinned"
 		}
 		fields = append(fields, &discordgo.MessageEmbedField{
-			Name:  ellipsize("r/"+f.Subreddit, discord.MaxEmbedFieldNameLength),
+			Name:  ellipsize(strconv.Itoa(first+j)+". r/"+f.Subreddit, discord.MaxEmbedFieldNameLength),
 			Value: ellipsize(value, discord.MaxEmbedFieldValueLength),
 		})
 	}
@@ -99,21 +100,21 @@ func renderPage(feeds []guilds.FeedEntry, page int, authorID string) interaction
 		components = append(components, commands.PaginationComponents(pageKey, page, n, authorID)...)
 		desc = fmt.Sprintf("Page %d of %d. Showing %d-%d of %d.", page+1, totalPages, start+1, end, n)
 	}
-	components = append(components, removePicker(feeds[start:end], page, authorID))
-	emb := commands.NewEmbedWithFields(nil, embedTitle, desc, feedFields(feeds[start:end]), "Pick a feed below to remove it.")
+	components = append(components, removePicker(feeds[start:end], start, page, authorID))
+	emb := commands.NewEmbedWithFields(nil, embedTitle, desc, feedFields(feeds[start:end], start+1), "Pick a feed below to remove it.")
 	return interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}
 }
 
-func removePicker(entries []guilds.FeedEntry, page int, authorID string) discordgo.MessageComponent {
+func removePicker(entries []guilds.FeedEntry, start, page int, authorID string) discordgo.MessageComponent {
 	options := make([]discordgo.SelectMenuOption, 0, len(entries))
 	seen := make(map[string]bool, len(entries))
-	for _, f := range entries {
+	for j, f := range entries {
 		v := pickValue(f)
 		if seen[v] {
 			continue
 		}
 		seen[v] = true
-		label := "r/" + f.Subreddit + " (" + f.PostType + ")"
+		label := strconv.Itoa(start+j+1) + ". r/" + f.Subreddit + " (" + f.PostType + ")"
 		if f.Author != "" {
 			label += " u/" + f.Author
 		}
@@ -121,9 +122,8 @@ func removePicker(entries []guilds.FeedEntry, page int, authorID string) discord
 			label += " " + f.Title
 		}
 		options = append(options, discordgo.SelectMenuOption{
-			Label:       clip(label),
-			Value:       v,
-			Description: clip("Channel ID " + f.ChannelID),
+			Label: clip(label),
+			Value: v,
 		})
 	}
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{

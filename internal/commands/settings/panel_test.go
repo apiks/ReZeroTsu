@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,22 +22,36 @@ type fakeStore struct {
 	failGet error
 	failSet error
 	sets    int
+	// afterGet runs once after the settings are read, to stand for a write by another command in between.
+	afterGet func()
 
-	// autoposts is keyed by post type; deletedSubs lists the sent-state documents that were deleted, in order.
-	autoposts    map[string]*guilds.Autopost
-	deletedSubs  []string
-	failAutopost error
+	// autoposts is keyed by post type; deletedSentState lists the sent-state documents that were deleted, in order.
+	autoposts        map[string]*guilds.Autopost
+	deletedSentState []string
+	failAutopost     error
+	guildReads       int
 }
 
-func (f *fakeStore) GetAutopostByType(_ context.Context, _, postType string) (*guilds.Autopost, error) {
+// GetGuild is the one read behind a panel: the settings and the stored autoposts together.
+func (f *fakeStore) GetGuild(_ context.Context, _ string) (*guilds.Guild, error) {
+	f.guildReads++
 	if f.failGet != nil {
 		return nil, f.failGet
 	}
-	if ap := f.autoposts[postType]; ap != nil {
-		c := *ap
-		return &c, nil
+	g := &guilds.Guild{}
+	if f.gs != nil {
+		c := *f.gs
+		g.GuildSettings = &c
 	}
-	return nil, nil
+	for _, postType := range []string{postTypeNewEpisodes, postTypeDailySchedule} {
+		if ap := f.autoposts[postType]; ap != nil {
+			g.Autoposts = append(g.Autoposts, *ap)
+		}
+	}
+	if f.afterGet != nil {
+		f.afterGet()
+	}
+	return g, nil
 }
 
 func (f *fakeStore) SetAutopost(_ context.Context, _, postType string, ap *guilds.Autopost) error {
@@ -55,8 +70,8 @@ func (f *fakeStore) SetAutopost(_ context.Context, _, postType string, ap *guild
 	return nil
 }
 
-func (f *fakeStore) DeleteAnimeSubs(_ context.Context, id string) error {
-	f.deletedSubs = append(f.deletedSubs, id)
+func (f *fakeStore) DeleteSentState(_ context.Context, id string) error {
+	f.deletedSentState = append(f.deletedSentState, id)
 	return nil
 }
 
@@ -65,7 +80,35 @@ func (f *fakeStore) GetGuildSettings(_ context.Context, _ string) (*guilds.Guild
 		return nil, f.failGet
 	}
 	c := *f.gs
+	if f.afterGet != nil {
+		f.afterGet()
+	}
 	return &c, nil
+}
+
+func (f *fakeStore) SetBotLog(_ context.Context, _ string, ref *guilds.ChannelRef) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.BotLogID = ref })
+}
+
+func (f *fakeStore) SetDonghua(_ context.Context, _ string, on bool) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.Donghua = on })
+}
+
+func (f *fakeStore) SetPingMessage(_ context.Context, _ string, text string) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.PingMessage = text })
+}
+
+// write applies one field to the stored settings, as the real targeted writes do: whatever else changed since
+// the panel read stays.
+func (f *fakeStore) write(set func(*guilds.GuildSettings)) error {
+	if f.failSet != nil {
+		return f.failSet
+	}
+	f.sets++
+	c := *f.gs
+	set(&c)
+	f.gs = &c
+	return nil
 }
 
 func (f *fakeStore) SetGuildSettings(_ context.Context, _ string, gs *guilds.GuildSettings) error {
@@ -381,6 +424,23 @@ func TestEditPingMessageOpensPrefilledForm(t *testing.T) {
 	}
 }
 
+func TestEditPingMessageRefusesStoredTextTooLongForTheForm(t *testing.T) {
+	gs := stored()
+	gs.PingMessage = strings.Repeat("x", maxPingMessageLength+1)
+	useStore(t, &fakeStore{gs: gs})
+	fake := &interactiontest.Fake{}
+	if err := click(t, fake, moderator, idPingEdit); err != nil {
+		t.Fatal(err)
+	}
+	call := lastCall(t, fake)
+	if call.Op == "OpenForm" {
+		t.Fatal("a form that Discord would reject was opened")
+	}
+	if call.Visibility != interaction.Private || !strings.Contains(call.Response.Content, "over 4000 characters") {
+		t.Errorf("last call = %s %q %v, want a private refusal naming the limit", call.Op, call.Response.Content, call.Visibility)
+	}
+}
+
 func TestSavingPingMessageChangesOnlyIt(t *testing.T) {
 	st := &fakeStore{gs: stored()}
 	useStore(t, st)
@@ -452,7 +512,7 @@ func TestNonModeratorsAreRefusedOnEveryComponent(t *testing.T) {
 	}
 }
 
-func TestModeratorRoleStillPassesTheRecheck(t *testing.T) {
+func TestGrantedRoleStillPassesTheRecheck(t *testing.T) {
 	gs := stored()
 	st := &fakeStore{gs: gs}
 	useStore(t, st)
@@ -464,7 +524,7 @@ func TestModeratorRoleStillPassesTheRecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.gs.Donghua {
-		t.Error("a member with a moderator role was refused")
+		t.Error("a member with a granted role was refused")
 	}
 }
 
@@ -538,5 +598,38 @@ func TestUnknownPanelComponentIsRefused(t *testing.T) {
 	}
 	if st.sets != 0 || lastCall(t, fake).Visibility != interaction.Private {
 		t.Error("an unknown component must be refused privately without saving")
+	}
+}
+
+func TestPanelSaveKeepsAWriteMadeAfterItsRead(t *testing.T) {
+	for name, id := range map[string]string{"donghua": idDonghua} {
+		t.Run(name, func(t *testing.T) {
+			st := &fakeStore{gs: stored()}
+			st.afterGet = func() {
+				st.afterGet = nil
+				gs := *st.gs
+				gs.CommandRoles = append(slices.Clone(gs.CommandRoles), guilds.Role{ID: "r2"})
+				st.gs = &gs
+			}
+			useStore(t, st)
+			if err := click(t, &interactiontest.Fake{}, moderator, id); err != nil {
+				t.Fatal(err)
+			}
+			if len(st.gs.CommandRoles) != 2 {
+				t.Errorf("a role added during the press was lost: %+v", st.gs.CommandRoles)
+			}
+		})
+	}
+}
+
+func TestAPanelPressReadsTheGuildOncePerRender(t *testing.T) {
+	st := &fakeStore{gs: stored()}
+	useStore(t, st)
+	if err := click(t, &interactiontest.Fake{}, moderator, idDonghua); err != nil {
+		t.Fatal(err)
+	}
+	// One read before the change and one for the fresh panel; the moderator check reads settings separately.
+	if st.guildReads != 2 {
+		t.Errorf("guild reads = %d, want 2", st.guildReads)
 	}
 }

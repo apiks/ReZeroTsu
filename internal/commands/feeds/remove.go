@@ -192,9 +192,8 @@ func sameFeedScope(f, g guilds.FeedEntry) bool {
 		(f.Author == "" || f.Author == g.Author) && (f.Title == "" || f.Title == g.Title)
 }
 
-// removeChosen removes one feed of the list. RemoveFeed ignores an empty author or title, so removing an
-// unfiltered feed would also remove its filtered siblings in the same channel; they are put back, and their
-// delivery records are kept.
+// removeChosen removes exactly one feed of the list, in one update, so its filtered siblings in the same channel
+// stay in place. The delivery records are forgotten only when the feed has no siblings that share them.
 func removeChosen(ic *interaction.Context, st store, feeds []guilds.FeedEntry, chosen guilds.FeedEntry) error {
 	var siblings []guilds.FeedEntry
 	for _, g := range feeds {
@@ -203,13 +202,8 @@ func removeChosen(ic *interaction.Context, st store, feeds []guilds.FeedEntry, c
 		}
 	}
 	ctx := ic.Context()
-	if _, err := st.RemoveFeed(ctx, ic.GuildID, chosen.ChannelID, chosen.Subreddit, chosen.PostType, chosen.Author, chosen.Title); err != nil {
+	if _, err := st.RemoveExactFeed(ctx, ic.GuildID, chosen); err != nil {
 		return err
-	}
-	for _, g := range siblings {
-		if err := st.AddFeed(ctx, ic.GuildID, g); err != nil {
-			return err
-		}
 	}
 	if len(siblings) == 0 {
 		if err := st.DeleteChecks(ctx, ic.GuildID, chosen.ChannelID, chosen.Subreddit, chosen.PostType, chosen.Author, chosen.Title); err != nil {
