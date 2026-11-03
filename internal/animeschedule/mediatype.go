@@ -42,3 +42,28 @@ func decodeMediaType(refs []MediaTypeRef) MediaType {
 	}
 	return MediaTV
 }
+
+// Label is the short name shown beside a non-TV entry; TV has none.
+func (m MediaType) Label() string {
+	switch m {
+	case MediaTVShort:
+		return "TV Short"
+	case MediaONA:
+		return "ONA"
+	case MediaDonghua:
+		return "Donghua"
+	case MediaOVA:
+		return "OVA"
+	case MediaSpecial:
+		return "Special"
+	case MediaMovie:
+		return "Movie"
+	}
+	return ""
+}
+
+// MediaTypeFromRoute decodes an AnimeSchedule media-type route such as "tv-short" or "ona-chinese".
+func MediaTypeFromRoute(route string) (MediaType, bool) {
+	mt, ok := mediaTypeByRoute[strings.ToLower(strings.TrimSpace(route))]
+	return mt, ok
+}

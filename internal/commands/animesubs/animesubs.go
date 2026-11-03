@@ -6,12 +6,8 @@ import (
 	"strings"
 
 	"ReZeroTsu/internal/animeschedule"
-	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 const (
@@ -74,29 +70,20 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 }
 
 // findShowByName returns the airing ShowEntry matching name by any of its four names, or zero value and false.
-func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	return findShowIn(animeschedule.AiringShows(), name)
+func findShowByName(name string, only *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
+	var shows []animeschedule.ShowEntry
+	for _, c := range candidates(only) {
+		shows = append(shows, c.ShowEntry)
+	}
+	return findShowIn(shows, name)
 }
 
-// choiceName is the autocomplete label: "Title (English)" when the English name differs from the title, else the
-// title, cut to Discord's limit.
-func choiceName(e animeschedule.ShowEntry) string {
-	name := e.Name
+// titleName is "Title (English)" when the English name differs from the title, else the title.
+func titleName(e animeschedule.ShowEntry) string {
 	if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
-		name = fmt.Sprintf("%s (%s)", e.Name, en)
+		return fmt.Sprintf("%s (%s)", e.Name, en)
 	}
-	return clip(name)
-}
-
-// autocompleteAdd offers this week's airing shows matched anywhere in any of their four names. A choice's value is
-// the display title, which is what subscriptions are keyed by.
-func autocompleteAdd(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	matched := commands.MatchAnywhere(animeschedule.AiringShows(), typed, animeschedule.ShowEntry.AllNames)
-	out := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(matched))
-	for _, e := range matched {
-		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: choiceName(e), Value: clip(e.Name)})
-	}
-	return out
+	return e.Name
 }
 
 // subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
@@ -111,12 +98,12 @@ type subsStore interface {
 // showLookup resolves user input to an airing show; replaced in tests.
 var showLookup = findShowByName
 
-func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for this week's shows.", nil
 	}
-	show, ok := showLookup(animeInput)
+	show, ok := showLookup(animeInput, only)
 	if !ok {
 		return "I could not find that airing show. Pick one of the suggestions or check the spelling, and see `/schedule` for this week's shows.", nil
 	}

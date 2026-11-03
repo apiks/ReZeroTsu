@@ -233,8 +233,9 @@ func seedWeek(t *testing.T) {
 
 func addAutocomplete(t *testing.T, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	t.Helper()
+	useStore(t, newFakeStore())
 	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Type: discordgo.InteractionApplicationCommandAutocomplete,
-		User: &discordgo.User{ID: "user"}}}
+		User: &discordgo.User{ID: "user"}, Data: discordgo.ApplicationCommandInteractionData{Name: "subscription"}}}
 	return subcommand(t, "add").AutocompleteOption(t.Context(), nil, nil, i, "anime", typed)
 }
 
@@ -263,7 +264,7 @@ func TestAddChoicesAreNamedTitleThenEnglishWhenTheyDiffer(t *testing.T) {
 
 func TestChoiceNameIsCutToDiscordsLimit(t *testing.T) {
 	long := strings.Repeat("x", 120)
-	if got := choiceName(animeschedule.ShowEntry{Name: "T", English: long}); len([]rune(got)) != 100 {
+	if got := labelledName(candidate{ShowEntry: animeschedule.ShowEntry{Name: "T", English: long}}, false); len([]rune(got)) != 100 {
 		t.Errorf("length = %d", len([]rune(got)))
 	}
 }

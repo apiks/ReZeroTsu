@@ -26,7 +26,7 @@
 
 The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands by category. The only prefix commands are the owner's: `servers`, `shards`, `uptime` and `messagelogs`, sent in a DM to the bot. A DM that starts with a configured prefix and names none of them gets a one-line hint that slash commands replaced prefix commands.
 
-**Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
+**Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`; `add` takes an optional `type` filter: TV, TV Short, ONA, Donghua, OVA, Special or Movie), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
 
 **Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, ping message). Mod commands default to Manage Server; server admins grant them to other roles, members or channels in Server Settings, Integrations.
 
