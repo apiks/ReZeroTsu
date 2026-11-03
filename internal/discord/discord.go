@@ -119,8 +119,10 @@ const (
 		PermissionPinMessages
 )
 
-// PermissionPinMessages is the Pin Messages permission (bit 51); discordgo v0.29.0 does not define it.
-const PermissionPinMessages = 1 << 51
+// PermissionPinMessages is Discord's Pin Messages permission (bit 51). Discord's changelog entry "Pin Messages
+// permission, required from 2026-02-23" (https://docs.discord.com/developers/change-log) made it a requirement
+// for pinning, and the permission list in the docs gives its bit. discordgo v0.29.0 does not define it.
+const PermissionPinMessages int64 = 1 << 51
 
 const SupportServerURL = "https://discord.gg/BDT8Twv"
 

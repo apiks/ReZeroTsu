@@ -1,21 +1,24 @@
 package bot
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 
+	"ReZeroTsu/internal/discord"
 	"github.com/bwmarrin/discordgo"
 )
 
 // pinTransport records "METHOD path" for every REST request. The pinned list holds one older bot pin for the
 // subreddit; every other call succeeds with an empty body.
 type pinTransport struct {
-	mu    sync.Mutex
-	calls []string
-	fail  bool
+	mu        sync.Mutex
+	calls     []string
+	failUnpin bool
+	putErr    error
 }
 
 func (p *pinTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -24,7 +27,9 @@ func (p *pinTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	p.mu.Unlock()
 	status, body := http.StatusNoContent, ""
 	switch {
-	case p.fail:
+	case p.putErr != nil && r.Method == http.MethodPut:
+		return nil, p.putErr
+	case p.failUnpin && r.Method == http.MethodDelete:
 		status, body = http.StatusForbidden, `{"code":50013,"message":"Missing Permissions"}`
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pins"):
 		status = http.StatusOK
@@ -73,7 +78,7 @@ func TestFeedPinningNeedsPinMessagesFromState(t *testing.T) {
 		perms    int64
 		wantREST bool
 	}{
-		{"Pin Messages", permissionPinMessages, true},
+		{"Pin Messages", discord.PermissionPinMessages, true},
 		{"Manage Messages only", discordgo.PermissionManageMessages, false},
 		{"no permissions", 0, false},
 	}
@@ -97,9 +102,78 @@ func TestFeedPinningNeedsPinMessagesFromState(t *testing.T) {
 	}
 }
 
-// A failed pin or unpin is logged, never panics and never stops the run.
-func TestFeedPinningFailuresDoNotPanic(t *testing.T) {
-	tr := &pinTransport{fail: true}
-	s := pinSession(t, permissionPinMessages, tr)
+func TestFeedPinningAdministratorBotPins(t *testing.T) {
+	tr := &pinTransport{}
+	s := pinSession(t, discordgo.PermissionAdministrator, tr)
 	handleFeedPinning(s, "c1", "new", "anime")
+	if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/c1/pins/new" {
+		t.Fatalf("REST calls = %v, want list, unpin and pin", got)
+	}
+}
+
+// pinThreadSession adds parent text channel p1 carrying the given @everyone overwrite and thread t1 under it.
+func pinThreadSession(t *testing.T, base int64, ow discordgo.PermissionOverwrite, tr *pinTransport) *discordgo.Session {
+	t.Helper()
+	s := pinSession(t, base, tr)
+	ow.ID, ow.Type = "g1", discordgo.PermissionOverwriteTypeRole
+	if err := s.State.ChannelAdd(&discordgo.Channel{
+		ID: "p1", GuildID: "g1", Type: discordgo.ChannelTypeGuildText,
+		PermissionOverwrites: []*discordgo.PermissionOverwrite{&ow},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.State.ChannelAdd(&discordgo.Channel{ID: "t1", GuildID: "g1", ParentID: "p1", Type: discordgo.ChannelTypeGuildPublicThread}); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestFeedPinningInThreadUsesParentOverwrites(t *testing.T) {
+	t.Run("parent grants Pin Messages", func(t *testing.T) {
+		tr := &pinTransport{}
+		s := pinThreadSession(t, 0, discordgo.PermissionOverwrite{Allow: discord.PermissionPinMessages}, tr)
+		handleFeedPinning(s, "t1", "new", "anime")
+		if got := tr.got(); len(got) != 3 || got[2] != "PUT /api/v9/channels/t1/pins/new" {
+			t.Fatalf("REST calls = %v, want list, unpin and pin in the thread", got)
+		}
+	})
+	t.Run("parent denies Pin Messages", func(t *testing.T) {
+		tr := &pinTransport{}
+		s := pinThreadSession(t, discord.PermissionPinMessages, discordgo.PermissionOverwrite{Deny: discord.PermissionPinMessages}, tr)
+		handleFeedPinning(s, "t1", "new", "anime")
+		if got := tr.got(); len(got) != 0 {
+			t.Fatalf("REST calls = %v, want none", got)
+		}
+	})
+	t.Run("thread missing from state", func(t *testing.T) {
+		lb := captureLogs(t)
+		tr := &pinTransport{}
+		s := pinSession(t, discord.PermissionPinMessages, tr)
+		handleFeedPinning(s, "gone", "new", "anime")
+		if got := tr.got(); len(got) != 0 {
+			t.Fatalf("REST calls = %v, want none", got)
+		}
+		if lb.countContaining("DEBUG", "feed pin skipped") != 1 {
+			t.Fatalf("want one debug skip log, logs:\n%s", lb.buf.String())
+		}
+	})
+}
+
+// A failed unpin is logged with its error and the pin is still attempted; a failed pin with a non-REST error logs
+// its cause too. Neither panics or returns an error to the delivery run.
+func TestFeedPinningFailuresAreLoggedAndPinStillAttempted(t *testing.T) {
+	lb := captureLogs(t)
+	tr := &pinTransport{failUnpin: true, putErr: errors.New("pin timed out")}
+	s := pinSession(t, discord.PermissionPinMessages, tr)
+	handleFeedPinning(s, "c1", "new", "anime")
+	want := []string{"GET /api/v9/channels/c1/pins", "DELETE /api/v9/channels/c1/pins/old", "PUT /api/v9/channels/c1/pins/new"}
+	if strings.Join(tr.got(), "|") != strings.Join(want, "|") {
+		t.Fatalf("REST calls = %v, want %v", tr.got(), want)
+	}
+	if lb.countContaining("WARN", "feed unpin failed") != 1 {
+		t.Fatalf("want one unpin warning, logs:\n%s", lb.buf.String())
+	}
+	if lb.countContaining("WARN", "pin timed out") != 1 {
+		t.Fatalf("want the pin warning to carry the timeout cause, logs:\n%s", lb.buf.String())
+	}
 }
