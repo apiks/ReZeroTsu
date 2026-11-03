@@ -29,9 +29,9 @@ func noRun(*interaction.Context) error { return nil }
 func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	register(t, &Command{Name: "t-flat", Desc: "d", Visibility: Public, Response: Direct, Run: noRun,
 		Options: []*discordgo.ApplicationCommandOption{{Name: "o", Description: "od", Type: discordgo.ApplicationCommandOptionString}}})
-	register(t, &Command{Name: "t-flat-admin", Desc: "d", Permission: PermAdmin, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
+	register(t, &Command{Name: "t-flat-mod", Desc: "d", Permission: PermMod, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
 
-	admin := int64(discordgo.PermissionAdministrator)
+	manageServer := int64(discordgo.PermissionManageGuild)
 	serverOnly := &[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
 	want := &discordgo.ApplicationCommand{Name: "t-flat", Description: "d", IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM},
@@ -39,10 +39,10 @@ func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	if got := definition(t, "t-flat"); !reflect.DeepEqual(got, want) {
 		t.Errorf("flat = %+v, want %+v", got, want)
 	}
-	wantAdmin := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &admin, IntegrationTypes: serverOnly,
+	wantMod := &discordgo.ApplicationCommand{Name: "t-flat-mod", Description: "d", DefaultMemberPermissions: &manageServer, IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild}}
-	if got := definition(t, "t-flat-admin"); !reflect.DeepEqual(got, wantAdmin) {
-		t.Errorf("admin = %+v, want %+v", got, wantAdmin)
+	if got := definition(t, "t-flat-mod"); !reflect.DeepEqual(got, wantMod) {
+		t.Errorf("mod = %+v, want %+v", got, wantMod)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestRightClickKindsRegisterWithTheirType(t *testing.T) {
 func TestDefaultPermissionsInstallTypesAndContextsRegisterAsDeclared(t *testing.T) {
 	manage := int64(discordgo.PermissionManageGuild)
 	register(t, &Command{Name: "t-mod", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
-		DefaultMemberPermissions: &manage, Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}, Context: ContextGuildOnly})
+		Permission: PermMod, Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}, Context: ContextGuildOnly})
 	register(t, &Command{Name: "t-both", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
 		Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}, Context: ContextBoth})
 
@@ -121,8 +121,16 @@ func TestAddRejectsInconsistentGroupsAndRightClickCommands(t *testing.T) {
 		"empty group":                 base(Command{Groups: []*SubcommandGroup{{Name: "g", Desc: "d"}}}),
 		"right-click with options":    base(Command{Kind: KindUser, Run: noRun, Options: opt}),
 		"right-click with subcommand": base(Command{Kind: KindMessage, Run: noRun, Subcommands: []*Subcommand{sub}}),
-		"right-click with legacy":     base(Command{Kind: KindUser, Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {}}),
+		"right-click without Run":     base(Command{Kind: KindUser}),
 		"install types without value": base(Command{Run: noRun, Installs: []discordgo.ApplicationIntegrationType{}}),
+		// Discord's default member permission is the only gate on a mod command, and it does not apply in bot DMs
+		// or under a user install, so a mod command must register for servers only.
+		"mod command in any context": base(Command{Run: noRun, Permission: PermMod}),
+		"mod command in bot DMs":     base(Command{Run: noRun, Permission: PermMod, Context: ContextDMOnly}),
+		"mod command user-installable": base(Command{Run: noRun, Permission: PermMod, Context: ContextGuildOnly,
+			Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}}),
+		"mod command user install only": base(Command{Run: noRun, Permission: PermMod, Context: ContextGuildOnly,
+			Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationUserInstall}}),
 	}
 	for name, cmd := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -166,7 +174,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 	}
 
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", sub("add", val))); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", sub("add", val))); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(ran, []string{"add"}) || strings.Join(fake.Ops(), ",") != "Reply" || fake.Calls()[0].Visibility != interaction.Public {
@@ -178,7 +186,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 
 	fake = &interactiontest.Fake{}
 	group := &discordgo.ApplicationCommandInteractionDataOption{Name: "admin", Type: discordgo.ApplicationCommandOptionSubCommandGroup, Options: []*discordgo.ApplicationCommandInteractionDataOption{sub("purge")}}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", group)); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", group)); err != nil {
 		t.Fatal(err)
 	}
 	if ran[len(ran)-1] != "purge" || seen.Group != "admin" || seen.Subcommand != "purge" {
@@ -186,7 +194,7 @@ func TestDispatchSendsASubcommandToItsOwnHandler(t *testing.T) {
 	}
 
 	fake = &interactiontest.Fake{}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", sub("slow"))); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", sub("slow"))); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(fake.Ops(), ","); got != "Defer,Reply" || fake.Calls()[0].Visibility != interaction.Private {
@@ -199,7 +207,7 @@ func TestDispatchRefusesAnUnknownSubcommandPrivately(t *testing.T) {
 		Subcommands: []*Subcommand{{Name: "add", Desc: "d", Run: noRun}}})
 	fake := &interactiontest.Fake{}
 	bad := &discordgo.ApplicationCommandInteractionDataOption{Name: "gone", Type: discordgo.ApplicationCommandOptionSubCommand}
-	if err := run(t, "t-tree", fake, fakeSettings{}, subInteraction("t-tree", "g", bad)); err != nil {
+	if err := run(t, "t-tree", fake, subInteraction("t-tree", "g", bad)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()
@@ -229,7 +237,7 @@ func TestDispatchGivesARightClickCommandItsTarget(t *testing.T) {
 	for name, target := range map[string]string{"T who": "target-user", "T what": "target-msg"} {
 		i := slashInteraction(name, "g", 0)
 		i.Interaction.Data = discordgo.ApplicationCommandInteractionData{Name: name, TargetID: target, Resolved: resolved}
-		if err := run(t, name, &interactiontest.Fake{}, fakeSettings{}, i); err != nil {
+		if err := run(t, name, &interactiontest.Fake{}, i); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,7 +259,7 @@ func TestAFormOpensFromACommandAndItsSubmissionReachesItsHandler(t *testing.T) {
 	})
 
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-say", fake, fakeSettings{}, slashInteraction("t-say", "g", 0)); err != nil {
+	if err := run(t, "t-say", fake, slashInteraction("t-say", "g", 0)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()
@@ -269,7 +277,7 @@ func TestAFormOpensFromACommandAndItsSubmissionReachesItsHandler(t *testing.T) {
 	}
 }
 
-func TestAutocompleteReachesASubcommandsOwnOption(t *testing.T) {
+func TestAutocompleteReachesASubcommandsOwnOptionAndAnswersThroughThePort(t *testing.T) {
 	var asked string
 	register(t, &Command{Name: "t-tree", Desc: "d", Visibility: Private, Response: Direct,
 		Subcommands: []*Subcommand{{Name: "add", Desc: "d", Run: noRun,
@@ -281,9 +289,19 @@ func TestAutocompleteReachesASubcommandsOwnOption(t *testing.T) {
 
 	focused := &discordgo.ApplicationCommandInteractionDataOption{Name: "show", Type: discordgo.ApplicationCommandOptionString, Value: "fri", Focused: true}
 	sub := &discordgo.ApplicationCommandInteractionDataOption{Name: "add", Type: discordgo.ApplicationCommandOptionSubCommand, Options: []*discordgo.ApplicationCommandInteractionDataOption{focused}}
-	i := subInteraction("t-tree", "g", sub)
-	choices := autocompleteChoices(context.Background(), nil, nil, i)
-	if asked != "show=fri" || len(choices) != 1 || choices[0].Name != "Frieren" {
-		t.Errorf("asked %q choices %v, want the subcommand's autocomplete", asked, choices)
+	fake := &interactiontest.Fake{}
+	handleAutocomplete(context.Background(), nil, fake, nil, subInteraction("t-tree", "g", sub))
+	calls := fake.Calls()
+	if asked != "show=fri" || len(calls) != 1 || calls[0].Op != "Suggest" || len(calls[0].Choices) != 1 || calls[0].Choices[0].Name != "Frieren" {
+		t.Errorf("asked %q calls %+v, want the subcommand's autocomplete answered with one Suggest", asked, calls)
+	}
+}
+
+func TestAutocompleteWithNothingToOfferAnswersWithAnEmptyList(t *testing.T) {
+	fake := &interactiontest.Fake{}
+	handleAutocomplete(context.Background(), nil, fake, nil, subInteraction("t-missing", "g"))
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Op != "Suggest" || calls[0].Choices == nil || len(calls[0].Choices) != 0 {
+		t.Errorf("calls = %+v, want one Suggest with an empty, non-nil list", calls)
 	}
 }

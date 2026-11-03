@@ -3,7 +3,6 @@ package settings
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
@@ -111,16 +110,6 @@ func (f *fakeStore) write(set func(*guilds.GuildSettings)) error {
 	return nil
 }
 
-func (f *fakeStore) SetGuildSettings(_ context.Context, _ string, gs *guilds.GuildSettings) error {
-	if f.failSet != nil {
-		return f.failSet
-	}
-	f.sets++
-	c := *gs
-	f.gs = &c
-	return nil
-}
-
 func useStore(t *testing.T, st *fakeStore) {
 	t.Helper()
 	old := panelStoreOf
@@ -130,12 +119,9 @@ func useStore(t *testing.T, st *fakeStore) {
 
 func stored() *guilds.GuildSettings {
 	return &guilds.GuildSettings{
-		BotLogID:     &guilds.ChannelRef{Name: "logs", ID: "111"},
-		Donghua:      true,
-		PingMessage:  "Hello there",
-		ModOnly:      true,
-		ReactsModule: true,
-		CommandRoles: []guilds.Role{{ID: "r1"}},
+		BotLogID:    &guilds.ChannelRef{Name: "logs", ID: "111"},
+		Donghua:     true,
+		PingMessage: "Hello there",
 	}
 }
 
@@ -229,7 +215,7 @@ func TestSettingsCommandShape(t *testing.T) {
 		t.Errorf("/settings is %v %v, want private and deferred", c.Visibility, c.Response)
 	}
 	if c.Permission != commands.PermMod {
-		t.Error("/settings must keep the bot-side moderator check")
+		t.Error("/settings must be a mod command, which registers with Manage Server")
 	}
 	if c.Context != commands.ContextGuildOnly {
 		t.Error("/settings must be guild only")
@@ -331,7 +317,7 @@ func TestChoosingBotLogChannelChangesOnlyThatSetting(t *testing.T) {
 	if st.gs.BotLogID == nil || *st.gs.BotLogID != *want.BotLogID {
 		t.Errorf("bot log = %v, want %v", st.gs.BotLogID, want.BotLogID)
 	}
-	if st.gs.Donghua != want.Donghua || st.gs.PingMessage != want.PingMessage || st.gs.ModOnly != want.ModOnly || len(st.gs.CommandRoles) != 1 {
+	if st.gs.Donghua != want.Donghua || st.gs.PingMessage != want.PingMessage {
 		t.Errorf("other settings changed: %+v", st.gs)
 	}
 	call := lastCall(t, fake)
@@ -478,68 +464,41 @@ func TestBlankPingMessageIsRefused(t *testing.T) {
 	}
 }
 
-func TestNonModeratorsAreRefusedOnEveryComponent(t *testing.T) {
+// Discord gates /settings by its default member permissions and server overrides, so a press, choice or
+// submission is not re-checked by the bot: no guild fetch, no refusal, whatever the member's permissions. Each
+// press also has its effect, so a press that silently does nothing fails here.
+func TestPanelComponentsAreNotRecheckedByTheBot(t *testing.T) {
 	ch := &discordgo.Channel{ID: "222", Name: "x", Type: discordgo.ChannelTypeGuildText}
-	actions := map[string]func(*interactiontest.Fake) error{
-		"picker": func(f *interactiontest.Fake) error { return pick(t, f, member, idBotLog, ch) },
-		"clear":  func(f *interactiontest.Fake) error { return pick(t, f, member, idBotLog) },
-		"toggle": func(f *interactiontest.Fake) error { return click(t, f, member, idDonghua) },
-		"edit":   func(f *interactiontest.Fake) error { return click(t, f, member, idPingEdit) },
-		"form":   func(f *interactiontest.Fake) error { return submit(t, f, member, "hijacked") },
+	cases := map[string]struct {
+		act   func(*interactiontest.Fake) error
+		saved func(*guilds.GuildSettings) bool
+	}{
+		"picker": {func(f *interactiontest.Fake) error { return pick(t, f, member, idBotLog, ch) },
+			func(gs *guilds.GuildSettings) bool { return gs.BotLogID != nil && gs.BotLogID.ID == "222" }},
+		"toggle": {func(f *interactiontest.Fake) error { return click(t, f, member, idDonghua) },
+			func(gs *guilds.GuildSettings) bool { return !gs.Donghua }},
+		"edit": {func(f *interactiontest.Fake) error { return click(t, f, member, idPingEdit) },
+			func(gs *guilds.GuildSettings) bool { return true }}, // opens the form; nothing is saved yet
+		"form": {func(f *interactiontest.Fake) error { return submit(t, f, member, "new text") },
+			func(gs *guilds.GuildSettings) bool { return gs.PingMessage == "new text" }},
 	}
-	for name, act := range actions {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			st := &fakeStore{gs: stored()}
 			useStore(t, st)
-			fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{"g": {ID: "g", OwnerID: "someone-else"}}}
-			if err := act(fake); err != nil {
+			fake := &interactiontest.Fake{StallGuild: true}
+			if err := tc.act(fake); err != nil {
 				t.Fatal(err)
 			}
-			if st.sets != 0 {
-				t.Error("a non-moderator changed a setting")
-			}
-			calls := fake.Calls()
-			last := calls[len(calls)-1]
-			if last.Op != "Reply" || last.Visibility != interaction.Private || !strings.Contains(last.Response.Content, "You need") {
-				t.Errorf("last call = %s %v %q, want a private refusal", last.Op, last.Visibility, last.Response.Content)
-			}
-			for _, c := range calls {
-				if c.Op == "OpenForm" || c.Op == "UpdateMessage" {
-					t.Errorf("a non-moderator got %s", c.Op)
+			for _, c := range fake.Calls() {
+				if c.Op == "Guild" || c.Op == "Reply" || c.Op == "FollowUp" {
+					t.Errorf("calls = %v, want no permission lookup and no refusal", fake.Ops())
 				}
 			}
+			if !tc.saved(st.gs) {
+				t.Errorf("settings after the press = %+v, want the change applied", st.gs)
+			}
 		})
-	}
-}
-
-func TestGrantedRoleStillPassesTheRecheck(t *testing.T) {
-	gs := stored()
-	st := &fakeStore{gs: gs}
-	useStore(t, st)
-	fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{"g": {ID: "g", OwnerID: "someone-else"}}}
-	data := discordgo.MessageComponentInteractionData{CustomID: idDonghua}
-	ic := pressContext(fake, member, data)
-	ic.Interaction.Member.Roles = []string{"r1"}
-	if err := handlePanel(ic, nil); err != nil {
-		t.Fatal(err)
-	}
-	if st.gs.Donghua {
-		t.Error("a member with a granted role was refused")
-	}
-}
-
-func TestStalledModeratorCheckFailsClosed(t *testing.T) {
-	st := &fakeStore{gs: stored()}
-	useStore(t, st)
-	fake := &interactiontest.Fake{StallGuild: true}
-	if err := click(t, fake, member, idDonghua); err != nil {
-		t.Fatal(err)
-	}
-	if st.sets != 0 {
-		t.Error("a check that did not finish let the change through")
-	}
-	if call := lastCall(t, fake); call.Op != "Reply" || call.Visibility != interaction.Private || !strings.Contains(call.Response.Content, "in time") {
-		t.Errorf("last call = %s %q, want the private timeout message", call.Op, call.Response.Content)
 	}
 }
 
@@ -577,7 +536,6 @@ func TestFailedLoadOnPressChangesNothing(t *testing.T) {
 	st := &fakeStore{gs: stored(), failGet: errors.New("db down")}
 	useStore(t, st)
 	fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{"g": {ID: "g"}}}
-	// The moderator check needs no stored roles for a Manage Server member, so the load failure is the settings read.
 	if err := click(t, fake, moderator, idDonghua); err != nil {
 		t.Fatal(err)
 	}
@@ -608,15 +566,15 @@ func TestPanelSaveKeepsAWriteMadeAfterItsRead(t *testing.T) {
 			st.afterGet = func() {
 				st.afterGet = nil
 				gs := *st.gs
-				gs.CommandRoles = append(slices.Clone(gs.CommandRoles), guilds.Role{ID: "r2"})
+				gs.PingMessage = "written elsewhere"
 				st.gs = &gs
 			}
 			useStore(t, st)
 			if err := click(t, &interactiontest.Fake{}, moderator, id); err != nil {
 				t.Fatal(err)
 			}
-			if len(st.gs.CommandRoles) != 2 {
-				t.Errorf("a role added during the press was lost: %+v", st.gs.CommandRoles)
+			if st.gs.PingMessage != "written elsewhere" {
+				t.Errorf("a ping message written during the press was lost: %+v", st.gs)
 			}
 		})
 	}
@@ -628,7 +586,7 @@ func TestAPanelPressReadsTheGuildOncePerRender(t *testing.T) {
 	if err := click(t, &interactiontest.Fake{}, moderator, idDonghua); err != nil {
 		t.Fatal(err)
 	}
-	// One read before the change and one for the fresh panel; the moderator check reads settings separately.
+	// One read before the change and one for the fresh panel.
 	if st.guildReads != 2 {
 		t.Errorf("guild reads = %d, want 2", st.guildReads)
 	}

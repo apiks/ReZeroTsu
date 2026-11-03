@@ -26,7 +26,7 @@ func sampleCommands() []*commands.Command {
 		{Name: "subscription", Module: "schedule", Installs: both, Visibility: commands.Private, Response: commands.Deferred,
 			Subcommands: []*commands.Subcommand{{Name: "add", Desc: "Subscribe to a show.", Run: noRun}, {Name: "list", Desc: "List subscriptions.", Run: noRun}}},
 		slash("prune", "Delete messages.", "channel", commands.PermMod, nil),
-		slash("settings", "Server settings.", "settings", commands.PermAdmin, nil),
+		slash("settings", "Server settings.", "settings", commands.PermMod, nil),
 		slash("secret", "Owner only.", "general", commands.PermOwner, nil),
 		{Name: "Show avatar", Kind: commands.KindUser, Module: "general", Installs: both, Run: noRun, Visibility: commands.Public, Response: commands.Direct},
 	}

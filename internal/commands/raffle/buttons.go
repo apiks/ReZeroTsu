@@ -51,7 +51,7 @@ func init() {
 		Desc:       "Create and manage raffles.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
-		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
+		// Guard home: the moderator check is Discord's default member permissions (Manage Server) and server overrides.
 		// The Enter and Leave buttons are not commands, so any member can press them.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,

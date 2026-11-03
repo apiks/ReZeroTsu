@@ -111,8 +111,8 @@ func TestSayIsAPrivateDirectModCommandWithChannelAndEmbedOptions(t *testing.T) {
 	if cmd.Permission != commands.PermMod || cmd.Context != commands.ContextGuildOnly || cmd.Visibility != commands.Private || cmd.Response != commands.Direct {
 		t.Errorf("permission/context/visibility/response = %v/%v/%v/%v", cmd.Permission, cmd.Context, cmd.Visibility, cmd.Response)
 	}
-	if cmd.Run == nil || cmd.Handler != nil {
-		t.Errorf("/say must use the new handler form")
+	if cmd.Run == nil {
+		t.Errorf("/say must have a Run")
 	}
 	if len(cmd.Options) != 2 {
 		t.Fatalf("options = %+v", cmd.Options)

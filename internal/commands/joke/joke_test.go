@@ -65,7 +65,7 @@ func TestJokeFailuresAreRefusedPrivately(t *testing.T) {
 func TestJokeIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "joke" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("joke registration = %+v", c)
 			}
 			return

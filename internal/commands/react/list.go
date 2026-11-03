@@ -37,7 +37,7 @@ func init() {
 		Desc:       "Manage reaction roles.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
-		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
+		// Guard home: the moderator check is Discord's default member permissions (Manage Server) and server overrides.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "reacts",

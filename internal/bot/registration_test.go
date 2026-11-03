@@ -10,10 +10,57 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// modCommands are the commands ADR-0001 puts behind Manage Server; every other registered command is for everyone.
+var modCommands = map[string]bool{
+	"settings": true, "voicerole": true, "raffle": true, "reddit": true, "reactrole": true, "say": true, "prune": true,
+	"Add reaction role": true, "Remove reaction roles": true, "Edit message": true,
+}
+
 // userInstallable is the set of commands that work under a user install: the everyday commands and Show avatar.
 var userInstallable = map[string]bool{
 	"schedule": true, "subscription": true, "reminder": true, "roll": true, "pick": true, "joke": true,
 	"avatar": true, "help": true, "about": true, "invite": true, "ping": true, "Show avatar": true,
+}
+
+func TestRegistrationPayloadCarriesManageServerOnEveryModCommandOnly(t *testing.T) {
+	seen := map[string]bool{}
+	for _, d := range commands.Definitions() {
+		seen[d.Name] = true
+		got := d.DefaultMemberPermissions
+		if modCommands[d.Name] {
+			if got == nil || *got != discordgo.PermissionManageGuild {
+				t.Errorf("%q default member permissions = %v, want Manage Server", d.Name, got)
+			}
+		} else if got != nil {
+			t.Errorf("%q default member permissions = %d, want none for an everyone command", d.Name, *got)
+		}
+	}
+	for name := range modCommands {
+		if !seen[name] {
+			t.Errorf("mod command %q is not registered", name)
+		}
+	}
+	for _, gone := range []string{"add-moderator-role", "remove-moderator-role", "moderator-roles", "mod-only", "react-module"} {
+		if seen[gone] {
+			t.Errorf("removed command %q is still registered", gone)
+		}
+	}
+}
+
+// Discord's default member permission is the only gate on a mod command, and Discord does not apply it in bot DMs
+// or under a user install. A mod command therefore registers for servers only.
+func TestModCommandsRegisterForServersOnly(t *testing.T) {
+	for _, d := range commands.Definitions() {
+		if !modCommands[d.Name] {
+			continue
+		}
+		if d.Contexts == nil || !reflect.DeepEqual(*d.Contexts, []discordgo.InteractionContextType{discordgo.InteractionContextGuild}) {
+			t.Errorf("%q contexts = %v, want the server only", d.Name, d.Contexts)
+		}
+		if d.IntegrationTypes == nil || !reflect.DeepEqual(*d.IntegrationTypes, []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}) {
+			t.Errorf("%q install types = %v, want server install only", d.Name, d.IntegrationTypes)
+		}
+	}
 }
 
 func TestOnlyTheEverydayCommandsRegisterAsUserInstallable(t *testing.T) {

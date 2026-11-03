@@ -17,7 +17,7 @@ import (
 
 const (
 	// panelPrefix starts the custom ID of every component on the /settings panel and of its form. One handler
-	// owns the prefix, so each component re-runs the moderator check in one place.
+	// owns the prefix.
 	panelPrefix = "settings:"
 	idBotLog    = panelPrefix + "bot-log"
 	idDonghua   = panelPrefix + "donghua"
@@ -79,8 +79,8 @@ func init() {
 		Desc:       "View and change this server's settings.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
-		// Guard home: the bot-side moderator check that /bot-log, /donghua and /ping-message ran, until spec 7
-		// moves it to Discord's per-command permissions. Every component submission re-runs it in handlePanel.
+		// Guard home: the bot-side moderator check that /bot-log, /donghua and /ping-message ran is now Discord's
+		// default member permissions (Manage Server) and the server's overrides. Panel components are not re-checked.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "settings",
@@ -191,16 +191,15 @@ func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 
 // handlePanel handles every panel component and the ping-message form.
 // Guard homes, moved from /bot-log, /donghua and /ping-message:
-//   - the bot-side moderator check runs first, on every press, choice and submission, before the store is read
-//     (a lookup that does not finish refuses, see commands.ModeratorRefusal);
-//   - the guild-only context is part of that check, which refuses an interaction with no server;
+//   - the moderator check is Discord's: /settings registers with default member permissions of Manage Server, and
+//     a panel is private to the member who ran it, so a press, choice or submission is not re-checked;
+//   - the guild-only refusal of the old check has its home in the declarations: /settings is ContextGuildOnly with
+//     server install only (commands.Add enforces both for a mod command), and its panel exists only as a private
+//     message in a server, so a press without a server cannot reach this handler;
 //   - the "channel not found" refusal of /bot-log is bot-log choice's resolved-channel check;
 //   - the "could not load" and "could not save" answers are failedLoad and apply.
 func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {
 	store := panelStoreOf(ic.DB)
-	if msg := commands.ModeratorRefusal(ic, store); msg != "" {
-		return ic.Refuse(msg)
-	}
 	switch ic.CustomID {
 	case idBotLog:
 		return apply(ic, store, scopeBotLog, settingsChange(chooseBotLog))

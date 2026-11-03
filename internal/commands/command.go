@@ -26,14 +26,15 @@ const (
 	Deferred = interaction.Deferred
 )
 
-// PermissionLevel controls who can run a command.
+// PermissionLevel says who a command is for. Who may run a mod command is Discord's decision, not the bot's: a
+// mod command registers with default member permissions of Manage Server, and server admins grant it to other
+// roles, members or channels in Discord's command permissions (ADR-0001).
 type PermissionLevel int
 
 const (
-	PermEveryone PermissionLevel = iota // no check
-	PermMod                             // guild admin or moderator role (RequireGuildAdminOrMod)
-	PermAdmin                           // guild admin only (RequireGuildAdmin)
-	PermOwner                           // bot owner only
+	PermEveryone PermissionLevel = iota // registered with no default member permissions
+	PermMod                             // registered with default member permissions of Manage Server
+	PermOwner                           // bot owner only (prefix commands)
 )
 
 // BotRuntime provides guild/shard count and uptime for message commands.
@@ -65,13 +66,9 @@ func contextRefusal(ctx AllowedContext, guildID string) string {
 	return ""
 }
 
-// Command defines a slash command. Every command declares its Visibility and Response mode, and has exactly one
-// handler form:
-//   - Run, the new form: it receives the interaction context and reaches Discord only through its port. With
-//     Response Deferred the framework acknowledges first with the declared visibility; with Direct, Run's first
-//     reply is the acknowledgement.
-//   - Handler, the legacy form: it edits the deferred reply on the raw session, so it must be Deferred. Legacy
-//     commands are declared Public and Deferred until their area spec migrates them to Run.
+// Command defines a slash command. Every command declares its Visibility and Response mode, and a Run: it
+// receives the interaction context and reaches Discord only through its port. With Response Deferred the
+// framework acknowledges first with the declared visibility; with Direct, Run's first reply is the acknowledgement.
 //
 // A command is a slash command (Kind KindSlash, the default), a user right-click command (KindUser) or a message
 // right-click command (KindMessage). A slash command is either flat (Options and Run) or a group: Subcommands
@@ -88,9 +85,6 @@ type Command struct {
 	Groups      []*SubcommandGroup
 	Permission  PermissionLevel // default PermEveryone
 	Context     AllowedContext  // default ContextBoth
-	// DefaultMemberPermissions, when set, is registered as the command's default member permissions and wins
-	// over the one implied by Permission. Discord applies it to the whole top-level command.
-	DefaultMemberPermissions *int64
 	// Installs lists where the command can be installed. Nil registers it as server install only, whatever the
 	// application's own default install setting is. A command that lists user install also runs in private channels.
 	Installs []discordgo.ApplicationIntegrationType
@@ -99,7 +93,6 @@ type Command struct {
 	Visibility         interaction.Visibility
 	Response           interaction.ResponseMode
 	Run                func(ic *interaction.Context) error
-	Handler            func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate)
 	AutocompleteOption func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice
 }
 
@@ -238,13 +231,6 @@ func HandleMessageCommand(ctx context.Context, db *database.Client, s *discordgo
 	return true
 }
 
-var OwnerID string
-
-// SetOwnerID sets the bot owner ID for permission checks. Call once at startup.
-func SetOwnerID(id string) {
-	OwnerID = id
-}
-
 // AllCommands returns all registered commands sorted by name.
 func AllCommands() []*Command {
 	out := make([]*Command, 0, len(registry))
@@ -256,7 +242,7 @@ func AllCommands() []*Command {
 }
 
 // Add registers a command. Safe from init(). Panics if the command has no name, no visibility or response mode,
-// not exactly one handler form, or a legacy Handler that is not Deferred.
+// no Run on a command that is not a group.
 func Add(cmd *Command) {
 	if cmd == nil || cmd.Name == "" {
 		panic("commands: Add requires non-nil Command with Name")
@@ -270,19 +256,23 @@ func Add(cmd *Command) {
 	if cmd.Installs != nil && len(cmd.Installs) == 0 {
 		panic("commands: " + cmd.Name + " declares Installs but lists no install type")
 	}
+	// Discord's default member permission is the only gate on a mod command, and Discord does not apply it in bot
+	// DMs or under a user install. This is the home of the old bot-side refusal of interactions without a server.
+	if cmd.Permission == PermMod && (cmd.Context != ContextGuildOnly || slices.ContainsFunc(cmd.Installs, func(t discordgo.ApplicationIntegrationType) bool {
+		return t != discordgo.ApplicationIntegrationGuildInstall
+	})) {
+		panic("commands: " + cmd.Name + " is a mod command: it needs ContextGuildOnly and server install only")
+	}
 	if cmd.isGroup() {
 		validateGroup(cmd)
 		registry[cmd.Name] = cmd
 		return
 	}
-	if cmd.Kind != KindSlash && (cmd.Handler != nil || cmd.Desc != "" || len(cmd.Options) > 0) {
+	if cmd.Kind != KindSlash && (cmd.Desc != "" || len(cmd.Options) > 0) {
 		panic("commands: " + cmd.Name + " is a right-click command: it needs Run and no description or options")
 	}
-	if (cmd.Handler == nil) == (cmd.Run == nil) {
-		panic("commands: " + cmd.Name + " needs exactly one of Handler and Run")
-	}
-	if cmd.Handler != nil && cmd.Response != Deferred {
-		panic("commands: " + cmd.Name + " uses the legacy Handler, which edits the deferred reply, so it must be Deferred")
+	if cmd.Run == nil {
+		panic("commands: " + cmd.Name + " needs a Run")
 	}
 	registry[cmd.Name] = cmd
 }
@@ -293,8 +283,8 @@ func validateGroup(cmd *Command) {
 	if cmd.Kind != KindSlash {
 		panic("commands: " + cmd.Name + " is a right-click command and cannot have subcommands")
 	}
-	if cmd.Run != nil || cmd.Handler != nil || len(cmd.Options) > 0 {
-		panic("commands: " + cmd.Name + " has subcommands, so the command itself has no Run, Handler or Options")
+	if cmd.Run != nil || len(cmd.Options) > 0 {
+		panic("commands: " + cmd.Name + " has subcommands, so the command itself has no Run or Options")
 	}
 	check := func(s *Subcommand) {
 		if s == nil || s.Name == "" || s.Run == nil {
@@ -420,10 +410,10 @@ func contextsFor(ctx AllowedContext, installs []discordgo.ApplicationIntegration
 }
 
 func defaultMemberPermissionsForLevel(perm PermissionLevel) *int64 {
-	if perm != PermAdmin {
+	if perm != PermMod {
 		return nil
 	}
-	v := int64(discordgo.PermissionAdministrator)
+	v := int64(discordgo.PermissionManageGuild)
 	return &v
 }
 
@@ -453,23 +443,10 @@ func Definitions() []*discordgo.ApplicationCommand {
 		if defPerms := defaultMemberPermissionsForLevel(cmd.Permission); defPerms != nil {
 			c.DefaultMemberPermissions = defPerms
 		}
-		if cmd.DefaultMemberPermissions != nil {
-			c.DefaultMemberPermissions = cmd.DefaultMemberPermissions
-		}
 		defs = append(defs, c)
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
-}
-
-func RespondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) error {
-	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
 }
 
 const maxAutocompleteChoices = 25
@@ -492,8 +469,17 @@ func optionAllowsAutocomplete(options []*discordgo.ApplicationCommandOption, opt
 	return false
 }
 
-func handleAutocomplete(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	respondAutocompleteChoices(s, i, autocompleteChoices(ctx, db, s, i))
+// handleAutocomplete answers an autocomplete interaction through the port with the choices on offer, or an empty
+// list when nothing offers any.
+func handleAutocomplete(ctx context.Context, db *database.Client, port interaction.Port, s *discordgo.Session, i *discordgo.InteractionCreate) {
+	choices := autocompleteChoices(ctx, db, s, i)
+	if choices == nil {
+		choices = []*discordgo.ApplicationCommandOptionChoice{}
+	}
+	if err := port.Suggest(choices); err != nil {
+		args := append(discord.RESTAttrs(err), "command", i.ApplicationCommandData().Name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
+		logger.For("commands").Error("autocomplete respond failed", args...)
+	}
 }
 
 // autocompleteChoices asks the focused option's autocomplete for its choices: the subcommand's when the
@@ -525,18 +511,4 @@ func autocompleteChoices(ctx context.Context, db *database.Client, s *discordgo.
 		choices = choices[:maxAutocompleteChoices]
 	}
 	return choices
-}
-
-func respondAutocompleteChoices(s *discordgo.Session, i *discordgo.InteractionCreate, choices []*discordgo.ApplicationCommandOptionChoice) {
-	if choices == nil {
-		choices = []*discordgo.ApplicationCommandOptionChoice{}
-	}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
-		Data: &discordgo.InteractionResponseData{Choices: choices},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "command", i.ApplicationCommandData().Name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("autocomplete respond failed", args...)
-	}
 }

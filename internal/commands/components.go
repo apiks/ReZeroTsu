@@ -14,7 +14,7 @@ import (
 )
 
 // ComponentHandler handles a button press, a picker choice or a form submission. It reaches Discord through
-// ic. s is only for legacy page renderers that still need the raw session; new handlers ignore it.
+// ic. s is only for page renderers that still read through the raw session.
 type ComponentHandler func(ic *interaction.Context, s *discordgo.Session) error
 
 // componentRegistry maps a custom-ID prefix to its handler. Custom IDs carry only small identifiers, never user

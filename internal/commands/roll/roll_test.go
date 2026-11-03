@@ -60,7 +60,7 @@ func TestRollRefusesABadNumberPrivately(t *testing.T) {
 func TestRollIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "roll" {
-			if c.Run == nil || c.Handler != nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+			if c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
 				t.Errorf("roll registration = %+v", c)
 			}
 			return

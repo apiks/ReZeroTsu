@@ -36,7 +36,8 @@ const (
 // voiceStore is the part of the guild repository the voice role commands use.
 type voiceStore interface {
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
-	SetGuildSettings(ctx context.Context, guildID string, settings *guilds.GuildSettings) error
+	// SetVoiceChas writes the voice channel list alone; other settings, stored or not, stay as they are.
+	SetVoiceChas(ctx context.Context, guildID string, chas []guilds.VoiceCha) error
 }
 
 // voiceStoreOf picks the store of a database client; tests replace it.
@@ -48,7 +49,7 @@ func init() {
 		Response:   commands.Deferred,
 		Name:       "voicerole",
 		Desc:       "Give a role to members while they are in a voice channel.",
-		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
+		// Guard home: the moderator check is Discord's default member permissions (Manage Server) and server overrides.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "settings",
@@ -174,7 +175,7 @@ func runVoiceAdd(ic *interaction.Context) error {
 	if !merged {
 		settings.VoiceChas = append(settings.VoiceChas, guilds.VoiceCha{Name: ch.Name, ID: ch.ID, Roles: []guilds.Role{newRole}})
 	}
-	if err := store.SetGuildSettings(ic.Context(), ic.GuildID, settings); err != nil {
+	if err := store.SetVoiceChas(ic.Context(), ic.GuildID, settings.VoiceChas); err != nil {
 		return voiceFail(ic, err)
 	}
 	return voiceReply(ic, fmt.Sprintf("**Channel:** %s\n**Role:** %s\n\nUsers will get this role when they join the channel.",
@@ -232,7 +233,7 @@ func runVoiceRemove(ic *interaction.Context) error {
 	} else {
 		settings.VoiceChas = append(settings.VoiceChas[:channelIdx], settings.VoiceChas[channelIdx+1:]...)
 	}
-	if err := store.SetGuildSettings(ic.Context(), ic.GuildID, settings); err != nil {
+	if err := store.SetVoiceChas(ic.Context(), ic.GuildID, settings.VoiceChas); err != nil {
 		return voiceFail(ic, err)
 	}
 	if roleID != "" {
@@ -400,7 +401,7 @@ func handleVoiceRemovePicker(ic *interaction.Context, _ *discordgo.Session) erro
 		if len(settings.VoiceChas[m.ch].Roles) == 0 {
 			settings.VoiceChas = append(settings.VoiceChas[:m.ch], settings.VoiceChas[m.ch+1:]...)
 		}
-		if err := store.SetGuildSettings(ic.Context(), ic.GuildID, settings); err != nil {
+		if err := store.SetVoiceChas(ic.Context(), ic.GuildID, settings.VoiceChas); err != nil {
 			return voicePickerFailed(ic, "Could not save settings.", err)
 		}
 	}
