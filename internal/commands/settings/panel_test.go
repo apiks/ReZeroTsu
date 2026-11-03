@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,6 +22,8 @@ type fakeStore struct {
 	failGet error
 	failSet error
 	sets    int
+	// afterGet runs once after the settings are read, to stand for a write by another command in between.
+	afterGet func()
 
 	// autoposts is keyed by post type; deletedSubs lists the sent-state documents that were deleted, in order.
 	autoposts    map[string]*guilds.Autopost
@@ -65,7 +68,35 @@ func (f *fakeStore) GetGuildSettings(_ context.Context, _ string) (*guilds.Guild
 		return nil, f.failGet
 	}
 	c := *f.gs
+	if f.afterGet != nil {
+		f.afterGet()
+	}
 	return &c, nil
+}
+
+func (f *fakeStore) SetBotLog(_ context.Context, _ string, ref *guilds.ChannelRef) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.BotLogID = ref })
+}
+
+func (f *fakeStore) SetDonghua(_ context.Context, _ string, on bool) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.Donghua = on })
+}
+
+func (f *fakeStore) SetPingMessage(_ context.Context, _ string, text string) error {
+	return f.write(func(gs *guilds.GuildSettings) { gs.PingMessage = text })
+}
+
+// write applies one field to the stored settings, as the real targeted writes do: whatever else changed since
+// the panel read stays.
+func (f *fakeStore) write(set func(*guilds.GuildSettings)) error {
+	if f.failSet != nil {
+		return f.failSet
+	}
+	f.sets++
+	c := *f.gs
+	set(&c)
+	f.gs = &c
+	return nil
 }
 
 func (f *fakeStore) SetGuildSettings(_ context.Context, _ string, gs *guilds.GuildSettings) error {
@@ -538,5 +569,26 @@ func TestUnknownPanelComponentIsRefused(t *testing.T) {
 	}
 	if st.sets != 0 || lastCall(t, fake).Visibility != interaction.Private {
 		t.Error("an unknown component must be refused privately without saving")
+	}
+}
+
+func TestPanelSaveKeepsAWriteMadeAfterItsRead(t *testing.T) {
+	for name, id := range map[string]string{"donghua": idDonghua} {
+		t.Run(name, func(t *testing.T) {
+			st := &fakeStore{gs: stored()}
+			st.afterGet = func() {
+				st.afterGet = nil
+				gs := *st.gs
+				gs.CommandRoles = append(slices.Clone(gs.CommandRoles), guilds.Role{ID: "r2"})
+				st.gs = &gs
+			}
+			useStore(t, st)
+			if err := click(t, &interactiontest.Fake{}, moderator, id); err != nil {
+				t.Fatal(err)
+			}
+			if len(st.gs.CommandRoles) != 2 {
+				t.Errorf("a role added during the press was lost: %+v", st.gs.CommandRoles)
+			}
+		})
 	}
 }
