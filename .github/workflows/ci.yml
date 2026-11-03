@@ -17,13 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "gofmt would change:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: scripts/check.sh fmt
       - name: vet
         run: go vet ./...
       - name: test

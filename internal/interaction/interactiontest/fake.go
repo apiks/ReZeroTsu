@@ -27,8 +27,9 @@ type Call struct {
 
 // Fake is a recording interaction.Port. Reads answer from the maps; any operation named in Fail returns its error.
 type Fake struct {
-	mu    sync.Mutex
-	calls []Call
+	mu         sync.Mutex
+	calls      []Call
+	violations []string
 
 	Guilds   map[string]*discordgo.Guild
 	RoleSets map[string][]*discordgo.Role
@@ -66,6 +67,27 @@ func (f *Fake) Ops() []string {
 	return out
 }
 
+// reject fails the operation as Discord would when the payload breaks one of its limits, and keeps the reasons for
+// Violations. The call is not recorded, because Discord would not have sent it.
+func (f *Fake) reject(op string, problems []string) error {
+	if len(problems) == 0 {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range problems {
+		f.violations = append(f.violations, op+": "+p)
+	}
+	return fmt.Errorf("discord would reject %s: %s", op, problems[0])
+}
+
+// Violations returns every Discord limit a rejected payload broke, as "Op: reason".
+func (f *Fake) Violations() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.violations...)
+}
+
 func (f *Fake) record(c Call) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -74,29 +96,50 @@ func (f *Fake) record(c Call) error {
 }
 
 func (f *Fake) Reply(r interaction.Response) error {
+	if err := f.reject("Reply", violations(r)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "Reply", Response: r, Visibility: r.Visibility})
 }
 func (f *Fake) Defer(v interaction.Visibility) error {
 	return f.record(Call{Op: "Defer", Visibility: v})
 }
 func (f *Fake) EditReply(r interaction.Response) error {
+	if err := f.reject("EditReply", violations(r)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "EditReply", Response: r})
 }
 func (f *Fake) FollowUp(r interaction.Response) error {
+	if err := f.reject("FollowUp", violations(r)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "FollowUp", Response: r, Visibility: r.Visibility})
 }
 func (f *Fake) DeleteReply() error { return f.record(Call{Op: "DeleteReply"}) }
 func (f *Fake) OpenForm(form interaction.Form) error {
+	if err := f.reject("OpenForm", formViolations(form)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "OpenForm", Form: form})
 }
 func (f *Fake) UpdateMessage(r interaction.Response) error {
+	if err := f.reject("UpdateMessage", violations(r)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "UpdateMessage", Response: r})
 }
 func (f *Fake) Suggest(choices []*discordgo.ApplicationCommandOptionChoice) error {
+	if err := f.reject("Suggest", choiceViolations(choices)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "Suggest", Choices: choices})
 }
 
 func (f *Fake) PostMessage(channelID string, r interaction.Response) (*discordgo.Message, error) {
+	if err := f.reject("PostMessage", violations(r)); err != nil {
+		return nil, err
+	}
 	if err := f.record(Call{Op: "PostMessage", ChannelID: channelID, Response: r}); err != nil {
 		return nil, err
 	}
@@ -104,6 +147,9 @@ func (f *Fake) PostMessage(channelID string, r interaction.Response) (*discordgo
 }
 
 func (f *Fake) EditMessage(channelID, messageID string, r interaction.Response) error {
+	if err := f.reject("EditMessage", violations(r)); err != nil {
+		return err
+	}
 	return f.record(Call{Op: "EditMessage", ChannelID: channelID, MessageID: messageID, Response: r})
 }
 

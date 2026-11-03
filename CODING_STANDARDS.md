@@ -14,3 +14,5 @@ A change described as behaviour-preserving keeps every check the old code ran on
 ## Glossary vocabulary
 
 Names, comments and test titles use the terms in `GLOSSARY.md`. A term listed under its `_Avoid_` line is a finding, as is a coined synonym for a defined term.
+
+The archcheck rule `checkAvoidTerms` flags the Avoid terms that mean nothing else (such as "moderator role" and "giveaway") in identifiers and string literals. Review the rest: everyday words like "pick", "roll", "sub" and "cache", every comment and test title, and every user-facing sentence.

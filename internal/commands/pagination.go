@@ -137,11 +137,23 @@ var paginationRenderers = make(map[string]PageRenderer)
 // nothing.
 var copySafeRenderers = make(map[string]bool)
 
+// serverOnlyRenderers holds the commands whose view needs a server and a member.
+var serverOnlyRenderers = make(map[string]bool)
+
 // RegisterPaginationRenderer registers a page renderer for a command whose view is restricted (moderator setup,
 // someone's personal list): only the author pages it, anyone else gets msgOnlyAuthorPages. Call from init().
 func RegisterPaginationRenderer(cmd string, fn PageRenderer) {
 	paginationRenderers[cmd] = fn
 	delete(copySafeRenderers, cmd)
+	delete(serverOnlyRenderers, cmd)
+}
+
+// RegisterServerPaginationRenderer registers a restricted page renderer, as RegisterPaginationRenderer does, for a
+// view that exists only in a server: a press with no server or member is refused before anything renders. Call
+// from init().
+func RegisterServerPaginationRenderer(cmd string, fn PageRenderer) {
+	RegisterPaginationRenderer(cmd, fn)
+	serverOnlyRenderers[cmd] = true
 }
 
 // RegisterCopySafePaginationRenderer registers a page renderer for a command anyone may run, so another member's
@@ -149,6 +161,7 @@ func RegisterPaginationRenderer(cmd string, fn PageRenderer) {
 func RegisterCopySafePaginationRenderer(cmd string, fn PageRenderer) {
 	paginationRenderers[cmd] = fn
 	copySafeRenderers[cmd] = true
+	delete(serverOnlyRenderers, cmd)
 }
 
 func init() {
@@ -184,11 +197,8 @@ func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 	if !ok {
 		return ic.Refuse(msgInvalidButton)
 	}
-	switch cmd {
-	case "raffle", "reactrole", "reddit":
-		if ic.GuildID == "" || ic.Member == nil {
-			return ic.Refuse(msgFailedLoad)
-		}
+	if serverOnlyRenderers[cmd] && (ic.GuildID == "" || ic.Member == nil) {
+		return ic.Refuse(msgFailedLoad)
 	}
 	p := render(ic.Context(), ic.DB, s, &discordgo.InteractionCreate{Interaction: ic.Interaction}, page, total, authorID)
 	if p.Refusal != "" {

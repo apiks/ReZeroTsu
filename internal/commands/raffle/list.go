@@ -50,7 +50,7 @@ func listSubcommand() *commands.Subcommand {
 
 func init() {
 	// Restricted: the list and its picker belong to the moderator who ran it, so another member's press is refused.
-	commands.RegisterPaginationRenderer(pageKey, RenderRafflePage)
+	commands.RegisterServerPaginationRenderer(pageKey, RenderRafflePage)
 	commands.AddComponent(pickerPrefix, handleRemovePicker)
 }
 
