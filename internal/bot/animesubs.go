@@ -98,35 +98,87 @@ type userSubsStore interface {
 // keepRoster is the set of shows whose subscriptions the cleanup keeps: shows on this week's or next week's
 // timetable, on the upcoming list, or with a non-final entry last week (a break). Shows are held by route and by
 // anime_subs.MatchKey of their title.
+//
+// routes and keys hold what keeps a Sub subscription (the Sub chain's rows) and, for every subscription, the
+// upcoming list. A Dub or Raw member of a subscription's set is judged by its own strict rows in strict.
 type keepRoster struct {
+	routes map[string]struct{}
+	keys   map[string]struct{}
+	// upcoming holds the upcoming list, which keeps a subscription whatever its tracks.
+	upcoming showSet
+	strict   map[animeschedule.Track]*strictKeep
+}
+
+// strictKeep is what a Dub or Raw member keeps: the shows with a selected row this or next week or a non-final
+// latest row last week, and the shows with a row of the track in any loaded week (the track has started).
+type strictKeep struct {
+	airing, started showSet
+}
+
+// showSet holds shows by route and by match key of their title.
+type showSet struct {
 	routes map[string]struct{}
 	keys   map[string]struct{}
 }
 
-// keeps matches a subscription by its route when it has one, otherwise by its title's match key (ADR-0002).
-func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
-	if sub.Route != "" {
-		_, ok := r.routes[sub.Route]
+func newShowSet() showSet {
+	return showSet{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+}
+
+// has matches a show by its route when it has one, otherwise by its title's match key (ADR-0002).
+func (s showSet) has(route, title string) bool {
+	if route != "" {
+		_, ok := s.routes[route]
 		return ok
 	}
-	_, ok := r.keys[anime_subs.MatchKey(sub.Show)]
+	_, ok := s.keys[anime_subs.MatchKey(title)]
 	return ok
 }
 
-func (r keepRoster) add(route, title string) {
+func (s showSet) add(route, title string) {
 	if route != "" {
-		r.routes[route] = struct{}{}
+		s.routes[route] = struct{}{}
 	}
 	if key := anime_subs.MatchKey(title); key != "" {
-		r.keys[key] = struct{}{}
+		s.keys[key] = struct{}{}
 	}
+}
+
+// keeps reports whether the subscription is kept: the show is on the upcoming list, or some member of its set
+// keeps it. Sub keeps it by the Sub chain's rows; Dub and Raw by their own rows, or while the track has not started.
+func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
+	if r.upcoming.has(sub.Route, sub.Show) {
+		return true
+	}
+	set, _ := animeschedule.ParseSubscriptionTracks(sub.Tracks)
+	for _, m := range set.Members() {
+		if m == animeschedule.TrackSub {
+			if (showSet{routes: r.routes, keys: r.keys}).has(sub.Route, sub.Show) {
+				return true
+			}
+			continue
+		}
+		s := r.strict[m]
+		if s == nil {
+			continue
+		}
+		if s.airing.has(sub.Route, sub.Show) || !s.started.has(sub.Route, sub.Show) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r keepRoster) add(route, title string) {
+	showSet{routes: r.routes, keys: r.keys}.add(route, title)
 }
 
 // buildKeepRoster reads the loaded timetable weeks and the upcoming list. It reports false, and the cleanup must
 // delete nothing, unless the upcoming list has loaded and both this week's and next week's timetables have been
 // fetched since startup and hold entries: with either missing, a show that airs now could look finished.
 func buildKeepRoster() (keepRoster, bool) {
-	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}, upcoming: newShowSet(),
+		strict: map[animeschedule.Track]*strictKeep{}}
 	if !animeschedule.UpcomingLoaded() {
 		return r, false
 	}
@@ -144,8 +196,25 @@ func buildKeepRoster() (keepRoster, bool) {
 	for _, e := range animeschedule.OnBreak(weeks.Last) {
 		r.add(e.Route, e.Name)
 	}
+	for _, track := range []animeschedule.Track{animeschedule.TrackDub, animeschedule.TrackRaw} {
+		snap := animeschedule.SnapshotTrackWeeks(track)
+		s := &strictKeep{airing: newShowSet(), started: newShowSet()}
+		for _, e := range snap.This {
+			s.airing.add(e.Route, e.Name)
+		}
+		for _, e := range snap.Next {
+			s.airing.add(e.Route, e.Name)
+		}
+		for _, e := range animeschedule.OnBreak(snap.Last) {
+			s.airing.add(e.Route, e.Name)
+		}
+		for _, e := range snap.Started {
+			s.started.add(e.Route, e.Name)
+		}
+		r.strict[track] = s
+	}
 	for _, u := range animeschedule.UpcomingShows() {
-		r.add(u.Route, u.Name)
+		r.upcoming.add(u.Route, u.Name)
 	}
 	return r, true
 }

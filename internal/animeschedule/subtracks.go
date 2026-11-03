@@ -136,3 +136,40 @@ func selectFrom(date string, rows []ShowEntry, weeks map[showWeek]weekTracks, se
 	}
 	return out
 }
+
+// TrackWeekSnapshot is one strict track's rows (Dub or Raw, no fallback) in last week, this week and next week,
+// plus one row per show that has a row of the track in any loaded week.
+type TrackWeekSnapshot struct {
+	Last, This, Next []ShowEntry
+	Started          []ShowEntry
+}
+
+// SnapshotTrackWeeks reads the rows of one track around the shared clock's now. The daily cleanup uses it to judge
+// a Dub or Raw member of a subscription's set.
+func SnapshotTrackWeeks(track Track) TrackWeekSnapshot {
+	weeks := weekLayout(Now())
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	read := func(w timetableWeek) []ShowEntry {
+		var out []ShowEntry
+		for d := range 7 {
+			for _, e := range timetable[DateKey(w.monday.AddDate(0, 0, d))] {
+				if e.Track == track {
+					out = append(out, e)
+				}
+			}
+		}
+		return out
+	}
+	s := TrackWeekSnapshot{Last: read(weeks[0]), This: read(weeks[1]), Next: read(weeks[2])}
+	seen := map[string]bool{}
+	for _, date := range loadedDates() {
+		for _, e := range timetable[date] {
+			if e.Track == track && !seen[showID(e)] {
+				seen[showID(e)] = true
+				s.Started = append(s.Started, e)
+			}
+		}
+	}
+	return s
+}
