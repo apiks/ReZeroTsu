@@ -146,29 +146,53 @@ func subsFirstPageContent(list []*anime_subs.ShowSub, uid string) (desc string, 
 	return desc, components
 }
 
-// findShowIn returns the first show whose name matches input under anime_subs.MatchKey (case-insensitive and
-// trimmed like the notifier matches names), or the zero value and false if none.
+// findShowIn returns the show whose display title matches input under anime_subs.MatchKey (case-insensitive and
+// trimmed like the notifier matches names). Failing that, the first show whose romaji, English or native name
+// matches; a title cut to Discord's choice limit also matches. It returns the zero value and false if none.
 func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
 	key := anime_subs.MatchKey(input)
 	if key == "" {
 		return animeschedule.ShowEntry{}, false
 	}
 	for _, show := range shows {
-		if anime_subs.MatchKey(show.Name) == key {
+		if anime_subs.MatchKey(show.Name) == key || anime_subs.MatchKey(clip(show.Name)) == key {
 			return show, true
+		}
+	}
+	for _, show := range shows {
+		for _, n := range show.AllNames() {
+			if anime_subs.MatchKey(n) == key {
+				return show, true
+			}
 		}
 	}
 	return animeschedule.ShowEntry{}, false
 }
 
-// findShowByName returns the first airing ShowEntry matching name, or zero value and false if none.
+// findShowByName returns the airing ShowEntry matching name by any of its four names, or zero value and false.
 func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	for day := 0; day <= 6; day++ {
-		if show, ok := findShowIn(animeschedule.GetDayShows(day, true), name); ok {
-			return show, true
-		}
+	return findShowIn(animeschedule.AiringShows(), name)
+}
+
+// choiceName is the autocomplete label: "Title (English)" when the English name differs from the title, else the
+// title, cut to Discord's limit.
+func choiceName(e animeschedule.ShowEntry) string {
+	name := e.Name
+	if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
+		name = fmt.Sprintf("%s (%s)", e.Name, en)
 	}
-	return animeschedule.ShowEntry{}, false
+	return clip(name)
+}
+
+// autocompleteAdd offers this week's airing shows matched anywhere in any of their four names. A choice's value is
+// the display title, which is what subscriptions are keyed by.
+func autocompleteAdd(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
+	matched := commands.MatchAnywhere(animeschedule.AiringShows(), typed, animeschedule.ShowEntry.AllNames)
+	out := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(matched))
+	for _, e := range matched {
+		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: choiceName(e), Value: clip(e.Name)})
+	}
+	return out
 }
 
 // subsStore is the narrow persistence surface of the subscription commands. It deliberately has no

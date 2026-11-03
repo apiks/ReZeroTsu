@@ -219,6 +219,76 @@ func TestRemoveAutocompleteOffersOnlyTheInvokersSubscriptions(t *testing.T) {
 	}
 }
 
+func seedWeek(t *testing.T) {
+	t.Helper()
+	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{
+		1: {
+			{Name: "Sousou no Frieren", Route: "frieren", Romaji: "Sousou no Frieren", English: "Frieren: Beyond Journey's End", Native: "葬送のフリーレン"},
+			{Name: "Dandadan", Route: "dandadan", English: "Dandadan", Native: "ダンダダン"},
+		},
+		3: {{Name: "Sousou no Frieren", Route: "frieren", English: "Frieren: Beyond Journey's End"}},
+	}))
+}
+
+func addAutocomplete(t *testing.T, typed string) []*discordgo.ApplicationCommandOptionChoice {
+	t.Helper()
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Type: discordgo.InteractionApplicationCommandAutocomplete,
+		User: &discordgo.User{ID: "user"}}}
+	return subcommand(t, "add").AutocompleteOption(t.Context(), nil, nil, i, "anime", typed)
+}
+
+func TestAddAutocompletesAiringShowsByAnyOfTheirFourNames(t *testing.T) {
+	seedWeek(t)
+	for _, typed := range []string{"frieren", "BEYOND journey", "葬送", "sousou"} {
+		got := addAutocomplete(t, typed)
+		if len(got) != 1 || got[0].Value != "Sousou no Frieren" {
+			t.Errorf("typed %q: choices = %+v", typed, got)
+		}
+	}
+	if got := addAutocomplete(t, ""); len(got) != 2 {
+		t.Errorf("blank typed offered %d shows, want each airing show once", len(got))
+	}
+}
+
+func TestAddChoicesAreNamedTitleThenEnglishWhenTheyDiffer(t *testing.T) {
+	seedWeek(t)
+	if got := addAutocomplete(t, "frieren"); got[0].Name != "Sousou no Frieren (Frieren: Beyond Journey's End)" {
+		t.Errorf("name = %q", got[0].Name)
+	}
+	if got := addAutocomplete(t, "dandadan"); got[0].Name != "Dandadan" {
+		t.Errorf("name = %q, want the bare title when English matches it", got[0].Name)
+	}
+}
+
+func TestChoiceNameIsCutToDiscordsLimit(t *testing.T) {
+	long := strings.Repeat("x", 120)
+	if got := choiceName(animeschedule.ShowEntry{Name: "T", English: long}); len([]rune(got)) != 100 {
+		t.Errorf("length = %d", len([]rune(got)))
+	}
+}
+
+func TestAddResolvesATypedEnglishOrNativeName(t *testing.T) {
+	seedWeek(t)
+	for _, typed := range []string{"Frieren: Beyond Journey's End", "葬送のフリーレン"} {
+		st := newFakeStore()
+		useStore(t, st)
+		got := text(reply(t, invoke(t, "add", animeOption(typed)...)))
+		if !strings.Contains(got, "Success") || strings.Join(st.names("user"), ",") != "Sousou no Frieren" {
+			t.Errorf("typed %q: reply %q, subscriptions %v", typed, got, st.names("user"))
+		}
+	}
+}
+
+func TestAddWithAnExistingTitleKeyedSubscriptionIsAlreadySubscribed(t *testing.T) {
+	seedWeek(t)
+	st := newFakeStore().with("user", "Sousou no Frieren")
+	useStore(t, st)
+	got := text(reply(t, invoke(t, "add", animeOption("Frieren: Beyond Journey's End")...)))
+	if !strings.Contains(got, "already subscribed") || len(st.docs["user"]) != 1 {
+		t.Errorf("reply %q, subscriptions %v", got, st.names("user"))
+	}
+}
+
 func shows(n int) []string {
 	out := make([]string, n)
 	for i := range out {

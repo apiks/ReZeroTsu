@@ -228,6 +228,19 @@ func TestUnsubCoreRemovesLegacyTrimmedEntry(t *testing.T) {
 	}
 }
 
+func TestFindShowInResolvesAnyOfTheFourNamesAndPrefersTheTitle(t *testing.T) {
+	shows := []animeschedule.ShowEntry{
+		{Name: "Other", English: "Frieren"},
+		{Name: "Frieren", Romaji: "Sousou no Frieren"},
+		{Name: "Third", Native: "ダンダダン"},
+	}
+	for input, want := range map[string]string{"frieren": "Frieren", "SOUSOU NO FRIEREN": "Frieren", "ダンダダン": "Third"} {
+		if got, ok := findShowIn(shows, input); !ok || got.Name != want {
+			t.Errorf("findShowIn(%q) = %q, %v; want %q", input, got.Name, ok, want)
+		}
+	}
+}
+
 func TestFindShowIn(t *testing.T) {
 	shows := []animeschedule.ShowEntry{{Name: "Frieren "}, {Name: "Dandadan"}}
 	tests := []struct {
