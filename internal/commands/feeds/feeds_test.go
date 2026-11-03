@@ -20,8 +20,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// fakeStore is an in-memory feed list. RemoveFeed matches the way the real one does: an empty author or title
-// does not narrow the match.
+// fakeStore is an in-memory feed list. RemoveExactFeed matches whole entries only, as the real one does.
 type fakeStore struct {
 	feeds      []guilds.FeedEntry
 	checksGone []string
@@ -62,7 +61,7 @@ func (f *fakeStore) AddFeed(_ context.Context, _ string, feed guilds.FeedEntry) 
 func (f *fakeStore) SetFeedPin(_ context.Context, _ string, feed guilds.FeedEntry, pin bool) error {
 	f.pinCalls++
 	for i, g := range f.feeds {
-		if sameIdentity(g, feed) {
+		if g.SameIdentity(feed) {
 			f.feeds[i].Pin = pin
 		}
 	}
@@ -251,7 +250,7 @@ func TestAddRefusesBadInputBeforeAskingRedditOrSaving(t *testing.T) {
 		{"no subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1")}, "Pick a channel"},
 		{"blank subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "r/")}, "valid subreddit"},
 		{"bad characters", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "a b!")}, "letters, numbers"},
-		{"bad post type", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}, "hot, rising, new"},
+		{"bad sort", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}, "hot, rising, new"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

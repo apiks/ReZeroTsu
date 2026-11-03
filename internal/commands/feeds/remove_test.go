@@ -78,6 +78,41 @@ func TestRemoveByShortCodeRemovesExactlyThatFeedKeepingFilteredSiblings(t *testi
 	}
 }
 
+func TestRemovingAFilteredFeedKeepsTheDeliveryRecordsOfItsUnfilteredSibling(t *testing.T) {
+	plain := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}
+	filtered := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob"}
+	other := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "amy"}
+	st := useStore(t, plain, filtered, other)
+	invoke(t, "remove", strOpt("feed", shortCode(filtered)))
+	if !slices.Equal(st.feeds, []guilds.FeedEntry{plain, other}) {
+		t.Errorf("feeds = %+v", st.feeds)
+	}
+	if len(st.checksGone) != 0 {
+		t.Errorf("records forgotten %v although the unfiltered feed relies on them", st.checksGone)
+	}
+	// Two differently filtered feeds share nothing, so the last one with no unfiltered sibling forgets its records.
+	st.feeds = []guilds.FeedEntry{filtered, other}
+	invoke(t, "remove", strOpt("feed", shortCode(filtered)))
+	if !slices.Equal(st.checksGone, []string{"c1|anime|hot|bob|"}) {
+		t.Errorf("records forgotten %v", st.checksGone)
+	}
+}
+
+func TestSeveralFeedsRefusalStaysUnderDiscordsLimitForLongTitleFilters(t *testing.T) {
+	var feeds []guilds.FeedEntry
+	for _, c := range []string{"c1", "c2", "c3", "c4", "c5", "c6"} {
+		feeds = append(feeds, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: c, Title: strings.Repeat("t", 450)})
+	}
+	useStore(t, feeds...)
+	got := text(lastReply(t, invoke(t, "remove", strOpt("feed", "anime"))))
+	if n := len([]rune(got)); n > 2000 {
+		t.Errorf("reply is %d characters, Discord rejects over 2000", n)
+	}
+	if !strings.Contains(got, "and 1 more") || strings.Count(got, "r/anime (hot)") != 5 {
+		t.Errorf("reply lost its list: %q", got)
+	}
+}
+
 func TestRemoveByTypedSubredditWithOneFeedRemovesIt(t *testing.T) {
 	st := useStore(t)
 	for _, typed := range []string{"r/Anime", "anime"} {
