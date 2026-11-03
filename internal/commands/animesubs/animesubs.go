@@ -276,16 +276,18 @@ func seedMemory(sub *anime_subs.ShowSub, set animeschedule.SubscriptionTracks, n
 	}
 }
 
-// airedTodayEntry returns today's entry for the show with this route and title if it has already aired at nowUnix.
-// Entries are matched like the notifier does (ShowSub.Matches: by route when the show has one, else by title under
-// anime_subs.MatchKey), and the entry is today's own, so the seeded air time is today's even for a show the
-// schedule lists on several weekdays.
+// airedTodayEntry returns the latest of today's entries for the show with this route and title that has already
+// aired at nowUnix: the notifier's air-time rule then covers the earlier ones. Entries are matched like the
+// notifier does (ShowSub.Matches: by route when the show has one, else by title under anime_subs.MatchKey), and the
+// entry is today's own, so the seeded air time is today's even for a show the schedule lists on several weekdays.
 func airedTodayEntry(todayShows []animeschedule.ShowEntry, route, showName string, nowUnix int64) (animeschedule.ShowEntry, bool) {
 	sub := &anime_subs.ShowSub{Show: showName, Route: route}
+	var latest animeschedule.ShowEntry
+	found := false
 	for _, e := range todayShows {
-		if sub.Matches(e.Route, e.Name) && e.AirTimeUnix <= nowUnix {
-			return e, true
+		if sub.Matches(e.Route, e.Name) && e.AirTimeUnix <= nowUnix && (!found || e.AirTimeUnix > latest.AirTimeUnix) {
+			latest, found = e, true
 		}
 	}
-	return animeschedule.ShowEntry{}, false
+	return latest, found
 }

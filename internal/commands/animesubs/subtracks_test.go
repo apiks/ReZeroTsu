@@ -151,3 +151,38 @@ func TestAddSeedsSubFromTodaysRawFallbackRow(t *testing.T) {
 		}
 	}
 }
+
+func TestAddSeedsEachMemberWithItsLatestAiredRowToday(t *testing.T) {
+	withLookup(t, "Frieren")
+	first := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
+	second := time.Date(2026, 11, 4, 10, 30, 0, 0, time.UTC).Unix()
+	later := time.Date(2026, 11, 4, 13, 0, 0, 0, time.UTC).Unix()
+	seedAiredToday(t,
+		animeschedule.ShowEntry{Name: "Frieren", Track: animeschedule.TrackDub, Episode: "Ep 1", AirTimeUnix: first},
+		animeschedule.ShowEntry{Name: "Frieren", Track: animeschedule.TrackDub, Episode: "Ep 2", AirTimeUnix: second},
+		animeschedule.ShowEntry{Name: "Frieren", Track: animeschedule.TrackDub, Episode: "Ep 3", AirTimeUnix: later},
+	)
+	st := newFakeStore()
+	useStore(t, st)
+	invoke(t, "add", append(animeOption("Frieren"), trackOption("dub"))...)
+	if air, _ := st.docs["user"][0].Memory("dub"); air != second {
+		t.Errorf("dub memory = %d, want the latest aired row's %d, so Ep 2 is not DMed", air, second)
+	}
+}
+
+func TestReplaceSeedsANewMemberWithItsLatestAiredRowToday(t *testing.T) {
+	withLookup(t, "Frieren")
+	first := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC).Unix()
+	second := time.Date(2026, 11, 4, 10, 30, 0, 0, time.UTC).Unix()
+	seedAiredToday(t,
+		animeschedule.ShowEntry{Name: "Frieren", Track: animeschedule.TrackDub, Episode: "Ep 1", AirTimeUnix: first},
+		animeschedule.ShowEntry{Name: "Frieren", Track: animeschedule.TrackDub, Episode: "Ep 2", AirTimeUnix: second},
+	)
+	st := newFakeStore()
+	st.with("user", "Frieren")
+	useStore(t, st)
+	invoke(t, "add", append(animeOption("Frieren"), trackOption("sub_dub"))...)
+	if air, _ := st.docs["user"][0].Memory("dub"); air != second {
+		t.Errorf("dub memory = %d, want the latest aired row's %d", air, second)
+	}
+}

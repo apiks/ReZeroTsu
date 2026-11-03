@@ -46,10 +46,8 @@ func TestReaddWithTheSameSetStaysAlreadySubscribed(t *testing.T) {
 	st := newFakeStore()
 	useStore(t, st)
 	readd(t, st, "sub_dub")
-	for _, choice := range []string{"sub_dub"} {
-		if got := readd(t, st, choice); !strings.Contains(got, "You are already subscribed to `Frieren`.") {
-			t.Errorf("reply = %q", got)
-		}
+	if got := readd(t, st, "sub_dub"); !strings.Contains(got, "You are already subscribed to `Frieren`.") {
+		t.Errorf("reply = %q", got)
 	}
 	// A subscription stored without tracks is Sub, so re-adding the default is the same set.
 	st2 := newFakeStore().with("user", "Frieren")
@@ -92,6 +90,9 @@ func TestReplaceClearsStaleMemoryOfARejoiningMember(t *testing.T) {
 	readd(t, st, "dub")
 	if air, ep := st.docs["user"][0].Memory("dub"); air != 0 || ep != "" {
 		t.Errorf("dub memory = %d %q, want cleared: no dub aired today", air, ep)
+	}
+	if st.docs["user"][0].Notified {
+		t.Error("clearing a member's memory marked the subscription notified, as Mongo does not")
 	}
 }
 

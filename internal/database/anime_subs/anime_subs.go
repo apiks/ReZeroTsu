@@ -36,47 +36,84 @@ type ShowSub struct {
 	LastNotifiedRawEpisode string `bson:"last_notified_raw_episode,omitempty"`
 }
 
-// Mark is what one track member of a subscription last sent: the air time and the episode key.
+// Mark is what one track of a subscription's set last sent: the air time and the episode key.
 type Mark struct {
 	Track   string
 	AirUnix int64
 	Episode string
 }
 
-// Memory is what the named track member ("sub", "dub" or "raw") last sent; the Sub member's memory is the entry's
-// original fields.
-func (s *ShowSub) Memory(track string) (airUnix int64, episode string) {
-	switch track {
-	case "dub":
-		return s.LastNotifiedDubAirUnix, s.LastNotifiedDubEpisode
-	case "raw":
-		return s.LastNotifiedRawAirUnix, s.LastNotifiedRawEpisode
-	}
-	return s.LastNotifiedAirUnix, s.LastNotifiedEpisode
+// memorySlot is where one track's memory lives: its stored field names and its fields on a ShowSub.
+type memorySlot struct {
+	airField, episodeField string
+	fields                 func(*ShowSub) (air *int64, episode *string)
 }
 
-// Remember records m on the member it names and marks the entry notified.
+// memorySlots holds the slot of each track; the Sub track's memory is the entry's original fields, and a track
+// that is not dub or raw reads as Sub.
+var memorySlots = map[string]memorySlot{
+	"sub": {"last_notified_air_unix", "last_notified_episode",
+		func(s *ShowSub) (*int64, *string) { return &s.LastNotifiedAirUnix, &s.LastNotifiedEpisode }},
+	"dub": {"last_notified_dub_air_unix", "last_notified_dub_episode",
+		func(s *ShowSub) (*int64, *string) { return &s.LastNotifiedDubAirUnix, &s.LastNotifiedDubEpisode }},
+	"raw": {"last_notified_raw_air_unix", "last_notified_raw_episode",
+		func(s *ShowSub) (*int64, *string) { return &s.LastNotifiedRawAirUnix, &s.LastNotifiedRawEpisode }},
+}
+
+func slotOf(track string) memorySlot {
+	if slot, ok := memorySlots[track]; ok {
+		return slot
+	}
+	return memorySlots["sub"]
+}
+
+// Memory is what the named track ("sub", "dub" or "raw") last sent.
+func (s *ShowSub) Memory(track string) (airUnix int64, episode string) {
+	air, ep := slotOf(track).fields(s)
+	return *air, *ep
+}
+
+// Remember records m on the track it names and marks the entry notified.
 func (s *ShowSub) Remember(m Mark) {
 	s.Notified = true
-	switch m.Track {
-	case "dub":
-		s.LastNotifiedDubAirUnix, s.LastNotifiedDubEpisode = m.AirUnix, m.Episode
-	case "raw":
-		s.LastNotifiedRawAirUnix, s.LastNotifiedRawEpisode = m.AirUnix, m.Episode
-	default:
-		s.LastNotifiedAirUnix, s.LastNotifiedEpisode = m.AirUnix, m.Episode
+	air, episode := slotOf(m.Track).fields(s)
+	*air, *episode = m.AirUnix, m.Episode
+}
+
+// memoryFields are the stored field names of one track's memory.
+func memoryFields(track string) (air, episode string) {
+	slot := slotOf(track)
+	return slot.airField, slot.episodeField
+}
+
+// memorySet adds each mark's air time and episode key to set, under the stored field names of the entry matched by
+// the array filter "s".
+func memorySet(set bson.M, marks []Mark) {
+	for _, m := range marks {
+		air, episode := memoryFields(m.Track)
+		set["shows.$[s]."+air] = m.AirUnix
+		set["shows.$[s]."+episode] = m.Episode
 	}
 }
 
-// memoryFields are the stored field names of one member's memory.
-func memoryFields(track string) (air, episode string) {
-	switch track {
-	case "dub":
-		return "last_notified_dub_air_unix", "last_notified_dub_episode"
-	case "raw":
-		return "last_notified_raw_air_unix", "last_notified_raw_episode"
+// markShowNotifiedUpdate is the update that marks the show notified and writes each mark's memory.
+func markShowNotifiedUpdate(marks []Mark) bson.M {
+	set := bson.M{"shows.$[s].notified": true}
+	memorySet(set, marks)
+	return bson.M{"$set": set}
+}
+
+// setShowTracksUpdate is the update that replaces the show's stored track set and writes each mark's memory. Only a
+// mark with an air time marks the show notified; a zero mark clears stale memory.
+func setShowTracksUpdate(tracks string, marks []Mark) bson.M {
+	set := bson.M{"shows.$[s].tracks": tracks}
+	memorySet(set, marks)
+	for _, m := range marks {
+		if m.AirUnix != 0 {
+			set["shows.$[s].notified"] = true
+		}
 	}
-	return "last_notified_air_unix", "last_notified_episode"
+	return bson.M{"$set": set}
 }
 
 // AnimeSubs is an anime_subs document; key field is id (not _id).
@@ -187,14 +224,8 @@ func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks 
 	if len(marks) == 0 {
 		return nil
 	}
-	set := bson.M{"shows.$[s].notified": true}
-	for _, m := range marks {
-		air, episode := memoryFields(m.Track)
-		set["shows.$[s]."+air] = m.AirUnix
-		set["shows.$[s]."+episode] = m.Episode
-	}
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": set}, opts); err != nil {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, markShowNotifiedUpdate(marks), opts); err != nil {
 		return fmt.Errorf("MarkShowNotified: %w", err)
 	}
 	return nil
@@ -204,17 +235,8 @@ func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks 
 // and writes each given member's memory (the seed of a member newly in the set; a zero Mark clears stale memory),
 // in a single update statement. The show is matched by exact name. Members not named keep their memory.
 func (r *Repo) SetShowTracks(ctx context.Context, id, showName, tracks string, marks []Mark) error {
-	set := bson.M{"shows.$[s].tracks": tracks}
-	for _, m := range marks {
-		air, episode := memoryFields(m.Track)
-		set["shows.$[s]."+air] = m.AirUnix
-		set["shows.$[s]."+episode] = m.Episode
-		if m.AirUnix != 0 {
-			set["shows.$[s].notified"] = true
-		}
-	}
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": set}, opts); err != nil {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, setShowTracksUpdate(tracks, marks), opts); err != nil {
 		return fmt.Errorf("SetShowTracks: %w", err)
 	}
 	return nil
