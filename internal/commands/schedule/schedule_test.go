@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -47,14 +48,17 @@ func TestScheduleWithoutDayOpensTheUTCDayNotTheHostsLocalDay(t *testing.T) {
 	}
 }
 
-func runSchedule(t *testing.T, day string) *interactiontest.Fake {
+func runSchedule(t *testing.T, day string) *interactiontest.Fake { return runScheduleIn(t, day, "") }
+
+// runScheduleIn runs /schedule from the server guildID ("" for a DM).
+func runScheduleIn(t *testing.T, day, guildID string) *interactiontest.Fake {
 	t.Helper()
 	fake := &interactiontest.Fake{}
 	data := discordgo.ApplicationCommandInteractionData{Name: "schedule"}
 	if day != "" {
 		data.Options = []*discordgo.ApplicationCommandInteractionDataOption{{Name: "day", Type: discordgo.ApplicationCommandOptionString, Value: day}}
 	}
-	i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, ChannelID: "chan", Data: data, User: &discordgo.User{ID: "user"}}
+	i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, GuildID: guildID, ChannelID: "chan", Data: data, User: &discordgo.User{ID: "user"}}
 	ic := interaction.NewContext(fake, i, (*database.Client)(nil), interaction.Public, interaction.Deferred)
 	ic.Ctx = context.Background()
 	if err := ic.Defer(interaction.Public); err != nil {
@@ -203,22 +207,33 @@ func autocompleteDay(t *testing.T, typed string) []*discordgo.ApplicationCommand
 	return findCommand(t).AutocompleteOption(t.Context(), nil, nil, i, "day", typed)
 }
 
-func TestScheduleDayAutocompleteOffersTodayTomorrowThenSevenDatedDays(t *testing.T) {
+func TestScheduleDayAutocompleteOffersTodayTomorrowThenFiveDatedDays(t *testing.T) {
 	setClock(t) // Wednesday 2026-11-04
-	var names []string
+	var got []string
 	for _, c := range autocompleteDay(t, "") {
-		names = append(names, c.Name)
+		got = append(got, fmt.Sprintf("%s=%v", c.Name, c.Value))
 	}
-	want := []string{"Today", "Tomorrow", "Wednesday 4 Nov", "Thursday 5 Nov", "Friday 6 Nov", "Saturday 7 Nov", "Sunday 8 Nov", "Monday 9 Nov", "Tuesday 10 Nov"}
-	if strings.Join(names, "|") != strings.Join(want, "|") {
-		t.Errorf("choices = %v, want %v", names, want)
+	want := []string{"Today (Wednesday 4 Nov)=today", "Tomorrow (Thursday 5 Nov)=tomorrow", "Friday 6 Nov=2026-11-06", "Saturday 7 Nov=2026-11-07",
+		"Sunday 8 Nov=2026-11-08", "Monday 9 Nov=2026-11-09", "Tuesday 10 Nov=2026-11-10"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("choices = %v, want %v", got, want)
+	}
+}
+
+func TestScheduleDayAutocompleteFindsTodayByItsWeekdayAndDate(t *testing.T) {
+	setClock(t)
+	for _, typed := range []string{"wednesday", "4 nov"} {
+		got := autocompleteDay(t, typed)
+		if len(got) != 1 || got[0].Value != "today" {
+			t.Errorf("typing %q = %+v, want only Today", typed, got)
+		}
 	}
 }
 
 func TestScheduleDayAutocompleteFiltersAnywhereIgnoringCaseAndPickedValueResolves(t *testing.T) {
 	setClock(t)
 	if got := autocompleteDay(t, "NOV"); len(got) != 7 {
-		t.Fatalf("matching the month should keep the seven dated days, got %d", len(got))
+		t.Fatalf("matching the month should keep all seven choices, got %d", len(got))
 	}
 	got := autocompleteDay(t, "ues")
 	if len(got) != 1 || got[0].Name != "Tuesday 10 Nov" {

@@ -39,20 +39,38 @@ func parseNavCustomID(customID string) (date time.Time, authorID string, ok bool
 	if !found {
 		return time.Time{}, "", false
 	}
-	date, err := time.Parse("2006-01-02", day)
+	date, err := animeschedule.ParseDateKey(day)
 	if err != nil {
 		return time.Time{}, "", false
 	}
 	return date, authorID, true
 }
 
+// view is the instant and the loaded range one press or one command run works with, read once so the refusal,
+// the picker options and the disabled buttons agree even across a week rollover.
+type view struct {
+	now         time.Time
+	first, last time.Time
+}
+
+// currentView reads the clock once and derives the loaded range from it.
+func currentView() view {
+	now := animeschedule.Now()
+	first, last := animeschedule.LoadedRangeAt(now)
+	return view{now: now, first: first, last: last}
+}
+
+// holds reports whether the timetable holds date.
+func (v view) holds(date time.Time) bool {
+	return !date.Before(v.first) && !date.After(v.last)
+}
+
 // navComponents builds the Previous and Next buttons for the page of date. Previous is disabled on the first
 // loaded date and Next on the last.
-func navComponents(date time.Time, authorID string) []discordgo.MessageComponent {
-	first, last := animeschedule.LoadedRange()
+func navComponents(v view, date time.Time, authorID string) []discordgo.MessageComponent {
 	return []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{CustomID: navCustomID(date.AddDate(0, 0, -1), authorID), Label: "Previous", Style: discordgo.SecondaryButton, Disabled: !date.After(first)},
-		discordgo.Button{CustomID: navCustomID(date.AddDate(0, 0, 1), authorID), Label: "Next", Style: discordgo.SecondaryButton, Disabled: !date.Before(last)},
+		discordgo.Button{CustomID: navCustomID(date.AddDate(0, 0, -1), authorID), Label: "Previous", Style: discordgo.SecondaryButton, Disabled: !date.After(v.first)},
+		discordgo.Button{CustomID: navCustomID(date.AddDate(0, 0, 1), authorID), Label: "Next", Style: discordgo.SecondaryButton, Disabled: !date.Before(v.last)},
 	}}}
 }
 
@@ -64,11 +82,10 @@ const pickPrefix = "schedpick:"
 func pickerCustomID(authorID string) string { return pickPrefix + authorID }
 
 // pickerComponent builds the day picker: one option per loaded date, today marked, shown preselected.
-func pickerComponent(shown time.Time, authorID string) discordgo.MessageComponent {
-	first, last := animeschedule.LoadedRange()
-	today := animeschedule.DateKey(animeschedule.Today())
+func pickerComponent(v view, shown time.Time, authorID string) discordgo.MessageComponent {
+	today := animeschedule.DateKey(v.now)
 	var options []discordgo.SelectMenuOption
-	for d := first; !d.After(last); d = d.AddDate(0, 0, 1) {
+	for d := v.first; !d.After(v.last); d = d.AddDate(0, 0, 1) {
 		key := animeschedule.DateKey(d)
 		label := d.Format("Mon 2 Jan")
 		if key == today {
@@ -85,8 +102,8 @@ func pickerComponent(shown time.Time, authorID string) discordgo.MessageComponen
 }
 
 // pageComponents builds the controls of the page of date: the day picker above the Previous and Next buttons.
-func pageComponents(date time.Time, authorID string) []discordgo.MessageComponent {
-	return append([]discordgo.MessageComponent{pickerComponent(date, authorID)}, navComponents(date, authorID)...)
+func pageComponents(v view, date time.Time, authorID string) []discordgo.MessageComponent {
+	return append([]discordgo.MessageComponent{pickerComponent(v, date, authorID)}, navComponents(v, date, authorID)...)
 }
 
 // handlePick handles a choice in the day picker, by the same press rule as the buttons.
@@ -95,17 +112,11 @@ func handlePick(ic *interaction.Context, _ *discordgo.Session) error {
 	if !ok || len(ic.Values) != 1 {
 		return ic.Refuse(msgDayNotLoaded)
 	}
-	date, err := time.Parse("2006-01-02", ic.Values[0])
+	date, err := animeschedule.ParseDateKey(ic.Values[0])
 	if err != nil {
 		return ic.Refuse(msgDayNotLoaded)
 	}
-	return commands.RespondToPress(ic, authorID, renderPage(ic, date, authorID))
-}
-
-// inLoadedRange reports whether the timetable holds date.
-func inLoadedRange(date time.Time) bool {
-	first, last := animeschedule.LoadedRange()
-	return !date.Before(first) && !date.After(last)
+	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID))
 }
 
 // handleNav handles a press on a schedule navigation control: it opens the page of the date the control
@@ -115,11 +126,11 @@ func handleNav(ic *interaction.Context, _ *discordgo.Session) error {
 	if !ok {
 		return ic.Refuse(msgDayNotLoaded)
 	}
-	return commands.RespondToPress(ic, authorID, renderPage(ic, date, authorID))
+	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID))
 }
 
 // renderPage builds the page of date for the message of authorID, or a refusal when the date is not loaded.
-func renderPage(ic *interaction.Context, date time.Time, authorID string) commands.Page {
+func renderPage(ic *interaction.Context, v view, date time.Time, authorID string) commands.Page {
 	if !animeschedule.HasData() {
 		emb := commands.NewEmbedWithFields(nil, embedTitleUnavailable, msgTryAgainLater, nil)
 		return commands.Page{Response: interaction.Response{
@@ -127,12 +138,12 @@ func renderPage(ic *interaction.Context, date time.Time, authorID string) comman
 			Components: []discordgo.MessageComponent{},
 		}}
 	}
-	if !inLoadedRange(date) {
+	if !v.holds(date) {
 		return commands.Page{Refusal: msgDayNotLoaded}
 	}
 	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return commands.Page{Response: interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
-		Components: pageComponents(date, authorID),
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows)},
+		Components: pageComponents(v, date, authorID),
 	}}
 }

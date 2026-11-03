@@ -32,7 +32,7 @@ func seedWeeks(t *testing.T) {
 }
 
 func mustDate(s string) time.Time {
-	d, err := time.Parse("2006-01-02", s)
+	d, err := animeschedule.ParseDateKey(s)
 	if err != nil {
 		panic(err)
 	}
@@ -42,8 +42,14 @@ func mustDate(s string) time.Time {
 // pressNav presses a navigation button as user on msg and returns what the member saw.
 func pressNav(t *testing.T, customID, user string, msg *discordgo.Message) []interactiontest.Call {
 	t.Helper()
+	return pressNavIn(t, customID, user, "", msg)
+}
+
+// pressNavIn is pressNav from the server guildID.
+func pressNavIn(t *testing.T, customID, user, guildID string, msg *discordgo.Message) []interactiontest.Call {
+	t.Helper()
 	fake := &interactiontest.Fake{}
-	i := &discordgo.Interaction{Type: discordgo.InteractionMessageComponent, ChannelID: "chan", Message: msg, User: &discordgo.User{ID: user},
+	i := &discordgo.Interaction{Type: discordgo.InteractionMessageComponent, GuildID: guildID, ChannelID: "chan", Message: msg, User: &discordgo.User{ID: user},
 		Data: discordgo.MessageComponentInteractionData{CustomID: customID, ComponentType: discordgo.ButtonComponent}}
 	ic := interaction.NewContext(fake, i, (*database.Client)(nil), interaction.Private, interaction.Direct)
 	if err := handleNav(ic, nil); err != nil {
@@ -125,6 +131,24 @@ func TestPressForADateOutsideTheLoadedRangeIsRefusedPrivately(t *testing.T) {
 		calls := pressNav(t, "sched:"+day+":user", "user", publicMsg())
 		if len(calls) != 1 || calls[0].Visibility != interaction.Private || calls[0].Response.Content != msgDayNotLoaded {
 			t.Errorf("%s: want the private refusal %q, got %+v", day, msgDayNotLoaded, calls)
+		}
+	}
+}
+
+// /schedule accepts an ISO date only inside the loaded range: last week's Monday to next week's Sunday.
+func TestScheduleDayOutsideTheLoadedRangeIsRefusedPrivately(t *testing.T) {
+	seedWeeks(t)
+	for day, accepted := range map[string]bool{"2026-10-26": true, "2026-10-25": false, "2026-11-15": true, "2026-11-16": false, "2020-01-01": false} {
+		calls := runSchedule(t, day).Calls()
+		last := calls[len(calls)-1]
+		if accepted {
+			if last.Op != "EditReply" {
+				t.Errorf("%s: want the page, got %+v", day, calls)
+			}
+			continue
+		}
+		if len(calls) != 3 || calls[1].Op != "DeleteReply" || last.Op != "FollowUp" || last.Visibility != interaction.Private || last.Response.Content != msgDayNotOnTimetable {
+			t.Errorf("%s: want a private refusal %q, got last op %s with %d embeds", day, msgDayNotOnTimetable, last.Op, len(last.Response.Embeds))
 		}
 	}
 }

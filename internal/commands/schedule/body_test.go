@@ -1,11 +1,16 @@
 package schedule
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"ReZeroTsu/internal/animeschedule"
+	"ReZeroTsu/internal/database"
+	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
 
 	"github.com/bwmarrin/discordgo"
@@ -106,8 +111,8 @@ func TestScheduleOverlongPageIsCutAtAWholeLineWithMoreLink(t *testing.T) {
 		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("Show number %03d with a fairly long title", i), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}
 	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": shows})
-	if len(emb.Description) > discord.MaxEmbedDescriptionLength {
-		t.Fatalf("description is %d bytes, over the limit", len(emb.Description))
+	if u16(emb.Description) > discord.MaxEmbedDescriptionLength {
+		t.Fatalf("description is %d UTF-16 units, over the limit", u16(emb.Description))
 	}
 	lines := strings.Split(emb.Description, "\n")
 	last := lines[len(lines)-1]
@@ -126,15 +131,97 @@ func TestScheduleOverlongPageIsCutAtAWholeLineWithMoreLink(t *testing.T) {
 	}
 }
 
-func TestScheduleDonghuaSettingStillHidesDonghua(t *testing.T) {
-	setClock(t)
-	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{"2026-11-04": {
-		{Name: "Soul Land", AirTimeUnix: 1, Donghua: true, MediaType: animeschedule.MediaDonghua},
-		{Name: "Frieren", AirTimeUnix: 1},
-	}}))
-	shows := animeschedule.GetDayShows(animeschedule.Today(), false)
-	emb := BuildScheduleEmbed(animeschedule.Today(), shows)
-	if strings.Contains(emb.Description, "Soul Land") || !strings.Contains(emb.Description, "Frieren") {
-		t.Errorf("description = %q, want donghua hidden", emb.Description)
+// u16 is the length Discord counts: UTF-16 code units.
+func u16(s string) int { return len(utf16.Encode([]rune(s))) }
+
+func TestScheduleOverlongPageOfMultiByteTitlesCutsByCharactersNotBytes(t *testing.T) {
+	shows := make([]animeschedule.ShowEntry, 300)
+	lines := make([]string, len(shows))
+	for i := range shows {
+		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("魔法少女まどか☆マギカ 第%03d話 — 特別編", i), Episode: "Episode 1", AirType: "sub", AirTimeUnix: 1700000000}
+		lines[i] = scheduleLine(shows[i], false)
+	}
+	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": shows})
+	if n := u16(emb.Description); n > discord.MaxEmbedDescriptionLength {
+		t.Fatalf("description is %d UTF-16 units, over the limit", n)
+	}
+	got := strings.Split(emb.Description, "\n")
+	kept := len(got) - 1
+	// No whole line that fits was dropped: keeping one more would break the limit.
+	more := fmt.Sprintf("[… and %d more on AnimeSchedule.net](%s)", len(shows)-kept-1, animeschedule.BaseURL)
+	if next := u16(strings.Join(lines[:kept+1], "\n") + "\n" + more); next <= discord.MaxEmbedDescriptionLength {
+		t.Errorf("kept %d lines but %d UTF-16 units would still fit with one more", kept, next)
+	}
+}
+
+func TestScheduleDescriptionWhenNotEvenTheFirstLineFitsHasNoLeadingNewline(t *testing.T) {
+	got := scheduleDescription([]string{strings.Repeat("あ", 5000), "second"})
+	if strings.HasPrefix(got, "\n") || !strings.HasPrefix(got, "[… and 2 more") {
+		t.Errorf("description = %q, want only the linked count", got)
+	}
+	if u16(got) > discord.MaxEmbedDescriptionLength {
+		t.Errorf("description is %d units", u16(got))
+	}
+}
+
+func TestScheduleEmptyDayTextIsTrueWhereThereAreNoButtons(t *testing.T) {
+	emb := BuildScheduleEmbed(mustDate("2026-11-05"), mustDate("2026-11-04"), nil)
+	if strings.Contains(emb.Description, "buttons") || !strings.Contains(emb.Description, "/schedule") {
+		t.Errorf("description = %q, want a pointer to /schedule instead of the buttons", emb.Description)
+	}
+}
+
+// inServer runs the body with the server's settings lookup replaced and reports how often it was read.
+func inServer(t *testing.T, donghua bool, lookupErr error) *int {
+	t.Helper()
+	reads := 0
+	prev := guildSettings
+	guildSettings = func(context.Context, *database.Client, string) (*guilds.GuildSettings, error) {
+		reads++
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		return &guilds.GuildSettings{Donghua: donghua}, nil
+	}
+	t.Cleanup(func() { guildSettings = prev })
+	return &reads
+}
+
+func TestScheduleDonghuaSettingHidesDonghuaOnTheCommandAndOnPagePresses(t *testing.T) {
+	soulLand := animeschedule.ShowEntry{Name: "Soul Land", AirTimeUnix: 1, Donghua: true, MediaType: animeschedule.MediaDonghua}
+	frieren := animeschedule.ShowEntry{Name: "Frieren", AirTimeUnix: 1}
+	for _, tc := range []struct {
+		name       string
+		donghua    bool
+		lookupErr  error
+		wantHidden bool
+	}{
+		{"server hides donghua", false, nil, true},
+		{"server shows donghua", true, nil, false},
+		{"unreadable settings show donghua", false, errors.New("boom"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seedWeeks(t)
+			t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{"2026-11-04": {soulLand, frieren}, "2026-11-05": {soulLand, frieren}}))
+			reads := inServer(t, tc.donghua, tc.lookupErr)
+
+			calls := runScheduleIn(t, "wednesday", "guild").Calls()
+			check := func(where string, emb *discordgo.MessageEmbed) {
+				t.Helper()
+				if !strings.Contains(emb.Description, "Frieren") || strings.Contains(emb.Description, "Soul Land") != !tc.wantHidden {
+					t.Errorf("%s: description = %q, want donghua hidden=%v", where, emb.Description, tc.wantHidden)
+				}
+			}
+			check("/schedule", calls[len(calls)-1].Response.Embeds[0])
+			if *reads != 1 {
+				t.Errorf("/schedule read the server setting %d times, want 1", *reads)
+			}
+
+			press := pressNavIn(t, "sched:2026-11-05:user", "user", "guild", publicMsg())
+			check("page press", press[0].Response.Embeds[0])
+			if *reads != 2 {
+				t.Errorf("page press read the server setting %d times in total, want 2", *reads)
+			}
+		})
 	}
 }

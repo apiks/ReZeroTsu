@@ -177,7 +177,7 @@ func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
 		t.Fatalf("delivered = %+v, want one embed", got)
 	}
 	emb := got[0].Msg.Embeds[0]
-	want := schedule.BuildScheduleEmbed(animeschedule.Today(), h.fn(true))
+	want := schedule.BuildScheduleEmbed(animeschedule.Today(), animeschedule.Now(), h.fn(true))
 	if emb.Description != want.Description || emb.Footer.Text != want.Footer.Text || emb.Title != want.Title {
 		t.Errorf("posted %q / %q, want the /schedule body %q / %q", emb.Description, emb.Footer.Text, want.Description, want.Footer.Text)
 	}
@@ -188,8 +188,27 @@ func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
 	}
 }
 
+// A run that captured its instant just before UTC midnight posts that day's page with relative times, even if the
+// clock has crossed midnight by the time the page is built.
+func TestDailySchedulePageIsTodayForTheRunsCapturedInstant(t *testing.T) {
+	h := newScheduleHarness()
+	h.now = time.Date(2024, 3, 5, 23, 59, 59, 0, time.UTC)
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return h.now.Add(2 * time.Second) }))
+	if err := h.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := h.fd.deliveredTo("sch")
+	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
+		t.Fatalf("delivered = %+v, want one embed", got)
+	}
+	emb := got[0].Msg.Embeds[0]
+	if !strings.Contains(emb.Description, ":R>") {
+		t.Errorf("description %q lacks the relative time of the day being posted", emb.Description)
+	}
+}
+
 func scheduleEmbedFor(h *scheduleHarness) *discordgo.MessageEmbed {
-	return schedule.BuildScheduleEmbed(h.now, h.fn(true))
+	return schedule.BuildScheduleEmbed(h.now, h.now, h.fn(true))
 }
 
 func TestDailyScheduleWebhookGoneFallsBackOnce(t *testing.T) {

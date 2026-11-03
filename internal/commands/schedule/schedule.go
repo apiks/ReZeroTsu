@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
@@ -20,6 +21,7 @@ const (
 	msgNotConfigured      = "Schedule unavailable. API key is not configured."
 	msgTryAgainMinutes    = "Schedule temporarily unavailable. Try again in a few minutes."
 	msgTryAgainLater      = "Schedule temporarily unavailable. Try again later."
+	msgDayNotOnTimetable  = "That day isn't on the timetable. Pick one of the suggestions."
 	msgUnknownDay         = "I don't know that day. Pick a suggestion, or type a day like monday, tue or tomorrow."
 )
 
@@ -48,18 +50,20 @@ func init() {
 	})
 }
 
-// autocompleteScheduleDay offers Today, Tomorrow, then the next seven UTC days by date. A dated choice carries
-// its date key as the value, so a picked choice resolves to that date.
+// autocompleteScheduleDay offers Today and Tomorrow, each labelled with its date, then the five UTC days after
+// tomorrow by date. A dated choice carries its date key as the value, so a picked choice resolves to that date.
 func autocompleteScheduleDay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
 	today := animeschedule.Today()
+	label := func(d time.Time) string { return fmt.Sprintf("%s %s", dayNames[d.Weekday()], d.Format("2 Jan")) }
+	tomorrow := today.AddDate(0, 0, 1)
 	options := []*discordgo.ApplicationCommandOptionChoice{
-		{Name: "Today", Value: "today"},
-		{Name: "Tomorrow", Value: "tomorrow"},
+		{Name: "Today (" + label(today) + ")", Value: "today"},
+		{Name: "Tomorrow (" + label(tomorrow) + ")", Value: "tomorrow"},
 	}
-	for n := range 7 {
+	for n := 2; n < 7; n++ {
 		d := today.AddDate(0, 0, n)
 		options = append(options, &discordgo.ApplicationCommandOptionChoice{
-			Name:  fmt.Sprintf("%s %s", dayNames[d.Weekday()], d.Format("2 Jan")),
+			Name:  label(d),
 			Value: animeschedule.DateKey(d),
 		})
 	}
@@ -82,7 +86,7 @@ func resolveDay(input string, today time.Time) (time.Time, bool) {
 	if weekday := parseDay(input); weekday >= 0 {
 		return today.AddDate(0, 0, (weekday-int(today.Weekday())+7)%7), true
 	}
-	if d, err := time.Parse("2006-01-02", strings.TrimSpace(input)); err == nil {
+	if d, err := animeschedule.ParseDateKey(strings.TrimSpace(input)); err == nil {
 		return d, true
 	}
 	return time.Time{}, false
@@ -145,7 +149,7 @@ func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
 // that fit whole and ends with a linked count of the rest.
 func scheduleDescription(lines []string) string {
 	full := strings.Join(lines, "\n")
-	if len(full) <= discord.MaxEmbedDescriptionLength {
+	if utf16Len(full) <= discord.MaxEmbedDescriptionLength {
 		return full
 	}
 	more := func(n int) string {
@@ -153,25 +157,38 @@ func scheduleDescription(lines []string) string {
 	}
 	used, kept := 0, 0
 	for kept < len(lines) {
-		next := used + len(lines[kept]) + 1 // the line and its newline
-		if next+len(more(len(lines)-kept-1)) > discord.MaxEmbedDescriptionLength {
+		next := used + utf16Len(lines[kept]) + 1 // the line and its newline
+		if next+utf16Len(more(len(lines)-kept-1)) > discord.MaxEmbedDescriptionLength {
 			break
 		}
 		used = next
 		kept++
 	}
+	if kept == 0 {
+		return more(len(lines))
+	}
 	return strings.Join(lines[:kept], "\n") + "\n" + more(len(lines)-kept)
 }
 
+// utf16Len is the length of s in UTF-16 code units, the unit Discord counts embed text in.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
 // BuildScheduleEmbed builds the schedule page body for a UTC date and its show list. Both /schedule and the
-// daily-schedule autopost use it. Today's page adds live relative times.
-func BuildScheduleEmbed(date time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
+// daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC day adds live
+// relative times.
+func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	date = date.UTC()
 	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
-	onToday := animeschedule.DateKey(date) == animeschedule.DateKey(animeschedule.Now())
+	onToday := animeschedule.DateKey(date) == animeschedule.DateKey(now)
 
-	description := "No anime scheduled for this day. Use the buttons below to check other days."
+	description := "No anime scheduled for this day. Run " + commands.CommandMention("schedule") + " to check other days."
 	if len(shows) > 0 {
 		lines := make([]string, len(shows))
 		for i, e := range shows {
@@ -201,13 +218,16 @@ func BuildScheduleEmbed(date time.Time, shows []animeschedule.ShowEntry) *discor
 	return emb
 }
 
+// guildSettings reads a server's settings; tests replace it.
+var guildSettings = commands.GetSettings
+
 // donghuaSetting reports whether the server shows donghua. Where the bot has no server membership (DMs, and a
 // user install in a server it has not joined) there are no settings, and donghua is shown.
 func donghuaSetting(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
 	if !interaction.BotInGuild(i) {
 		return true
 	}
-	settings, err := commands.GetSettings(ctx, db, i.GuildID)
+	settings, err := guildSettings(ctx, db, i.GuildID)
 	if err == nil && settings != nil {
 		return settings.Donghua
 	}
@@ -223,18 +243,22 @@ func handleSchedule(ic *interaction.Context) error {
 		return ic.Refuse(msgTryAgainMinutes)
 	}
 
-	date := animeschedule.Today()
+	v := currentView()
+	date := animeschedule.DayOf(v.now)
 	if opt := commands.ParseOption(ic.Command.Options, "day"); opt != nil && opt.StringValue() != "" {
 		resolved, ok := resolveDay(opt.StringValue(), date)
 		if !ok {
 			return ic.Refuse(msgUnknownDay)
+		}
+		if !v.holds(resolved) {
+			return ic.Refuse(msgDayNotOnTimetable)
 		}
 		date = resolved
 	}
 
 	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
-		Components: pageComponents(date, ic.Invoker.ID),
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows)},
+		Components: pageComponents(v, date, ic.Invoker.ID),
 	})
 }

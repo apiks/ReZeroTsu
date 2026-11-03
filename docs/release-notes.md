@@ -2,6 +2,17 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Schedule UX (spec #78, tickets #88 to #91)
+
+- `/schedule` shows a day picker above Previous and Next. Pick any day of last week, this week or next week, or step with Previous and Next across week boundaries. Use the picker or buttons instead of re-running `/schedule` for another weekday.
+- The `day` option takes `today`, `tomorrow`, or a weekday name, which now means its next occurrence (today included). A weekday name no longer opens a day that has already passed; to see a past day, use the picker or pick it from the suggestions. The suggestions are Today and Tomorrow with their dates, then the next five days. A date outside the loaded weeks is refused with a private note.
+- The title carries the real date ("Wednesday, 4 Nov 2026"), and the footer says days run on UTC and times show in your time zone.
+- Today's page adds a relative time ("in 2 hours") next to each time. Other days show the time only.
+- Non-TV entries carry a label: TV Short, ONA, Donghua, OVA, Special or Movie.
+- A day with too many shows is cut at a whole line and ends with a link to AnimeSchedule.net with the count of the rest.
+- Buttons on schedule messages posted before this release now answer "That day is no longer on the timetable. Run /schedule again." Members must run `/schedule` again to get a working message.
+- The daily schedule autopost uses the same page body; an empty day tells members to run `/schedule`.
+
 ## Timetable alerts (spec #77)
 
 - Movie alerts (#84): the episode DM and the new-episodes autopost read "**Title** is out, subbed!" (or raw) for a movie instead of "Ep 1 subbed is out!". Other media types keep the episode wording.
