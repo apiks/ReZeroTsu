@@ -147,6 +147,9 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 	if w := mentionWarning(ic, data.newEpisodes); w != "" {
 		desc += "\n\n" + w
 	}
+	for _, w := range channelWarnings(ic, data.newEpisodes, data.dailySchedule) {
+		desc += "\n\n" + w
+	}
 	desc += "\n\n**" + labelPingMessage + "**\n" + string(ping)
 	return interaction.Response{
 		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleSettings, desc)},
