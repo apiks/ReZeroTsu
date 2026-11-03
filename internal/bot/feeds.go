@@ -637,13 +637,31 @@ func buildFeedEmbed(feed guilds.FeedEntry, item *gofeed.Item) *discordgo.Message
 	return emb
 }
 
+// permissionPinMessages is Discord's Pin Messages permission (bit 51); the pinned discordgo version predates it.
+const permissionPinMessages int64 = 1 << 51
+
+// handleFeedPinning pins messageID after unpinning the bot's older pins for the subreddit. It does nothing unless
+// the gateway state says the bot has Pin Messages on the channel. REST failures are logged, never returned.
 func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit string) {
-	perms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
-	if err != nil || perms&discordgo.PermissionManageMessages != discordgo.PermissionManageMessages {
+	if s.State == nil || s.State.User == nil {
 		return
+	}
+	perms, err := s.State.UserChannelPermissions(s.State.User.ID, channelID)
+	if err != nil || perms&permissionPinMessages != permissionPinMessages {
+		return
+	}
+	guildID := ""
+	if ch, err := s.State.Channel(channelID); err == nil {
+		s.State.RLock()
+		guildID = ch.GuildID
+		s.State.RUnlock()
+	}
+	warn := func(msg string, err error) {
+		logger.For("feeds").Warn(msg, append([]any{"guild_id", guildID, "channel_id", channelID, "subreddit", subreddit}, discord.RESTAttrs(err)...)...)
 	}
 	pins, err := s.ChannelMessagesPinned(channelID)
 	if err != nil {
+		warn("feed pin: could not list pinned messages", err)
 		return
 	}
 	time.Sleep(feedPinThrottle)
@@ -656,9 +674,13 @@ func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit str
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(pin.Embeds[0].Author.URL), strings.ToLower(prefix)) {
-			_ = s.ChannelMessageUnpin(channelID, pin.ID)
+			if err := s.ChannelMessageUnpin(channelID, pin.ID); err != nil {
+				warn("feed unpin failed", err)
+			}
 			time.Sleep(feedPinThrottle)
 		}
 	}
-	_ = s.ChannelMessagePin(channelID, messageID)
+	if err := s.ChannelMessagePin(channelID, messageID); err != nil {
+		warn("feed pin failed", err)
+	}
 }
