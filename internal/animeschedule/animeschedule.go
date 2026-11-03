@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -250,16 +251,98 @@ func AllEntries() []ShowEntry {
 	return out
 }
 
-// UpdateAnimeSchedule fetches timetables API, handles rate limits, updates cache.
+// timetableWeek is one ISO week of the loaded range: its Monday (midnight UTC) and ISO year and number.
+type timetableWeek struct {
+	monday time.Time
+	year   int
+	week   int
+}
+
+// loadedWeeks returns last week, this week and next week by the shared UTC clock.
+func loadedWeeks() []timetableWeek {
+	thisMonday := DateInWeek(time.Monday)
+	weeks := make([]timetableWeek, 0, 3)
+	for _, offset := range []int{-7, 0, 7} {
+		monday := thisMonday.AddDate(0, 0, offset)
+		year, week := monday.ISOWeek()
+		weeks = append(weeks, timetableWeek{monday: monday, year: year, week: week})
+	}
+	return weeks
+}
+
+// LoadedRange returns the first and last loaded UTC dates, as midnight UTC: last week's Monday and next week's
+// Sunday by the shared clock.
+func LoadedRange() (first, last time.Time) {
+	weeks := loadedWeeks()
+	return weeks[0].monday, weeks[len(weeks)-1].monday.AddDate(0, 0, 6)
+}
+
+// UpdateAnimeSchedule fetches last week, this week and next week from the timetables API (each by ISO year and
+// week, as a UTC week) and updates the cache. A week that fails to fetch keeps its previous entries.
 func UpdateAnimeSchedule(ctx context.Context, key string) {
 	if key == "" {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		setFetchErr(err)
-		logger.For("animeschedule").Error("NewRequest failed", "err", err)
+	weeks := loadedWeeks()
+	fetched := make(map[string][]ShowEntry, 21)
+	ok := make(map[time.Time]bool, len(weeks))
+	for _, w := range weeks {
+		if ctx.Err() != nil {
+			break
+		}
+		list, err := fetchWeek(ctx, key, w)
+		if err != nil {
+			setFetchErr(err)
+			continue
+		}
+		ok[w.monday] = true
+		for date, entries := range processTimetable(list) {
+			// An entry outside the week it was requested for never lands on a loaded date.
+			if t, perr := time.Parse("2006-01-02", date); perr == nil && !t.Before(w.monday) && t.Before(w.monday.AddDate(0, 0, 7)) {
+				fetched[date] = entries
+			}
+		}
+	}
+	if len(ok) == 0 {
 		return
+	}
+
+	first, last := LoadedRange()
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	newCache := make(map[string][]ShowEntry, len(cache))
+	for date, entries := range cache {
+		t, perr := time.Parse("2006-01-02", date)
+		if perr != nil || t.Before(first) || t.After(last) {
+			continue
+		}
+		monday := t.AddDate(0, 0, -((int(t.Weekday()) + 6) % 7))
+		if ok[monday] {
+			continue
+		}
+		newCache[date] = entries
+	}
+	for date, entries := range fetched {
+		newCache[date] = entries
+	}
+	cache = newCache
+	cachePopulated = true
+	if len(ok) == len(weeks) {
+		lastFetchErr = nil
+	}
+}
+
+// fetchWeek requests one timetable week, waiting for the rate-limit reset and retrying once on a 429.
+func fetchWeek(ctx context.Context, key string, w timetableWeek) ([]TimetableAnime, error) {
+	q := url.Values{}
+	q.Set("year", strconv.Itoa(w.year))
+	q.Set("week", strconv.Itoa(w.week))
+	q.Set("tz", "Etc/UTC")
+	reqURL := apiURL + "?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		logger.For("animeschedule").Error("NewRequest failed", "err", err)
+		return nil, err
 	}
 	req.Header.Set("User-Agent", httpclient.GetUserAgent())
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -267,9 +350,8 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 	client := newClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		setFetchErr(err)
 		logger.For("animeschedule").Error("Do failed", "err", err)
-		return
+		return nil, err
 	}
 	// Close whichever response is current when we return (the retry replaces resp).
 	defer func() { resp.Body.Close() }()
@@ -289,7 +371,7 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 					defer resetWait.Stop()
 					select {
 					case <-ctx.Done():
-						return
+						return nil, ctx.Err()
 					case <-resetWait.C:
 					}
 				}
@@ -298,43 +380,33 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 		if resp.StatusCode == http.StatusTooManyRequests {
 			// Retry once after reset
 			resp.Body.Close()
-			req2, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+			req2, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 			if err != nil {
-				setFetchErr(err)
 				logger.For("animeschedule").Error("NewRequestWithContext retry failed", "err", err)
-				return
+				return nil, err
 			}
 			req2.Header.Set("User-Agent", httpclient.GetUserAgent())
 			req2.Header.Set("Authorization", "Bearer "+key)
 			retryResp, err := client.Do(req2)
 			if err != nil {
-				setFetchErr(err)
 				logger.For("animeschedule").Error("Do retry failed", "err", err)
-				return
+				return nil, err
 			}
 			resp = retryResp
 		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		setFetchErr(fmt.Errorf("HTTP %d", resp.StatusCode))
-		logger.For("animeschedule").Error("HTTP request failed", "status_code", resp.StatusCode)
-		return
+		logger.For("animeschedule").Error("HTTP request failed", "status_code", resp.StatusCode, "year", w.year, "week", w.week)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	var list []TimetableAnime
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		setFetchErr(err)
 		logger.For("animeschedule").Error("Decode failed", "err", err)
-		return
+		return nil, err
 	}
-
-	newCache := processTimetable(list)
-	cacheMu.Lock()
-	cache = newCache
-	cachePopulated = true
-	lastFetchErr = nil
-	cacheMu.Unlock()
+	return list, nil
 }
 
 func setFetchErr(err error) {
