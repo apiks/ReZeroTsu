@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
@@ -21,6 +22,7 @@ const (
 	panelPrefix = "settings:"
 	idBotLog    = panelPrefix + "bot-log"
 	idDonghua   = panelPrefix + "donghua"
+	idTrack     = panelPrefix + "track"
 	idPingEdit  = panelPrefix + "ping-edit"
 	idPingForm  = panelPrefix + "ping-form"
 	// idPingText is the custom ID of the text box inside the ping-message form.
@@ -46,6 +48,7 @@ type settingsStore interface {
 	// The panel writes one setting at a time, so a write elsewhere between its read and its save is not lost.
 	SetBotLog(ctx context.Context, guildID string, ref *guilds.ChannelRef) error
 	SetDonghua(ctx context.Context, guildID string, on bool) error
+	SetPreferredTrack(ctx context.Context, guildID string, pref animeschedule.PreferredTrack) error
 	SetPingMessage(ctx context.Context, guildID, text string) error
 	// GetGuild is the single read behind a panel render: settings and autoposts together.
 	GetGuild(ctx context.Context, guildID string) (*guilds.Guild, error)
@@ -68,6 +71,7 @@ type scope int
 const (
 	scopeBotLog scope = iota
 	scopeDonghua
+	scopeTrack
 	scopePingMessage
 	scopeNewEpisodes
 	scopeDailySchedule
@@ -76,7 +80,7 @@ const (
 func init() {
 	commands.Add(&commands.Command{
 		Name:       "settings",
-		Desc:       "View and change this server's settings.",
+		Desc:       "View and change this server's settings, such as the preferred track.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
 		// Guard home: the bot-side moderator check that /bot-log, /donghua and /ping-message ran is now Discord's
@@ -143,7 +147,8 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 		"\n**New episodes channel:** " + off(autopostChannelID(data.newEpisodes), "Off", commands.ChannelMention) +
 		"\n**New episodes ping role:** " + off(autopostRoleID(data.newEpisodes), "None", commands.RoleMention) +
 		"\n**Daily schedule channel:** " + off(autopostChannelID(data.dailySchedule), "Off", commands.ChannelMention) +
-		"\n**Donghua in the schedule:** " + donghua
+		"\n**Donghua in the schedule:** " + donghua +
+		"\n**Preferred track:** " + gs.Preferred().Title()
 	if w := mentionWarning(ic, data.newEpisodes); w != "" {
 		desc += "\n\n" + w
 	}
@@ -180,7 +185,8 @@ func botLogRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{menu}}
 }
 
-// toggleRow is row 5: the donghua toggle labelled with its state, and the Edit ping message button.
+// toggleRow is row 5: the donghua toggle and the preferred-track button, each labelled with its state, and the
+// Edit ping message button.
 func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	donghua := discordgo.Button{Label: "Donghua: Off", Style: discordgo.SecondaryButton, CustomID: idDonghua}
 	if gs.Donghua {
@@ -188,6 +194,7 @@ func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	}
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{
 		donghua,
+		discordgo.Button{Label: "Track: " + gs.Preferred().Title(), Style: discordgo.SecondaryButton, CustomID: idTrack},
 		discordgo.Button{Label: "Edit ping message", Style: discordgo.SecondaryButton, CustomID: idPingEdit},
 	}}
 }
@@ -209,6 +216,11 @@ func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {
 	case idDonghua:
 		return apply(ic, store, scopeDonghua, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
 			gs.Donghua = !gs.Donghua
+			return ""
+		}))
+	case idTrack:
+		return apply(ic, store, scopeTrack, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
+			gs.PreferredTrack = gs.Preferred().Next().String()
 			return ""
 		}))
 	case idPingEdit:
@@ -318,6 +330,8 @@ func save(ctx context.Context, store settingsStore, guildID string, sc scope, d 
 		return store.SetBotLog(ctx, guildID, d.gs.BotLogID)
 	case scopeDonghua:
 		return store.SetDonghua(ctx, guildID, d.gs.Donghua)
+	case scopeTrack:
+		return store.SetPreferredTrack(ctx, guildID, d.gs.Preferred())
 	case scopePingMessage:
 		return store.SetPingMessage(ctx, guildID, d.gs.PingMessage)
 	}

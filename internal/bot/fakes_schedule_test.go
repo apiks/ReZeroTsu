@@ -44,7 +44,7 @@ type scheduleHarness struct {
 	fd  *fakeDiscord
 	st  *fakeSentState
 	now time.Time
-	fn  dayShowsFunc
+	fn  scheduleDayFunc
 }
 
 func newScheduleHarness(script ...step) *scheduleHarness {
@@ -56,7 +56,7 @@ func newScheduleHarness(script ...step) *scheduleHarness {
 	st.Autoposts[apKey("g1", postTypeDailySchedule)] = &guilds.Autopost{PostType: postTypeDailySchedule, ID: "sch"}
 	fd := newFakeDiscord(script...)
 	scheduleRetryWait = 0
-	return &scheduleHarness{d: fd, fd: fd, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }}
+	return &scheduleHarness{d: fd, fd: fd, st: st, now: now, fn: func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }}
 }
 
 func (h *scheduleHarness) run(ctx context.Context) error {

@@ -131,14 +131,11 @@ func handlePick(ic *interaction.Context, _ *discordgo.Session) error {
 		return ic.Refuse(msgDayNotLoaded)
 	}
 	authorID, pref, hasTrack := splitTrack(rest)
-	if !hasTrack {
-		pref = serverPreferredTrack(ic.Context(), ic.DB, ic.Interaction)
-	}
 	date, err := animeschedule.ParseDateKey(ic.Values[0])
 	if err != nil {
 		return ic.Refuse(msgDayNotLoaded)
 	}
-	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID, pref))
+	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID, carried(pref, hasTrack)))
 }
 
 // handleNav handles a press on a schedule navigation control: it opens the page of the date the control
@@ -148,14 +145,21 @@ func handleNav(ic *interaction.Context, _ *discordgo.Session) error {
 	if !ok {
 		return ic.Refuse(msgDayNotLoaded)
 	}
-	if !hasTrack {
-		pref = serverPreferredTrack(ic.Context(), ic.DB, ic.Interaction)
-	}
-	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID, pref))
+	return commands.RespondToPress(ic, authorID, renderPage(ic, currentView(), date, authorID, carried(pref, hasTrack)))
 }
 
-// renderPage builds the page of date under pref for the message of authorID, or a refusal when the date is not loaded.
-func renderPage(ic *interaction.Context, v view, date time.Time, authorID string, pref animeschedule.PreferredTrack) commands.Page {
+// carried is the track a control carries, or nil for a control from before tracks, which opens the server's
+// preferred track.
+func carried(pref animeschedule.PreferredTrack, hasTrack bool) *animeschedule.PreferredTrack {
+	if !hasTrack {
+		return nil
+	}
+	return &pref
+}
+
+// renderPage builds the page of date under the carried track (nil: the server's preferred track) for the message
+// of authorID, or a refusal when the date is not loaded.
+func renderPage(ic *interaction.Context, v view, date time.Time, authorID string, chosen *animeschedule.PreferredTrack) commands.Page {
 	if !animeschedule.HasData() {
 		emb := commands.NewEmbedWithFields(nil, embedTitleUnavailable, msgTryAgainLater, nil)
 		return commands.Page{Response: interaction.Response{
@@ -166,7 +170,7 @@ func renderPage(ic *interaction.Context, v view, date time.Time, authorID string
 	if !v.holds(date) {
 		return commands.Page{Refusal: msgDayNotLoaded}
 	}
-	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction), pref)
+	shows, pref := dayShows(ic, date, chosen)
 	return commands.Page{Response: interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
 		Components: pageComponents(v, date, authorID, pref),

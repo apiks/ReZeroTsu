@@ -224,33 +224,38 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// donghuaSetting reports whether the server shows donghua. Where the bot has no server membership (DMs, and a
-// user install in a server it has not joined) there are no settings, and donghua is shown.
-func donghuaSetting(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
+// serverSettings reads, in one lookup, whether the server shows donghua and its preferred track. Where the bot has
+// no server membership (DMs, and a user install in a server it has not joined) there are no settings; donghua is
+// shown and the track is Sub, as when the settings cannot be read.
+func serverSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction) (donghua bool, pref animeschedule.PreferredTrack) {
 	if !interaction.BotInGuild(i) {
-		return true
+		return true, animeschedule.PreferSub
 	}
 	settings, err := guildSettings(ctx, db, i.GuildID)
-	if err == nil && settings != nil {
-		return settings.Donghua
+	if err != nil || settings == nil {
+		return true, animeschedule.PreferSub
 	}
-	return true
+	return settings.Donghua, settings.Preferred()
 }
 
-// serverPreferredTrack reads the server's preferred track. The server setting does not exist yet, so it is Sub
-// everywhere, and a press on a message from before tracks opens Sub.
-func serverPreferredTrack(_ context.Context, _ *database.Client, _ *discordgo.Interaction) animeschedule.PreferredTrack {
-	return animeschedule.PreferSub
-}
-
-// trackOption reads the track option; omitted, it is the server's preferred track.
-func trackOption(ic *interaction.Context) animeschedule.PreferredTrack {
+// trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.
+func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
 		if pref, ok := animeschedule.ParsePreferredTrack(opt.StringValue()); ok {
-			return pref
+			return &pref
 		}
 	}
-	return serverPreferredTrack(ic.Context(), ic.DB, ic.Interaction)
+	return nil
+}
+
+// dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
+// and returns the track used.
+func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack) {
+	donghua, pref := serverSettings(ic.Context(), ic.DB, ic.Interaction)
+	if chosen != nil {
+		pref = *chosen
+	}
+	return animeschedule.GetDayShows(date, donghua, pref), pref
 }
 
 // handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.
@@ -275,8 +280,7 @@ func handleSchedule(ic *interaction.Context) error {
 		date = resolved
 	}
 
-	pref := trackOption(ic)
-	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction), pref)
+	shows, pref := dayShows(ic, date, trackOption(ic))
 	return ic.EditReply(interaction.Response{
 		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
 		Components: pageComponents(v, date, ic.Invoker.ID, pref),
