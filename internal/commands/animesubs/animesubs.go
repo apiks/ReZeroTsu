@@ -115,11 +115,11 @@ var showLookup = findShowByName
 func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
-		return "Please provide an anime name (exact romaji from /schedule or AnimeSchedule.net).", nil
+		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for this week's shows.", nil
 	}
 	show, ok := showLookup(animeInput)
 	if !ok {
-		return "That is not a valid airing show name. Use the exact romaji title from `/schedule` or AnimeSchedule.net.", nil
+		return "I could not find that airing show. Pick one of the suggestions or check the spelling, and see `/schedule` for this week's shows.", nil
 	}
 	showName := show.Name
 
@@ -177,6 +177,17 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	for _, sub := range doc.Shows {
 		if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(animeInput) {
 			stored = append(stored, sub.Show)
+		}
+	}
+	if len(stored) == 0 {
+		// An autocomplete choice carries the title cut to Discord's limit, as the Remove picker does.
+		for _, sub := range doc.Shows {
+			if sub != nil && anime_subs.MatchKey(clip(sub.Show)) == anime_subs.MatchKey(animeInput) {
+				stored = append(stored, sub.Show)
+			}
+		}
+		if len(stored) > 1 {
+			return fmt.Sprintf("That name matches more than one of your subscriptions, so none were removed: `%s`. Use the Remove picker from `/subscription list` to choose one.", strings.Join(stored, "`, `")), nil
 		}
 	}
 	if len(stored) == 0 {

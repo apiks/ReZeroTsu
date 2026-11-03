@@ -164,7 +164,7 @@ func TestAddRejectsAShowThatIsNotAiring(t *testing.T) {
 	st := newFakeStore()
 	useStore(t, st)
 	got := text(reply(t, invoke(t, "add", animeOption("nope")...)))
-	if !strings.Contains(got, "not a valid") || len(st.calls) != 0 {
+	if !strings.Contains(got, "could not find") || len(st.calls) != 0 {
 		t.Errorf("reply %q, calls %v", got, st.calls)
 	}
 }
