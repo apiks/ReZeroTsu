@@ -23,20 +23,21 @@ const (
 
 // TimetableAnime is one entry from the AnimeSchedule API timetables.
 type TimetableAnime struct {
-	Title             string    `json:"title"`
-	Romaji            string    `json:"romaji"`
-	English           string    `json:"english"`
-	Native            string    `json:"native"`
-	Route             string    `json:"route"`
-	EpisodeDate       time.Time `json:"episodeDate"`
-	EpisodeNumber     int       `json:"episodeNumber"`
-	Episodes          int       `json:"episodes"`
-	DelayedText       string    `json:"delayedText"`
-	DelayedFrom       time.Time `json:"delayedFrom"`
-	DelayedUntil      time.Time `json:"delayedUntil"`
-	Donghua           bool      `json:"donghua"`
-	AirType           string    `json:"airType"`
-	ImageVersionRoute string    `json:"imageVersionRoute"`
+	Title             string         `json:"title"`
+	Romaji            string         `json:"romaji"`
+	English           string         `json:"english"`
+	Native            string         `json:"native"`
+	Route             string         `json:"route"`
+	EpisodeDate       time.Time      `json:"episodeDate"`
+	EpisodeNumber     int            `json:"episodeNumber"`
+	Episodes          int            `json:"episodes"`
+	DelayedText       string         `json:"delayedText"`
+	DelayedFrom       time.Time      `json:"delayedFrom"`
+	DelayedUntil      time.Time      `json:"delayedUntil"`
+	Donghua           bool           `json:"donghua"`
+	AirType           string         `json:"airType"`
+	ImageVersionRoute string         `json:"imageVersionRoute"`
+	MediaTypes        []MediaTypeRef `json:"mediaTypes"`
 }
 
 type ShowEntry struct {
@@ -51,6 +52,7 @@ type ShowEntry struct {
 	Episode           string
 	Delayed           string
 	Donghua           bool
+	MediaType         MediaType
 	AirType           string
 	ImageVersionRoute string
 }
@@ -396,6 +398,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			Episode:           episodeStr,
 			Delayed:           delayed,
 			Donghua:           a.Donghua,
+			MediaType:         decodeMediaType(a.MediaTypes),
 			AirType:           airType,
 			ImageVersionRoute: a.ImageVersionRoute,
 		})
