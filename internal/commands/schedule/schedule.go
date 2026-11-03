@@ -20,7 +20,7 @@ const (
 	msgNotConfigured      = "Schedule unavailable. API key is not configured."
 	msgTryAgainMinutes    = "Schedule temporarily unavailable. Try again in a few minutes."
 	msgTryAgainLater      = "Schedule temporarily unavailable. Try again later."
-	msgCannotParseDay     = "Cannot parse that day."
+	msgUnknownDay         = "I don't know that day. Pick a suggestion, or type a day like monday, tue or tomorrow."
 )
 
 var dayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
@@ -30,7 +30,7 @@ func init() {
 		Visibility: commands.Public,
 		Response:   commands.Deferred,
 		Name:       "schedule",
-		Desc:       "Shows today's (or a given day's) anime release times (subbed where possible).",
+		Desc:       "Shows anime release times for today, tomorrow or a given day (subbed where possible).",
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
 		Installs:   commands.BothInstalls(),
@@ -38,7 +38,7 @@ func init() {
 			{
 				Type:         discordgo.ApplicationCommandOptionString,
 				Name:         "day",
-				Description:  "The target day (e.g. monday, tue, sat). Omit for today.",
+				Description:  "A day: today, tomorrow, or a weekday like monday or tue (its next occurrence). Omit for today.",
 				Required:     false,
 				Autocomplete: true,
 			},
@@ -48,16 +48,44 @@ func init() {
 	})
 }
 
+// autocompleteScheduleDay offers Today, Tomorrow, then the next seven UTC days by date. A dated choice carries
+// its date key as the value, so a picked choice resolves to that date.
 func autocompleteScheduleDay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	names := commands.MatchAnywhere(dayNames, focusedValue, func(n string) []string { return []string{n} })
-	if len(names) == 0 {
-		names = dayNames
+	today := animeschedule.Today()
+	options := []*discordgo.ApplicationCommandOptionChoice{
+		{Name: "Today", Value: "today"},
+		{Name: "Tomorrow", Value: "tomorrow"},
 	}
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(names))
-	for _, name := range names {
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
+	for n := range 7 {
+		d := today.AddDate(0, 0, n)
+		options = append(options, &discordgo.ApplicationCommandOptionChoice{
+			Name:  fmt.Sprintf("%s %s", dayNames[d.Weekday()], d.Format("2 Jan")),
+			Value: animeschedule.DateKey(d),
+		})
 	}
-	return choices
+	matched := commands.MatchAnywhere(options, focusedValue, func(c *discordgo.ApplicationCommandOptionChoice) []string { return []string{c.Name} })
+	if len(matched) == 0 {
+		return options
+	}
+	return matched
+}
+
+// resolveDay maps the day option to a UTC date, as midnight UTC. It accepts today, tomorrow, a weekday name
+// (its next occurrence, today included) and a date key such as an autocomplete choice carries.
+func resolveDay(input string, today time.Time) (time.Time, bool) {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "today":
+		return today, true
+	case "tomorrow":
+		return today.AddDate(0, 0, 1), true
+	}
+	if weekday := parseDay(input); weekday >= 0 {
+		return today.AddDate(0, 0, (weekday-int(today.Weekday())+7)%7), true
+	}
+	if d, err := time.Parse("2006-01-02", strings.TrimSpace(input)); err == nil {
+		return d, true
+	}
+	return time.Time{}, false
 }
 
 // parseDay maps input to weekday 0=Sunday..6=Saturday; -1 if invalid.
@@ -197,11 +225,11 @@ func handleSchedule(ic *interaction.Context) error {
 
 	date := animeschedule.Today()
 	if opt := commands.ParseOption(ic.Command.Options, "day"); opt != nil && opt.StringValue() != "" {
-		weekday := parseDay(opt.StringValue())
-		if weekday < 0 || weekday > 6 {
-			return ic.Refuse(msgCannotParseDay)
+		resolved, ok := resolveDay(opt.StringValue(), date)
+		if !ok {
+			return ic.Refuse(msgUnknownDay)
 		}
-		date = animeschedule.DateInWeek(time.Weekday(weekday))
+		date = resolved
 	}
 
 	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
