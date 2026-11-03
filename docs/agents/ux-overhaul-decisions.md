@@ -9,7 +9,7 @@ Input for `/to-spec`. This log records the decisions from a grilling session on 
 - `default_member_permissions` and admin overrides apply per top-level command, not per subcommand.
 - Admin overrides attach to command IDs. Bulk overwrite keeps the ID of a command whose name is unchanged. A renamed command gets a new ID and loses its overrides.
 - A bot token cannot set command permission overrides. That needs a user OAuth token.
-- discordgo v0.29.0 supports modals, Label, select menus in modals, Components V2, integration types and interaction contexts.
+- discordgo v0.29.0 supports modals, Components V2, integration types and interaction contexts, but not Label: a submitted form that contains a Label fails to decode and the interaction is dropped. discordgo's main branch (2026-02) decodes Label and File Upload, so ticket #69 moves the module to a pinned commit.
 - Context menu commands: up to 15 per type since 2026-03-03.
 - Modal text inputs hold at most 4000 characters. An embed description holds 4096.
 - AnimeSchedule timetable entries carry `title`, `romaji`, `english` and `native`. The bot decodes only `title`.
