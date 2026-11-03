@@ -301,6 +301,12 @@ func TestRemovedModeratorSettingsAreNotReferenced(t *testing.T) {
 	}
 }
 
+func TestGlossaryAvoidTermsAreNotUsedInNames(t *testing.T) {
+	for _, v := range scanTree(t, "..", checkAvoidTerms) {
+		t.Error(v)
+	}
+}
+
 func TestShowNamesAreComparedWithMatchKey(t *testing.T) {
 	for _, dir := range []string{"../bot", "../commands/animesubs"} {
 		for _, v := range scanDir(t, dir, checkShowNameMatching) {
@@ -357,6 +363,10 @@ func init() {
 		"\tCommandRoles []string `bson:\"command_roles\"`\n" +
 		"}\n\n" +
 		"func f(gs *GuildSettings) bool { return gs.ModOnly }\n"
+	const avoiding = "package settings\n\n" +
+		"// ModeratorRole may be named in a comment.\n" +
+		"const prefix = \"command-role:\"\n\n" +
+		"func f(giveawayID string) { _ = \"fine\" }\n"
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "sample.go", src, 0)
@@ -384,6 +394,8 @@ func init() {
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 		{"removed moderator settings are flagged in code and tags, not comments", moderating, checkRemovedModeratorSettings, "x.go", 3},
 		{"unrelated code is not a removed moderator setting", clean, checkRemovedModeratorSettings, "x.go", 0},
+		{"glossary Avoid terms are flagged in names and strings, not comments", avoiding, checkAvoidTerms, "x.go", 2},
+		{"unrelated code has no Avoid term", clean, checkAvoidTerms, "x.go", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -393,4 +405,40 @@ func init() {
 			}
 		})
 	}
+}
+
+// avoidTerms are the GLOSSARY.md `_Avoid_` terms that mean nothing else in this codebase, written lowercase with
+// separators removed. Words that are also everyday code (pick, roll, check, cache, sub) stay a judgement call in
+// CODING_STANDARDS.md.
+var avoidTerms = []string{"moderatorrole", "modrole", "commandrole", "giveaway", "lottery"}
+
+var avoidSeparators = strings.NewReplacer("_", "", "-", "", " ", "", ":", "")
+
+// checkAvoidTerms reports identifiers and string literals that contain a glossary Avoid term. Comments are not
+// scanned, so a comment may still quote the old name.
+func checkAvoidTerms(fset *token.FileSet, file *ast.File, name string) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		var text string
+		switch n := n.(type) {
+		case *ast.Ident:
+			text = n.Name
+		case *ast.BasicLit:
+			if n.Kind != token.STRING {
+				return true
+			}
+			text = n.Value
+		default:
+			return true
+		}
+		folded := strings.ToLower(avoidSeparators.Replace(text))
+		for _, term := range avoidTerms {
+			if strings.Contains(folded, term) {
+				out = append(out, fmt.Sprintf("%s:%d: %q contains the glossary Avoid term %q; use the term GLOSSARY.md defines", name, fset.Position(n.Pos()).Line, text, term))
+				break
+			}
+		}
+		return true
+	})
+	return out
 }
