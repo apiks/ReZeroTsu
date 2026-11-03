@@ -140,3 +140,31 @@ func TestControlsFromBeforeTracksOpenTheServersPreferredTrack(t *testing.T) {
 		t.Errorf("old picker = %q, want the Sub view", picked[0].Response.Embeds[0].Description)
 	}
 }
+
+func TestTrackedControlsFollowThePressRuleAndKeepTheRefusal(t *testing.T) {
+	seedFrieren(t)
+	id := "sched:2026-11-03:author:dub"
+
+	own := pressNav(t, id, "author", publicMsg())
+	if len(own) != 1 || own[0].Op != "UpdateMessage" || !strings.Contains(own[0].Response.Embeds[0].Description, "Ep 2 DUB") {
+		t.Errorf("author's dub press = %+v, want the message replaced with the dub view", own)
+	}
+	other := pressNav(t, id, "stranger", publicMsg())
+	if len(other) != 1 || other[0].Op != "Reply" || other[0].Visibility != interaction.Private || !strings.Contains(other[0].Response.Embeds[0].Description, "Ep 2 DUB") {
+		t.Errorf("other member's dub press = %+v, want a private dub copy", other)
+	}
+	copyPick := choosePick(t, "schedpick:author:dub", "2026-11-03", "stranger", publicMsg())
+	if len(copyPick) != 1 || copyPick[0].Op != "Reply" || copyPick[0].Visibility != interaction.Private || !strings.Contains(copyPick[0].Response.Embeds[0].Description, "Ep 2 DUB") {
+		t.Errorf("other member's dub pick = %+v, want a private dub copy", copyPick)
+	}
+
+	for _, refused := range [][]interactiontest.Call{
+		pressNav(t, "sched:2030-01-01:author:dub", "author", publicMsg()),
+		choosePick(t, "schedpick:author:dub", "2030-01-01", "author", publicMsg()),
+	} {
+		last := refused[len(refused)-1]
+		if last.Visibility != interaction.Private || last.Response.Content != msgDayNotLoaded {
+			t.Errorf("unloaded day = %+v, want the private refusal %q", refused, msgDayNotLoaded)
+		}
+	}
+}
