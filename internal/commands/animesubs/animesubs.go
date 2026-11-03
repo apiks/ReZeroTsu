@@ -39,12 +39,12 @@ func clipListTitle(title string) string {
 func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
 	var b strings.Builder
 	end := min(start+discord.MaxEmbedFields, len(list))
-	entries, upcoming, now := animeschedule.AllEntries(), animeschedule.UpcomingShows(), animeschedule.Now()
+	upcoming, now := animeschedule.UpcomingShows(), animeschedule.Now()
 	for j := start; j < end; j++ {
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(entries, upcoming, list[j].Route, list[j].Show, subTracks(list[j]), now).listStatus())
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(loadTimetable(subTracks(list[j])), upcoming, list[j].Route, list[j].Show, subTracks(list[j]), now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
@@ -179,7 +179,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	if set != animeschedule.SubscribeSub {
 		desc = fmt.Sprintf("Subscribed to **%s** (%s).", showName, set.Title())
 	}
-	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, set, now).confirmationLine(); line != "" {
+	if line := findNextEpisode(loadTimetable(set), animeschedule.UpcomingShows(), show.Route, showName, set, now).confirmationLine(); line != "" {
 		desc += "\n" + line
 	}
 	return desc, true, nil
