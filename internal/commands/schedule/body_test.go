@@ -24,7 +24,7 @@ func openDay(t *testing.T, day string, days map[string][]animeschedule.ShowEntry
 
 func TestScheduleTitleCarriesThePagesUTCDateForEveryWeekday(t *testing.T) {
 	want := map[string]string{
-		"sunday": "Sunday, 8 Nov 2026", "monday": "Monday, 2 Nov 2026", "tuesday": "Tuesday, 3 Nov 2026",
+		"sunday": "Sunday, 8 Nov 2026", "monday": "Monday, 9 Nov 2026", "tuesday": "Tuesday, 10 Nov 2026",
 		"wednesday": "Wednesday, 4 Nov 2026", "thursday": "Thursday, 5 Nov 2026", "friday": "Friday, 6 Nov 2026",
 		"saturday": "Saturday, 7 Nov 2026",
 	}

@@ -99,8 +99,9 @@ func TestPreviousOnAMondayOpensTheSundayBefore(t *testing.T) {
 	seedWeeks(t)
 	prev, _ := buttons(t, openNavDay(t, "monday"))
 	calls := pressNav(t, prev.CustomID, "user", publicMsg())
-	if title := calls[0].Response.Embeds[0].Title; !strings.HasPrefix(title, "Sunday, 1 Nov 2026") {
-		t.Errorf("title = %q, want Sunday 1 Nov", title)
+	// "monday" on Wednesday 4 Nov is the coming Monday, 9 Nov; the Sunday before it is 8 Nov.
+	if title := calls[0].Response.Embeds[0].Title; !strings.HasPrefix(title, "Sunday, 8 Nov 2026") {
+		t.Errorf("title = %q, want Sunday 8 Nov", title)
 	}
 }
 
