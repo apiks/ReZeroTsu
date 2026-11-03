@@ -420,16 +420,22 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 
 	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
 	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
+	// A subscription with a route is matched only by that route; one without is matched by its title's match key
+	// (ADR-0002).
+	subByRoute := make(map[string]*anime_subs.ShowSub)
 	subByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
 		if sub == nil {
 			continue
 		}
-		key := anime_subs.MatchKey(sub.Show)
-		if cur, ok := subByShow[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
+		index, key := subByShow, anime_subs.MatchKey(sub.Show)
+		if sub.Route != "" {
+			index, key = subByRoute, sub.Route
+		}
+		if cur, ok := index[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
 			continue
 		}
-		subByShow[key] = sub
+		index[key] = sub
 	}
 
 	var dmID string
@@ -449,9 +455,23 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
+		sub, ok := subByRoute[show.Route]
 		if !ok {
-			continue
+			if sub, ok = subByShow[anime_subs.MatchKey(show.Name)]; !ok {
+				continue
+			}
+			// A title match records the route, so a later rename of the show still matches.
+			if show.Route != "" {
+				if routeErr := detachedWrite(ctx, func(wctx context.Context) error {
+					return st.SetUserShowRoute(wctx, userID, sub.Show, show.Route)
+				}); routeErr != nil {
+					logger.For("animesubs").Error("save subscription route failed", "user_id", userID, "title", sub.Show, "err", routeErr)
+				} else {
+					sub.Route = show.Route
+					delete(subByShow, anime_subs.MatchKey(sub.Show))
+					subByRoute[show.Route] = sub
+				}
+			}
 		}
 		epKey := episodeKey(show)
 		if userShowAlreadyNotified(sub, show, epKey) {

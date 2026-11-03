@@ -12,7 +12,10 @@ import (
 )
 
 type ShowSub struct {
-	Show                string `bson:"show"`
+	Show string `bson:"show"`
+	// Route is the AnimeSchedule route of the show; optional (legacy documents lack it). Matching trusts it over
+	// the title (ADR-0002).
+	Route               string `bson:"route,omitempty"`
 	Notified            bool   `bson:"notified"`
 	Guild               bool   `bson:"guild"`
 	LastNotifiedAirUnix int64  `bson:"last_notified_air_unix,omitempty"`
@@ -114,6 +117,19 @@ func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, airUni
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
 	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
 		return fmt.Errorf("MarkShowNotified: %w", err)
+	}
+	return nil
+}
+
+// SetShowRoute records route on the named show, only where it has none yet, in a single update statement.
+func (r *Repo) SetShowRoute(ctx context.Context, id, showName, route string) error {
+	update := bson.M{"$set": bson.M{"shows.$[s].route": route}}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{
+		"s.show":  showName,
+		"s.route": bson.M{"$in": bson.A{nil, ""}},
+	}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+		return fmt.Errorf("SetShowRoute: %w", err)
 	}
 	return nil
 }

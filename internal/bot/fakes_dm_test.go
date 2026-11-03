@@ -27,6 +27,22 @@ func (f *fakeSentState) MarkUserShowNotified(_ context.Context, id, showName str
 	return nil
 }
 
+func (f *fakeSentState) SetUserShowRoute(_ context.Context, id, showName, route string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.AnimeSubs[id]
+	if !ok {
+		return nil
+	}
+	// Exact name match, only where no route is stored, like the production array filter.
+	for _, s := range d.Shows {
+		if s != nil && s.Show == showName && s.Route == "" {
+			s.Route = route
+		}
+	}
+	return nil
+}
+
 // collapseUserShows applies to the stored document the collapse documented on
 // anime_subs.Repo.CollapseDuplicateShows: nil and nameless entries are dropped and, per CollapseKey, the entry
 // with the greatest last-notified air time is kept (ties going to the later entry) at the first one's position.
