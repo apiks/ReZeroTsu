@@ -162,6 +162,9 @@ func (f *Fake) DeleteMessages(channelID string, messageIDs []string) error {
 func (f *Fake) remove(channelID, messageID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.History[channelID] == nil {
+		return
+	}
 	kept := f.History[channelID][:0:0]
 	for _, m := range f.History[channelID] {
 		if m.ID != messageID {
