@@ -28,21 +28,23 @@ const (
 
 // TimetableAnime is one entry from the AnimeSchedule API timetables.
 type TimetableAnime struct {
-	Title             string         `json:"title"`
-	Romaji            string         `json:"romaji"`
-	English           string         `json:"english"`
-	Native            string         `json:"native"`
-	Route             string         `json:"route"`
-	EpisodeDate       time.Time      `json:"episodeDate"`
-	EpisodeNumber     int            `json:"episodeNumber"`
-	Episodes          int            `json:"episodes"`
-	DelayedText       string         `json:"delayedText"`
-	DelayedFrom       time.Time      `json:"delayedFrom"`
-	DelayedUntil      time.Time      `json:"delayedUntil"`
-	Donghua           bool           `json:"donghua"`
-	AirType           string         `json:"airType"`
-	ImageVersionRoute string         `json:"imageVersionRoute"`
-	MediaTypes        []MediaTypeRef `json:"mediaTypes"`
+	Title         string    `json:"title"`
+	Romaji        string    `json:"romaji"`
+	English       string    `json:"english"`
+	Native        string    `json:"native"`
+	Route         string    `json:"route"`
+	EpisodeDate   time.Time `json:"episodeDate"`
+	EpisodeNumber int       `json:"episodeNumber"`
+	// SubtractedEpisodeNumber is the lowest episode of several that air together; 0 when unset.
+	SubtractedEpisodeNumber int            `json:"subtractedEpisodeNumber"`
+	Episodes                int            `json:"episodes"`
+	DelayedText             string         `json:"delayedText"`
+	DelayedFrom             time.Time      `json:"delayedFrom"`
+	DelayedUntil            time.Time      `json:"delayedUntil"`
+	Donghua                 bool           `json:"donghua"`
+	AirType                 string         `json:"airType"`
+	ImageVersionRoute       string         `json:"imageVersionRoute"`
+	MediaTypes              []MediaTypeRef `json:"mediaTypes"`
 }
 
 type ShowEntry struct {
@@ -544,9 +546,12 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 	for _, a := range list {
 		date := DateKey(a.EpisodeDate)
 		episodeStr := fmt.Sprintf("Ep %d", a.EpisodeNumber)
+		if a.SubtractedEpisodeNumber > 0 && a.SubtractedEpisodeNumber < a.EpisodeNumber {
+			episodeStr = fmt.Sprintf("Ep %d-%d", a.SubtractedEpisodeNumber, a.EpisodeNumber)
+		}
 		final := false
 		if a.Episodes > 0 && a.EpisodeNumber >= a.Episodes {
-			episodeStr = fmt.Sprintf("Ep %dF", a.EpisodeNumber)
+			episodeStr += "F"
 			final = true
 		}
 		delayed := ""
