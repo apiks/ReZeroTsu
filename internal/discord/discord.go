@@ -14,6 +14,7 @@ const (
 	UnknownRoleCode         = 10011 // Role was deleted; ID is unrecoverable
 	UnknownEmojiCode        = 10014 // Emoji does not exist or is not usable
 	UnknownUserCode         = 10013 // User does not exist (deleted account)
+	NoMutualGuildsCode      = 50278 // Cannot DM a user who shares no guild with the bot
 	MissingAccessCode       = 50001 // Bot not in server or no channel access; recoverable
 	CannotDMUserCode        = 50007 // Cannot send messages to this user (DMs disabled or blocked)
 	ChannelNotTextCode      = 50008 // Cannot send messages in a non-text channel (e.g. voice)
@@ -23,10 +24,11 @@ const (
 	MaxReactionsCode        = 30010 // The message already has the maximum number of different reactions
 )
 
-// IsUserUndeliverable reports whether err means the user can never be DMed: DMs closed or blocked (50007) or
-// the user no longer exists (10013). Every other rejection may be transient or bot-side and must not drop data.
+// IsUserUndeliverable reports whether err means the user can not be DMed: DMs closed or blocked (50007), no mutual
+// guild with the bot (50278) or the user no longer exists (10013). Every other rejection may be transient or bot-side
+// and must not drop data.
 func IsUserUndeliverable(err error) bool {
-	return IsCannotDMUser(err) || hasCode(err, UnknownUserCode)
+	return IsCannotDMUser(err) || hasCode(err, NoMutualGuildsCode) || hasCode(err, UnknownUserCode)
 }
 
 // restCode returns the Discord error code of the REST error wrapped in err, if any.
