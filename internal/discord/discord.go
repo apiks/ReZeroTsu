@@ -96,6 +96,7 @@ func RESTAttrs(err error) []any {
 const (
 	MaxContentLength          = 2000 // Message content
 	MaxEmbedDescriptionLength = 4096 // Embed description
+	MaxEmbedTitleLength       = 256  // Embed title
 	MaxEmbedAuthorNameLength  = 256  // Embed author name
 	MaxEmbedFooterLength      = 2048 // Embed footer text
 	MaxEmbedFieldNameLength   = 256  // Embed field name

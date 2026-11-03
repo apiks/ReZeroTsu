@@ -37,7 +37,7 @@ var drawStoreOf = func(db *database.Client) drawStore { return db.Guilds() }
 func drawSubcommand() *commands.Subcommand {
 	return &commands.Subcommand{
 		Name:       "draw",
-		Desc:       "Pick a random entrant as the raffle's latest winner.",
+		Desc:       "Draw a random entrant as the raffle's latest winner.",
 		Visibility: interaction.Public,
 		Response:   commands.Deferred,
 		Options: []*discordgo.ApplicationCommandOption{
@@ -63,7 +63,7 @@ func removeSubcommand() *commands.Subcommand {
 }
 
 // findNamedRaffle reads the raffle option and finds the raffle, replying privately when it cannot.
-// Guard homes, moved from /pick-raffle-winner and /remove-raffle:
+// Guard homes, moved from the old pick-winner and remove commands:
 //   - "Please provide a raffle name." is msgNameRequired below;
 //   - "No such raffle." is msgNoSuchRaffle below;
 //   - "Could not load raffles." is Fail, which words a store error as "Something went wrong.";
@@ -100,7 +100,7 @@ func winnerLine(r *guilds.Raffle) string {
 func closedMessage(r *guilds.Raffle) interaction.Response {
 	desc := msgRaffleEnded + "\nEntrants: " + strconv.Itoa(len(r.ParticipantIDs)) + "\n" + winnerLine(r)
 	return interaction.Response{
-		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, r.Name, desc)},
+		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitle(r.Name), desc)},
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
 			discordgo.Button{Label: "Enter", Style: discordgo.SuccessButton, CustomID: buttonPrefix + actionEnter, Disabled: true},
 			discordgo.Button{Label: "Leave", Style: discordgo.SecondaryButton, CustomID: buttonPrefix + actionLeave, Disabled: true},
@@ -110,7 +110,7 @@ func closedMessage(r *guilds.Raffle) interaction.Response {
 
 // runDraw announces a random entrant publicly, stores them as the latest winner and edits the raffle message if
 // there is one. The raffle stays open.
-// Guard home: "nobody to pick" lives here, as a private refusal before anything is stored or edited.
+// Guard home: "nobody to draw" lives here, as a private refusal before anything is stored or edited.
 func runDraw(ic *interaction.Context) error {
 	store := drawStoreOf(ic.DB)
 	raffle, err := findNamedRaffle(ic, store)
@@ -125,31 +125,59 @@ func runDraw(ic *interaction.Context) error {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
 	raffle.WinnerID = winnerID
+	var editErr error
 	if raffle.MessageID != "" {
-		// The winner is stored and announced either way, so a failed edit is logged, not shown.
-		if err := ic.EditMessage(raffle.ChannelID, raffle.MessageID, raffleMessage(raffle)); err != nil {
-			text, _ := interaction.ExplainError(err, raffleErrorContext(raffle.ChannelID))
-			logger.For("raffle").Error("raffle message edit failed", "guild_id", ic.GuildID, "channel_id", raffle.ChannelID, "reason", text, "err", err)
-		}
+		editErr = ic.EditMessage(raffle.ChannelID, raffle.MessageID, raffleMessage(raffle))
 	}
-	return ic.EditReply(interaction.Response{Content: "**" + raffle.Name + "** winner is <@" + winnerID + ">! Congratulations!"})
+	if err := ic.EditReply(interaction.Response{Content: "**" + raffle.Name + "** winner is <@" + winnerID + ">! Congratulations!"}); err != nil {
+		return err
+	}
+	if editErr != nil {
+		// The winner is stored and announced either way, so the failed edit is told to the moderator alone, after
+		// the announcement.
+		text, _ := interaction.ExplainError(editErr, raffleErrorContext(raffle.ChannelID))
+		logger.For("raffle").Error("raffle message edit failed", "guild_id", ic.GuildID, "channel_id", raffle.ChannelID, "reason", text, "err", editErr)
+		return ic.FollowUp(interaction.Response{Content: "The winner is announced, but I couldn't update the raffle message: " + text, Visibility: interaction.Private})
+	}
+	return nil
 }
 
-// runRemove closes the raffle message, then deletes the raffle. A message that no longer exists does not block
-// the removal; any other edit failure is explained and keeps the raffle, so the message is not left looking live.
+// closeRaffleMessage edits the raffle's button message to its closed form. A message or channel that no longer
+// exists (or that the bot can no longer see) leaves nothing to close, so it is not an error. closed reports
+// whether the message was edited; err is any other failure, after which the raffle must be kept.
+func closeRaffleMessage(ic *interaction.Context, r *guilds.Raffle) (closed bool, err error) {
+	if r.MessageID == "" {
+		return false, nil
+	}
+	err = ic.EditMessage(r.ChannelID, r.MessageID, closedMessage(r))
+	switch {
+	case err == nil:
+		return true, nil
+	case discord.IsUnknownMessage(err), discord.IsChannelUnavailable(err):
+		return false, nil
+	}
+	return false, err
+}
+
+// runRemove closes the raffle message, then deletes the raffle. A message or channel that no longer exists does
+// not block the removal; any other edit failure is explained and keeps the raffle, so the message is not left
+// looking live.
 func runRemove(ic *interaction.Context) error {
 	store := drawStoreOf(ic.DB)
 	raffle, err := findNamedRaffle(ic, store)
 	if raffle == nil {
 		return err
 	}
-	if raffle.MessageID != "" {
-		if err := ic.EditMessage(raffle.ChannelID, raffle.MessageID, closedMessage(raffle)); err != nil && !discord.IsUnknownMessage(err) {
-			return ic.Fail(err, raffleErrorContext(raffle.ChannelID))
-		}
+	closed, err := closeRaffleMessage(ic, raffle)
+	if err != nil {
+		return ic.Fail(err, raffleErrorContext(raffle.ChannelID))
 	}
 	if err := store.DeleteRaffle(ic.Context(), ic.GuildID, raffle.Name); err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	return ic.EditReply(interaction.Response{Content: "Removed raffle **" + raffle.Name + "**."})
+	reply := "Removed raffle **" + raffle.Name + "**."
+	if closed {
+		reply += " " + messageLink(ic.GuildID, raffle.ChannelID, raffle.MessageID)
+	}
+	return ic.EditReply(interaction.Response{Content: reply})
 }

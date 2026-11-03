@@ -28,7 +28,7 @@ func postSubcommand() *commands.Subcommand {
 		Name: "post",
 		Desc: "Post a raffle message in this channel, moving an earlier one here.",
 		Options: []*discordgo.ApplicationCommandOption{
-			{Type: discordgo.ApplicationCommandOptionString, Name: "raffle", Description: "The raffle to post.", Required: true, Autocomplete: true},
+			{Type: discordgo.ApplicationCommandOptionString, Name: raffleNameOption, Description: "The raffle to post.", Required: true, Autocomplete: true},
 		},
 		Run:                runPost,
 		AutocompleteOption: autocompleteRaffleName,
@@ -40,7 +40,7 @@ func postSubcommand() *commands.Subcommand {
 func movedMessage(r *guilds.Raffle, link string) interaction.Response {
 	desc := "This raffle moved: " + link + "\n" + winnerLine(r)
 	return interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, r.Name, desc)},
+		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitle(r.Name), desc)},
 		Components: []discordgo.MessageComponent{disabledButtons()},
 	}
 }
@@ -52,7 +52,7 @@ func movedMessage(r *guilds.Raffle, link string) interaction.Response {
 // anything is posted. The old message is edited only after the new one is posted and stored, so a failure
 // before that leaves the old buttons working.
 func runPost(ic *interaction.Context) error {
-	opt := commands.ParseOption(ic.Command.Options, "raffle")
+	opt := commands.ParseOption(ic.Command.Options, raffleNameOption)
 	name := ""
 	if opt != nil {
 		name = strings.TrimSpace(opt.StringValue())
@@ -82,11 +82,14 @@ func runPost(ic *interaction.Context) error {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
 	link := messageLink(ic.GuildID, msg.ChannelID, msg.ID)
+	reply := "Raffle **" + raffle.Name + "** is posted: " + link
 	if raffle.MessageID != "" {
 		if err := ic.EditMessage(raffle.ChannelID, raffle.MessageID, movedMessage(raffle, link)); err != nil {
 			reason, _ := interaction.ExplainError(err, raffleErrorContext(raffle.ChannelID))
 			logger.For("raffle").Error("old raffle message edit failed", "guild_id", ic.GuildID, "channel_id", raffle.ChannelID, "reason", reason, "err", err)
+			// The post itself worked, so the moderator gets the problem in the same private reply.
+			reply += "\nI couldn't mark the earlier raffle message as moved, so its buttons are still live: " + reason
 		}
 	}
-	return ic.EditReply(interaction.Response{Content: "Raffle **" + raffle.Name + "** is posted: " + link})
+	return ic.EditReply(interaction.Response{Content: reply})
 }

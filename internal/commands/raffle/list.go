@@ -167,8 +167,9 @@ func disabledButtons() discordgo.MessageComponent {
 }
 
 // handleRemovePicker removes the chosen raffle the way /raffle remove (runRemove) does: its raffle message is
-// closed with closedMessage, then the record is deleted, then the page is re-rendered. As in runRemove, a message
-// that no longer exists does not block the removal, and any other edit failure is explained and keeps the raffle.
+// closed with closedMessage (closeRaffleMessage), then the record is deleted, then the page is re-rendered. As in
+// runRemove, a message or channel that no longer exists does not block the removal, and any other edit failure is
+// explained and keeps the raffle. A choice that more than one raffle clips to removes nothing.
 // Guard homes: only the moderator whose list it is may remove from it, checked before the store is touched,
 // whatever message the picker sits on (the list is private, so only that moderator can see it either way). The
 // "No such raffle" check of /remove-raffle is the lookup below: a choice already gone just re-renders.
@@ -191,18 +192,20 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 	if err != nil {
 		return pickerFailed(ic, "Could not load raffles.", err)
 	}
-	var chosen *guilds.Raffle
+	var matches []*guilds.Raffle
 	for _, r := range raffles {
 		if r != nil && clip(r.Name) == ic.Values[0] {
-			chosen = r
-			break
+			matches = append(matches, r)
 		}
 	}
-	if chosen != nil {
-		if chosen.MessageID != "" {
-			if err := ic.EditMessage(chosen.ChannelID, chosen.MessageID, closedMessage(chosen)); err != nil && !discord.IsUnknownMessage(err) {
-				return ic.Fail(err, raffleErrorContext(chosen.ChannelID))
-			}
+	if len(matches) > 1 {
+		// Legacy names have no length limit, so two can clip alike. Removing the first would be a guess.
+		return ic.Refuse(ambiguousChoice(matches))
+	}
+	if len(matches) == 1 {
+		chosen := matches[0]
+		if _, err := closeRaffleMessage(ic, chosen); err != nil {
+			return ic.Fail(err, raffleErrorContext(chosen.ChannelID))
 		}
 		if err := store.DeleteRaffle(ic.Context(), ic.GuildID, chosen.Name); err != nil {
 			return pickerFailed(ic, "Could not remove raffle.", err)
@@ -219,6 +222,22 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		})
 	}
 	return ic.UpdateMessage(renderPage(raffles, page, authorID, ic.GuildID))
+}
+
+// ambiguousChoice is the private notice for a Remove choice that more than one raffle clips to.
+func ambiguousChoice(matches []*guilds.Raffle) string {
+	const shown, nameLimit = 5, 300
+	var b strings.Builder
+	b.WriteString("More than one raffle has that name as far as the list can show it, so I removed nothing:")
+	for i, r := range matches {
+		if i == shown {
+			fmt.Fprintf(&b, "\n...and %d more", len(matches)-shown)
+			break
+		}
+		b.WriteString("\n- " + truncate(r.Name, nameLimit))
+	}
+	b.WriteString("\nUse /raffle remove with the full name instead.")
+	return b.String()
 }
 
 func pickerFailed(ic *interaction.Context, text string, err error) error {

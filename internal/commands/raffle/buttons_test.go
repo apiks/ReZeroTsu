@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
+	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/interaction/interactiontest"
 
@@ -23,6 +24,10 @@ type fakeStore struct {
 	failSet   error
 	failList  error
 	updateLog []string
+	// beforeUpdate and afterUpdate run around the entrant update, to play a concurrent change into the window
+	// between a handler's read and its write.
+	beforeUpdate func()
+	afterUpdate  func()
 }
 
 func (f *fakeStore) GetRaffles(_ context.Context, _ string) ([]*guilds.Raffle, error) {
@@ -53,7 +58,13 @@ func (f *fakeStore) SetRaffle(_ context.Context, _ string, r *guilds.Raffle) err
 	return nil
 }
 
-func (f *fakeStore) UpdateRaffleParticipant(_ context.Context, _, name, userID string, remove bool) error {
+func (f *fakeStore) UpdateRaffleParticipant(_ context.Context, _, name, userID string, remove bool) (bool, error) {
+	if f.beforeUpdate != nil {
+		f.beforeUpdate()
+	}
+	if f.afterUpdate != nil {
+		defer f.afterUpdate()
+	}
 	f.updateLog = append(f.updateLog, name+"/"+userID)
 	for _, r := range f.raffles {
 		if r.Name != name {
@@ -64,8 +75,9 @@ func (f *fakeStore) UpdateRaffleParticipant(_ context.Context, _, name, userID s
 		} else if !slices.Contains(r.ParticipantIDs, userID) {
 			r.ParticipantIDs = append(r.ParticipantIDs, userID)
 		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 func useStore(t *testing.T, st *fakeStore) {
@@ -363,5 +375,45 @@ func TestAStoreFailureOnAButtonIsReportedPrivately(t *testing.T) {
 	}
 	if got := lastCall(t, fake, "Reply"); got.Visibility != interaction.Private || got.Response.Content != interaction.SomethingWentWrong {
 		t.Errorf("reply %+v", got)
+	}
+}
+
+func TestAPressRacingARemoveIsToldTheRaffleIsGoneNotThatItEntered(t *testing.T) {
+	st := &fakeStore{raffles: []*guilds.Raffle{buttonRaffle()}}
+	st.beforeUpdate = func() { st.raffles = nil }
+	useStore(t, st)
+	fake, err := press(t, "raffle:enter", "user", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := text(lastCall(t, fake, "Reply").Response); got != msgRaffleGone {
+		t.Errorf("reply %q, want %q", got, msgRaffleGone)
+	}
+	if slices.Contains(fake.Ops(), "EditMessage") {
+		t.Errorf("a removed raffle's message must not be edited: %v", fake.Ops())
+	}
+}
+
+func TestARemoveBetweenTheEntryAndTheRefreshLeavesTheClosedMessageAlone(t *testing.T) {
+	st := &fakeStore{raffles: []*guilds.Raffle{buttonRaffle()}}
+	st.afterUpdate = func() { st.raffles = nil }
+	useStore(t, st)
+	fake, err := press(t, "raffle:enter", "user", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(fake.Ops(), "EditMessage") {
+		t.Errorf("the refresh must not edit a removed raffle's message back to live buttons: %v", fake.Ops())
+	}
+}
+
+func TestAnOverlongLegacyNameStillFitsTheEmbedTitle(t *testing.T) {
+	name := strings.Repeat("n", 300)
+	got := raffleMessage(&guilds.Raffle{Name: name}).Embeds[0].Title
+	if n := len([]rune(got)); n != discord.MaxEmbedTitleLength || !strings.HasSuffix(got, "…") {
+		t.Errorf("title has %d runes: %q", n, got)
+	}
+	if closed := closedMessage(&guilds.Raffle{Name: name}).Embeds[0].Title; len([]rune(closed)) > discord.MaxEmbedTitleLength {
+		t.Errorf("closed title has %d runes", len([]rune(closed)))
 	}
 }

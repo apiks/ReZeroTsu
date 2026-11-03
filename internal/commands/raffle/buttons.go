@@ -39,7 +39,8 @@ const postNeeds = discordgo.PermissionViewChannel | discordgo.PermissionSendMess
 type raffleStore interface {
 	GetRaffles(ctx context.Context, guildID string) ([]*guilds.Raffle, error)
 	SetRaffle(ctx context.Context, guildID string, raffle *guilds.Raffle) error
-	UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) error
+	// UpdateRaffleParticipant reports whether a raffle of that name matched, false when it was deleted meanwhile.
+	UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) (bool, error)
 }
 
 // storeOf picks the raffle store of a database client; tests replace it.
@@ -61,7 +62,7 @@ func init() {
 				Name: "create",
 				Desc: "Post a raffle message that members enter with buttons.",
 				Options: []*discordgo.ApplicationCommandOption{
-					{Type: discordgo.ApplicationCommandOptionString, Name: "raffle", Description: "The name of the raffle.", Required: true, MaxLength: maxRaffleNameLength},
+					{Type: discordgo.ApplicationCommandOptionString, Name: raffleNameOption, Description: "The name of the raffle.", Required: true, MaxLength: maxRaffleNameLength},
 				},
 				Run: runCreate,
 			},
@@ -81,13 +82,9 @@ func messageLink(guildID, channelID, messageID string) string {
 // raffleMessage is the raffle message: the name, the entrant count, the latest winner and the Enter and Leave
 // buttons.
 func raffleMessage(r *guilds.Raffle) interaction.Response {
-	winner := msgNoWinnerYet
-	if r.WinnerID != "" {
-		winner = "Latest winner: <@" + r.WinnerID + ">"
-	}
-	desc := "Entrants: " + strconv.Itoa(len(r.ParticipantIDs)) + "\n" + winner
+	desc := "Entrants: " + strconv.Itoa(len(r.ParticipantIDs)) + "\n" + winnerLine(r)
 	return interaction.Response{
-		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, r.Name, desc)},
+		Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitle(r.Name), desc)},
 		Components: []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
 			discordgo.Button{Label: "Enter", Style: discordgo.SuccessButton, CustomID: buttonPrefix + actionEnter},
 			discordgo.Button{Label: "Leave", Style: discordgo.SecondaryButton, CustomID: buttonPrefix + actionLeave},
@@ -103,7 +100,7 @@ func raffleErrorContext(channelID string) interaction.ErrorContext {
 // raffle with the message's IDs and replies privately with a link.
 // Guard home: the duplicate-name refusal that /create-raffle ran lives here, before anything is posted.
 func runCreate(ic *interaction.Context) error {
-	opt := commands.ParseOption(ic.Command.Options, "raffle")
+	opt := commands.ParseOption(ic.Command.Options, raffleNameOption)
 	name := ""
 	if opt != nil {
 		name = strings.TrimSpace(opt.StringValue())
@@ -140,7 +137,8 @@ func runCreate(ic *interaction.Context) error {
 // Guard homes, moved from /join-raffle and /leave-raffle:
 //   - the raffle lookup ("No such raffle") is the message-ID lookup below;
 //   - the already-joined and not-joined checks are the two state checks below, run before the store changes;
-//   - the entrant change is still the single-statement UpdateRaffleParticipant;
+//   - the entrant change is still the single-statement UpdateRaffleParticipant, whose match count catches a raffle
+//     removed between the lookup and the update;
 //   - the member checked is always the presser (ic.Invoker), never an ID read from the custom ID.
 func handleButton(ic *interaction.Context, _ *discordgo.Session) error {
 	action := strings.TrimPrefix(ic.CustomID, buttonPrefix)
@@ -168,8 +166,12 @@ func handleButton(ic *interaction.Context, _ *discordgo.Session) error {
 	case leaving && !entered:
 		return ic.Reply(interaction.Response{Content: "You're not entered in " + raffle.Name})
 	}
-	if err := store.UpdateRaffleParticipant(ic.Context(), ic.GuildID, raffle.Name, ic.Invoker.ID, leaving); err != nil {
+	matched, err := store.UpdateRaffleParticipant(ic.Context(), ic.GuildID, raffle.Name, ic.Invoker.ID, leaving)
+	if err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
+	}
+	if !matched {
+		return ic.Refuse(msgRaffleGone)
 	}
 	confirmation := "You entered " + raffle.Name
 	if leaving {
@@ -182,8 +184,9 @@ func handleButton(ic *interaction.Context, _ *discordgo.Session) error {
 	return nil
 }
 
-// refreshMessage re-reads the raffle and edits its message to show the current count. A failure is logged and
-// does not fail the member's confirmation, because the entry itself was saved.
+// refreshMessage re-reads the raffle just before editing and edits its message to show the current count. A
+// raffle removed meanwhile is skipped, so a closed message is not put back to live buttons. A failure is logged
+// and does not fail the member's confirmation, because the entry itself was saved.
 func refreshMessage(ic *interaction.Context, store raffleStore, raffle *guilds.Raffle) {
 	raffles, err := store.GetRaffles(ic.Context(), ic.GuildID)
 	if err != nil {
