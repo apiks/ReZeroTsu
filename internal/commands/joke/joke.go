@@ -36,6 +36,7 @@ func init() {
 		Desc:       "Display a random joke.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        func(ic *interaction.Context) error { return runJoke(ic, fetchJoke) },
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{

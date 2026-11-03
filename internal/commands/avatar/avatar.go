@@ -21,6 +21,7 @@ func init() {
 		Desc:       "Show a user's avatar.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionUser,
@@ -30,6 +31,16 @@ func init() {
 			},
 		},
 		Run: run,
+	})
+	commands.Add(&commands.Command{
+		Name:       "Show avatar",
+		Kind:       commands.KindUser,
+		Visibility: commands.Public,
+		Response:   commands.Direct,
+		Permission: commands.PermEveryone,
+		Module:     "general",
+		Installs:   commands.BothInstalls(),
+		Run:        runShowAvatar,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "avatar",
@@ -69,6 +80,15 @@ func run(ic *interaction.Context) error {
 			user = ic.Command.Resolved.Users[id]
 		}
 	}
+	return replyWithAvatar(ic, user)
+}
+
+// runShowAvatar answers the "Show avatar" right-click command with the target's avatar.
+func runShowAvatar(ic *interaction.Context) error {
+	return replyWithAvatar(ic, ic.TargetUser())
+}
+
+func replyWithAvatar(ic *interaction.Context, user *discordgo.User) error {
 	if user == nil {
 		return ic.Refuse("Could not determine the user. Please try again.")
 	}

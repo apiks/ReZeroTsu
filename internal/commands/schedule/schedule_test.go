@@ -74,6 +74,39 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	}
 }
 
+// Without server state (a user install in a server the bot has not joined, or a DM) there are no settings to
+// read, so /schedule includes donghua. The nil database proves no settings read is attempted.
+func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
+	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{
+		1: {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
+	}))
+	animeschedule.SetAPIKey("key")
+	t.Cleanup(func() { animeschedule.SetAPIKey("") })
+
+	userInstall := map[discordgo.ApplicationIntegrationType]string{discordgo.ApplicationIntegrationUserInstall: "user"}
+	for name, guildID := range map[string]string{"server without the bot": "other-guild", "DM": ""} {
+		t.Run(name, func(t *testing.T) {
+			fake := &interactiontest.Fake{}
+			i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, GuildID: guildID, ChannelID: "chan", User: &discordgo.User{ID: "user"},
+				AuthorizingIntegrationOwners: userInstall,
+				Data: discordgo.ApplicationCommandInteractionData{Name: "schedule",
+					Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "day", Type: discordgo.ApplicationCommandOptionString, Value: "monday"}}}}
+			ic := interaction.NewContext(fake, i, (*database.Client)(nil), interaction.Public, interaction.Deferred)
+			ic.Ctx = context.Background()
+			if err := ic.Defer(interaction.Public); err != nil {
+				t.Fatal(err)
+			}
+			if err := handleSchedule(ic); err != nil {
+				t.Fatal(err)
+			}
+			calls := fake.Calls()
+			if got := calls[len(calls)-1].Response.Embeds[0].Description; !strings.Contains(got, "Soul Land") {
+				t.Errorf("description = %q, want the donghua show listed", got)
+			}
+		})
+	}
+}
+
 func TestScheduleRefusalsArePrivate(t *testing.T) {
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })

@@ -44,6 +44,39 @@ func TestAvatarDefaultsToTheInvoker(t *testing.T) {
 	}
 }
 
+func showAvatarOn(target *discordgo.User) []interactiontest.Call {
+	data := discordgo.ApplicationCommandInteractionData{Name: "Show avatar", CommandType: discordgo.UserApplicationCommand, TargetID: target.ID,
+		Resolved: &discordgo.ApplicationCommandInteractionDataResolved{Users: map[string]*discordgo.User{target.ID: target}}}
+	fake := &interactiontest.Fake{}
+	if err := runShowAvatar(interactiontest.NewCommandContext(fake, interaction.Public, interaction.Direct, data)); err != nil {
+		panic(err)
+	}
+	return fake.Calls()
+}
+
+func TestShowAvatarPostsTheTargetsAvatarPublicly(t *testing.T) {
+	calls := showAvatarOn(&discordgo.User{ID: "42", Username: "ram", Avatar: "abc"})
+	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Public {
+		t.Fatalf("calls = %+v, want exactly one public Reply", calls)
+	}
+	emb := calls[0].Response.Embeds[0]
+	if emb.Title != "ram's avatar" || emb.Image == nil || emb.Image.URL == "" {
+		t.Errorf("embed = %+v", emb)
+	}
+}
+
+func TestShowAvatarIsRegisteredAsAPublicDirectUserCommand(t *testing.T) {
+	for _, c := range commands.AllCommands() {
+		if c.Name == "Show avatar" {
+			if c.Kind != commands.KindUser || c.Run == nil || c.Visibility != commands.Public || c.Response != commands.Direct {
+				t.Errorf("Show avatar registration = %+v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("Show avatar is not registered")
+}
+
 func TestAvatarIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "avatar" {

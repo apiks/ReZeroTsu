@@ -20,6 +20,7 @@ func init() {
 		Desc:       "Display my invite link.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        run,
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{

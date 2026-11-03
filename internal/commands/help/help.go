@@ -38,6 +38,7 @@ func init() {
 		Desc:       "List commands by module or show one category.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Options:    helpOptions(),
 		Handler:    handleHelp,
 	})
@@ -153,6 +154,9 @@ func handleHelp(ctx context.Context, db *database.Client, s *discordgo.Session, 
 }
 
 func canSeeCommand(c *commands.Command, inDM, isOwner, isAdmin, isMod bool) bool {
+	if c.Kind != commands.KindSlash {
+		return false // right-click commands are not typed, so help does not list them
+	}
 	if inDM && c.Context == commands.ContextGuildOnly {
 		return false
 	}

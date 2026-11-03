@@ -22,6 +22,7 @@ func init() {
 		Desc:       "Respond with Pong! and show bot latency.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        func(ic *interaction.Context) error { return runPing(ic, ic.DB.Guilds()) },
 	})
 	commands.AddMessageCommand(&commands.MessageCommand{
@@ -50,7 +51,7 @@ var settingsTimeout = 1500 * time.Millisecond
 
 func runPing(ic *interaction.Context, settings settingsReader) error {
 	desc := guilds.DefaultGuildSettings().PingMessage
-	if ic.GuildID != "" {
+	if ic.BotInGuild() {
 		ctx, cancel := context.WithTimeout(ic.Context(), settingsTimeout)
 		defer cancel()
 		gs, err := settings.GetGuildSettings(ctx, ic.GuildID)

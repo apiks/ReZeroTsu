@@ -103,6 +103,11 @@ type Command struct {
 	AutocompleteOption func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice
 }
 
+// BothInstalls is the Installs value of a command usable under a server install and a user install.
+func BothInstalls() []discordgo.ApplicationIntegrationType {
+	return []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}
+}
+
 // CommandKind says how a command is invoked.
 type CommandKind int
 

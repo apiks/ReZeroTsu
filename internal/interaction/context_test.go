@@ -16,6 +16,36 @@ func newContext(f *interactiontest.Fake, v interaction.Visibility, m interaction
 	return interaction.NewContext(f, i, nil, v, m)
 }
 
+func TestBotInGuildIsFalseWhereTheBotHasNoServerMembership(t *testing.T) {
+	guild := discordgo.ApplicationIntegrationGuildInstall
+	user := discordgo.ApplicationIntegrationUserInstall
+	tests := []struct {
+		name   string
+		guild  string
+		owners map[discordgo.ApplicationIntegrationType]string
+		want   bool
+	}{
+		{"server install", "g", map[discordgo.ApplicationIntegrationType]string{guild: "g"}, true},
+		{"server install and user install", "g", map[discordgo.ApplicationIntegrationType]string{guild: "g", user: "u"}, true},
+		{"owners not sent", "g", nil, true},
+		{"user install in a server without the bot", "g", map[discordgo.ApplicationIntegrationType]string{user: "u"}, false},
+		{"user install in a DM", "", map[discordgo.ApplicationIntegrationType]string{user: "u"}, false},
+		{"bot DM", "", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := &discordgo.Interaction{GuildID: tt.guild, AuthorizingIntegrationOwners: tt.owners,
+				User: &discordgo.User{ID: "u"}}
+			if got := interaction.NewContext(&interactiontest.Fake{}, i, nil, interaction.Public, interaction.Direct).BotInGuild(); got != tt.want {
+				t.Errorf("BotInGuild = %v, want %v", got, tt.want)
+			}
+			if got := interaction.BotInGuild(i); got != tt.want {
+				t.Errorf("BotInGuild(i) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestContextRepliesWithTheDeclaredVisibilityUnlessOverridden(t *testing.T) {
 	f := &interactiontest.Fake{}
 	ic := newContext(f, interaction.Private, interaction.Direct)

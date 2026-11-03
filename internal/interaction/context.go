@@ -84,6 +84,25 @@ func (c *Context) OnPrivateMessage() bool {
 	return c.Interaction.Message != nil && c.Interaction.Message.Flags&discordgo.MessageFlagsEphemeral != 0
 }
 
+// BotInGuild reports whether the bot is a member of the server the interaction came from, so server settings and
+// state can exist. It is false in DMs and under a user install in a server the bot has not joined, where a
+// handler must use defaults instead of reading server state.
+func (c *Context) BotInGuild() bool { return BotInGuild(c.Interaction) }
+
+// BotInGuild is Context.BotInGuild for a raw interaction. Discord lists the server install among the
+// authorizing integrations only when the bot is installed in that server; when it sends none, the bot is
+// assumed to be a member of any server the interaction names.
+func BotInGuild(i *discordgo.Interaction) bool {
+	if i.GuildID == "" {
+		return false
+	}
+	if i.AuthorizingIntegrationOwners == nil {
+		return true
+	}
+	_, ok := i.AuthorizingIntegrationOwners[discordgo.ApplicationIntegrationGuildInstall]
+	return ok
+}
+
 func (c *Context) resolve(v Visibility) Visibility {
 	if v == 0 {
 		return c.Visibility

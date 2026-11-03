@@ -26,6 +26,7 @@ func init() {
 		Desc:       "Rolls a number from 1 to 100. Specify a positive number to change the range.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:         discordgo.ApplicationCommandOptionInteger,
