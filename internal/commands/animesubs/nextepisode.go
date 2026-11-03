@@ -21,6 +21,25 @@ type nextEpisode struct {
 	Upcoming bool
 	// Premiere is true when Entry is an upcoming-list show; Entry.AirTimeUnix is then its premiere, 0 while undated.
 	Premiere bool
+	// Track names the track whose premiere Entry is ("sub", "dub" or "raw") when the subscription's set has
+	// several members; empty otherwise.
+	Track animeschedule.Track
+}
+
+// itsPremiere is the subject of a premiere or release sentence: "It", or "Its dub" when the track is named.
+func (n nextEpisode) itsPremiere() string {
+	if n.Track == "" {
+		return "It"
+	}
+	return "Its " + string(n.Track)
+}
+
+// trackLabelled prefixes a list-line verb with the premiere's track, as in "dub premieres".
+func (n nextEpisode) trackLabelled(verb string) string {
+	if n.Track == "" {
+		return verb
+	}
+	return string(n.Track) + " " + verb
 }
 
 // sameShow reports whether e is the show a subscription to this route and title is subscribed to: the rule of
@@ -31,7 +50,7 @@ func sameShow(e animeschedule.ShowEntry, route, title string) bool {
 
 // findNextEpisode applies the next-episode rule over entries (every loaded week). A show matches by the rule of
 // sameShow. A show with no timetable entry falls back to the upcoming list's premiere.
-func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, now time.Time) nextEpisode {
+func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	nowUnix := now.Unix()
 	var next, last animeschedule.ShowEntry
 	var haveNext, haveLast bool
@@ -54,9 +73,20 @@ func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule
 		return nextEpisode{Entry: last, Found: true}
 	}
 	for _, u := range upcoming {
-		if e := upcomingEntry(u); sameShow(e, route, title) {
-			return nextEpisode{Entry: e, Found: true, Upcoming: e.AirTimeUnix == 0 || e.AirTimeUnix >= nowUnix, Premiere: true}
+		e := upcomingEntry(u)
+		if !sameShow(e, route, title) {
+			continue
 		}
+		// The premiere is the set's earliest known one, labelled with its track when the set has several.
+		e.AirTimeUnix = 0
+		var track animeschedule.Track
+		if p, member, ok := u.SetPremiere(set); ok {
+			e.AirTimeUnix = p.Unix()
+			if len(set.Members()) > 1 {
+				track = member
+			}
+		}
+		return nextEpisode{Entry: e, Found: true, Upcoming: e.AirTimeUnix == 0 || e.AirTimeUnix >= nowUnix, Premiere: true, Track: track}
 	}
 	return nextEpisode{}
 }
@@ -110,13 +140,13 @@ func (n nextEpisode) confirmationLine() string {
 	case statusPremiereTBA:
 		return "Its premiere date isn't announced yet. You'll get a DM when episode 1 airs."
 	case statusPremiere:
-		return fmt.Sprintf("It premieres <t:%d:F> (<t:%d:R>). You'll get a DM when episode 1 airs.", unix, unix)
+		return fmt.Sprintf("%s premieres <t:%d:F> (<t:%d:R>). You'll get a DM when episode 1 airs.", n.itsPremiere(), unix, unix)
 	case statusPremiered:
-		return fmt.Sprintf("It premiered <t:%d:R>. You'll get a DM when the next episode airs.", unix)
+		return fmt.Sprintf("%s premiered <t:%d:R>. You'll get a DM when the next episode airs.", n.itsPremiere(), unix)
 	case statusMovieUpcoming:
-		return fmt.Sprintf("It releases <t:%d:F> (<t:%d:R>).", unix, unix)
+		return fmt.Sprintf("%s releases <t:%d:F> (<t:%d:R>).", n.itsPremiere(), unix, unix)
 	case statusMovieReleased:
-		return fmt.Sprintf("It released <t:%d:R>.", unix)
+		return fmt.Sprintf("%s released <t:%d:R>.", n.itsPremiere(), unix)
 	case statusNextEpisode:
 		return fmt.Sprintf("Next episode: %s, <t:%d:F> (<t:%d:R>).", n.Entry.Episode, unix, unix)
 	case statusAired:
@@ -138,13 +168,13 @@ func (n nextEpisode) listStatus() string {
 	case statusPremiereTBA:
 		return out + " · premiere date TBA"
 	case statusPremiere:
-		return out + fmt.Sprintf(" · premieres <t:%d:R>", unix)
+		return out + fmt.Sprintf(" · %s <t:%d:R>", n.trackLabelled("premieres"), unix)
 	case statusPremiered:
-		return out + fmt.Sprintf(" · premiered <t:%d:R>", unix)
+		return out + fmt.Sprintf(" · %s <t:%d:R>", n.trackLabelled("premiered"), unix)
 	case statusMovieUpcoming:
-		return out + fmt.Sprintf(" · releases <t:%d:R>", unix)
+		return out + fmt.Sprintf(" · %s <t:%d:R>", n.trackLabelled("releases"), unix)
 	case statusMovieReleased:
-		return out + fmt.Sprintf(" · released <t:%d:R>", unix)
+		return out + fmt.Sprintf(" · %s <t:%d:R>", n.trackLabelled("released"), unix)
 	case statusNextEpisode:
 		return out + fmt.Sprintf(" · %s <t:%d:R>", n.Entry.Episode, unix)
 	case statusAired:
