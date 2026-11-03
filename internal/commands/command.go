@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -46,10 +47,9 @@ type BotRuntime interface {
 type AllowedContext int
 
 const (
-	ContextBoth       AllowedContext = iota // default: usable in DMs and guilds
-	ContextDMOnly                           // only in DMs
-	ContextGuildOnly                        // only in guilds
-	ContextEverywhere                       // guilds, DMs with the bot and private channels, for user-installed commands
+	ContextBoth      AllowedContext = iota // default: usable in DMs and guilds
+	ContextDMOnly                          // only in DMs
+	ContextGuildOnly                       // only in guilds
 )
 
 // contextRefusal returns the refusal message when a command with the given
@@ -91,7 +91,8 @@ type Command struct {
 	// DefaultMemberPermissions, when set, is registered as the command's default member permissions and wins
 	// over the one implied by Permission. Discord applies it to the whole top-level command.
 	DefaultMemberPermissions *int64
-	// Installs lists where the command can be installed. Nil leaves it to the application's defaults.
+	// Installs lists where the command can be installed. Nil registers it as server install only, whatever the
+	// application's own default install setting is. A command that lists user install also runs in private channels.
 	Installs []discordgo.ApplicationIntegrationType
 	Module   string // e.g. "settings", "general"; metadata only
 	// Visibility and Response are required; subcommands inherit them unless they declare their own.
@@ -366,19 +367,31 @@ func groupOptions(cmd *Command) []*discordgo.ApplicationCommandOption {
 	return out
 }
 
-func contextsForAllowedContext(ctx AllowedContext) *[]discordgo.InteractionContextType {
+// effectiveInstalls is where a command registers as installable: what it lists, or server install only when it
+// lists nothing, so enabling User Install on the application never makes an unmigrated command user-installable.
+func effectiveInstalls(declared []discordgo.ApplicationIntegrationType) []discordgo.ApplicationIntegrationType {
+	if declared == nil {
+		return []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
+	}
+	return append([]discordgo.ApplicationIntegrationType(nil), declared...)
+}
+
+// contextsFor derives where a command appears from its allowed context, plus private channels when it can be
+// user-installed (a user-installed command follows its user into group DMs and other DMs).
+func contextsFor(ctx AllowedContext, installs []discordgo.ApplicationIntegrationType) *[]discordgo.InteractionContextType {
+	var out []discordgo.InteractionContextType
 	switch ctx {
 	case ContextGuildOnly:
-		return &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild}
+		out = []discordgo.InteractionContextType{discordgo.InteractionContextGuild}
 	case ContextDMOnly:
-		return &[]discordgo.InteractionContextType{discordgo.InteractionContextBotDM}
-	case ContextEverywhere:
-		return &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM, discordgo.InteractionContextPrivateChannel}
-	case ContextBoth:
-		return &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM}
+		out = []discordgo.InteractionContextType{discordgo.InteractionContextBotDM}
 	default:
-		return &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM}
+		out = []discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM}
 	}
+	if slices.Contains(installs, discordgo.ApplicationIntegrationUserInstall) {
+		out = append(out, discordgo.InteractionContextPrivateChannel)
+	}
+	return &out
 }
 
 func defaultMemberPermissionsForLevel(perm PermissionLevel) *int64 {
@@ -393,10 +406,12 @@ func defaultMemberPermissionsForLevel(perm PermissionLevel) *int64 {
 func Definitions() []*discordgo.ApplicationCommand {
 	defs := make([]*discordgo.ApplicationCommand, 0, len(registry))
 	for _, cmd := range registry {
+		installs := effectiveInstalls(cmd.Installs)
 		c := &discordgo.ApplicationCommand{
-			Name:        cmd.Name,
-			Description: cmd.Desc,
-			Contexts:    contextsForAllowedContext(cmd.Context),
+			Name:             cmd.Name,
+			Description:      cmd.Desc,
+			IntegrationTypes: &installs,
+			Contexts:         contextsFor(cmd.Context, installs),
 		}
 		switch cmd.Kind {
 		case KindUser:
@@ -415,10 +430,6 @@ func Definitions() []*discordgo.ApplicationCommand {
 		}
 		if cmd.DefaultMemberPermissions != nil {
 			c.DefaultMemberPermissions = cmd.DefaultMemberPermissions
-		}
-		if cmd.Installs != nil {
-			installs := append([]discordgo.ApplicationIntegrationType(nil), cmd.Installs...)
-			c.IntegrationTypes = &installs
 		}
 		defs = append(defs, c)
 	}

@@ -55,6 +55,55 @@ func TestPingFallsBackToTheDefaultMessage(t *testing.T) {
 	}
 }
 
+// stalling never answers: it blocks until the context given to it ends.
+type stalling struct{}
+
+func (stalling) GetGuildSettings(ctx context.Context, _ string) (*guilds.GuildSettings, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// /ping answers directly, inside Discord's three seconds, so a stalled settings read is cut short and the default
+// ping message is shown.
+func TestPingBoundsTheSettingsReadAndFallsBackToTheDefault(t *testing.T) {
+	old := settingsTimeout
+	settingsTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { settingsTimeout = old })
+
+	fake := &interactiontest.Fake{}
+	ic := interactiontest.NewCommandContext(fake, interaction.Public, interaction.Direct, discordgo.ApplicationCommandInteractionData{Name: "ping"})
+	start := time.Now()
+	if err := runPing(ic, stalling{}); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("the settings read was not bounded")
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Response.Embeds[0].Description != guilds.DefaultGuildSettings().PingMessage {
+		t.Errorf("calls = %+v, want one reply with the default ping message", calls)
+	}
+}
+
+// The read runs under the interaction's context, so shutdown ends it.
+func TestPingReadStopsWithTheInteractionContext(t *testing.T) {
+	fake := &interactiontest.Fake{}
+	ic := interactiontest.NewCommandContext(fake, interaction.Public, interaction.Direct, discordgo.ApplicationCommandInteractionData{Name: "ping"})
+	ctx, cancel := context.WithCancel(context.Background())
+	ic.Ctx = ctx
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- runPing(ic, stalling{}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runPing ignored the cancelled interaction context")
+	}
+}
+
 func TestPingIsRegisteredAsAPublicDirectCommand(t *testing.T) {
 	for _, c := range commands.AllCommands() {
 		if c.Name == "ping" {

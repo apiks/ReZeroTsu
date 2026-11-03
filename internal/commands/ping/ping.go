@@ -43,10 +43,17 @@ type settingsReader interface {
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
 }
 
+// settingsTimeout keeps the settings read inside Discord's three seconds for a first response, since /ping
+// answers directly instead of deferring. A read that does not finish shows the default ping message. It is a
+// variable so tests can shorten it.
+var settingsTimeout = 1500 * time.Millisecond
+
 func runPing(ic *interaction.Context, settings settingsReader) error {
 	desc := guilds.DefaultGuildSettings().PingMessage
 	if ic.GuildID != "" {
-		gs, err := settings.GetGuildSettings(context.Background(), ic.GuildID)
+		ctx, cancel := context.WithTimeout(ic.Context(), settingsTimeout)
+		defer cancel()
+		gs, err := settings.GetGuildSettings(ctx, ic.GuildID)
 		if err == nil && gs != nil && gs.PingMessage != "" {
 			desc = gs.PingMessage
 		}

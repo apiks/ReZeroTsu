@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
@@ -73,7 +74,7 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 	}{
 		{"server-only command in a DM", "t-guildonly", slashInteraction("t-guildonly", "", 0), "only be used in a server"},
 		{"DM-only command in a server", "t-dmonly", slashInteraction("t-dmonly", "g", 0), "only be used in DMs"},
-		{"mod command by a plain member", "t-mod", slashInteraction("t-mod", "g", 0), "moderator role"},
+		{"Moderator command by a plain member", "t-mod", slashInteraction("t-mod", "g", 0), "moderator role"},
 		{"admin command by a plain member", "t-admin", slashInteraction("t-admin", "g", 0), "Administrator or Manage Server"},
 		{"unknown command", "t-missing", slashInteraction("t-missing", "g", 0), "Unknown command"},
 	}
@@ -111,7 +112,7 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 	}
 }
 
-func TestDispatchModeratorCheckStillGatesModCommands(t *testing.T) {
+func TestDispatchModeratorCheckStillGatesModeratorCommands(t *testing.T) {
 	var ran int
 	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
 		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
@@ -147,6 +148,90 @@ func TestDispatchModeratorCheckStillGatesModCommands(t *testing.T) {
 				t.Errorf("refusal was not private: %+v", fake.Calls())
 			}
 		})
+	}
+}
+
+// stallingSettings never answers: it blocks until the context given to it ends, as a database that has stopped
+// responding would.
+type stallingSettings struct{}
+
+func (stallingSettings) GetGuildSettings(ctx context.Context, _ string) (*guilds.GuildSettings, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A permission check that cannot finish inside the bound fails closed: one private "couldn't check" reply, sent
+// before acknowledging, and the handler does not run.
+func TestDispatchPermissionCheckTimesOutClosed(t *testing.T) {
+	old := permissionCheckTimeout
+	permissionCheckTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { permissionCheckTimeout = old })
+
+	var ran int
+	handler := func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }
+	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred, Handler: handler})
+	register(t, &Command{Name: "t-admin", Permission: PermAdmin, Visibility: Public, Response: Deferred, Handler: handler})
+
+	tests := []struct {
+		name     string
+		cmd      string
+		settings settingsReader
+		stall    bool
+	}{
+		{"settings read stalls on a Moderator command", "t-mod", stallingSettings{}, false},
+		{"guild fetch stalls on a Moderator command", "t-mod", fakeSettings{}, true},
+		{"guild fetch stalls on an admin command", "t-admin", fakeSettings{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ran = 0
+			fake := &interactiontest.Fake{StallGuild: tt.stall}
+			start := time.Now()
+			if err := run(t, tt.cmd, fake, tt.settings, slashInteraction(tt.cmd, "g", 0)); err != nil {
+				t.Fatal(err)
+			}
+			if time.Since(start) > time.Second {
+				t.Error("the check was not bounded")
+			}
+			calls := fake.Calls() // may start with the Guild read that preceded the stalled settings read
+			last := calls[len(calls)-1]
+			if last.Op != "Reply" || last.Visibility != interaction.Private {
+				t.Fatalf("want a private Reply last, got %+v", calls)
+			}
+			for _, c := range calls[:len(calls)-1] {
+				if c.Op == "Defer" || c.Op == "Reply" {
+					t.Fatalf("want one reply and no Defer, got %v", fake.Ops())
+				}
+			}
+			if !strings.Contains(last.Response.Content+descriptionOf(last), msgPermissionCheckTimeout) {
+				t.Errorf("reply = %+v, want %q", last.Response, msgPermissionCheckTimeout)
+			}
+			if ran != 0 {
+				t.Error("handler ran after a timed-out check")
+			}
+		})
+	}
+}
+
+func descriptionOf(c interactiontest.Call) string {
+	var text string
+	for _, e := range c.Response.Embeds {
+		text += e.Description
+	}
+	return text
+}
+
+// A member who passes on a cheap check never waits on the stalled lookups.
+func TestDispatchCheapPermissionPassSkipsTheSlowLookups(t *testing.T) {
+	ran := 0
+	register(t, &Command{Name: "t-admin", Permission: PermAdmin, Visibility: Public, Response: Deferred,
+		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
+	fake := &interactiontest.Fake{StallGuild: true}
+	if err := run(t, "t-admin", fake, stallingSettings{}, slashInteraction("t-admin", "g", discordgo.PermissionAdministrator)); err != nil {
+		t.Fatal(err)
+	}
+	if ran != 1 {
+		t.Errorf("handler ran %d times, calls %v", ran, fake.Ops())
 	}
 }
 

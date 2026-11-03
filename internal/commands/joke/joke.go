@@ -65,7 +65,7 @@ func init() {
 const fetchTimeout = 2500 * time.Millisecond
 
 func runJoke(ic *interaction.Context, fetch func(context.Context) (string, error)) error {
-	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	ctx, cancel := context.WithTimeout(ic.Context(), fetchTimeout)
 	defer cancel()
 	jokeStr, err := fetch(ctx)
 	if err != nil {

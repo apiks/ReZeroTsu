@@ -32,13 +32,14 @@ func TestFlatCommandsRegisterExactlyAsBefore(t *testing.T) {
 	register(t, &Command{Name: "t-flat-admin", Desc: "d", Permission: PermAdmin, Context: ContextGuildOnly, Visibility: Private, Response: Direct, Run: noRun})
 
 	admin := int64(discordgo.PermissionAdministrator)
-	want := &discordgo.ApplicationCommand{Name: "t-flat", Description: "d",
+	serverOnly := &[]discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
+	want := &discordgo.ApplicationCommand{Name: "t-flat", Description: "d", IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM},
 		Options:  []*discordgo.ApplicationCommandOption{{Name: "o", Description: "od", Type: discordgo.ApplicationCommandOptionString}}}
 	if got := definition(t, "t-flat"); !reflect.DeepEqual(got, want) {
 		t.Errorf("flat = %+v, want %+v", got, want)
 	}
-	wantAdmin := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &admin,
+	wantAdmin := &discordgo.ApplicationCommand{Name: "t-flat-admin", Description: "d", DefaultMemberPermissions: &admin, IntegrationTypes: serverOnly,
 		Contexts: &[]discordgo.InteractionContextType{discordgo.InteractionContextGuild}}
 	if got := definition(t, "t-flat-admin"); !reflect.DeepEqual(got, wantAdmin) {
 		t.Errorf("admin = %+v, want %+v", got, wantAdmin)
@@ -89,7 +90,7 @@ func TestDefaultPermissionsInstallTypesAndContextsRegisterAsDeclared(t *testing.
 	register(t, &Command{Name: "t-mod", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
 		DefaultMemberPermissions: &manage, Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}, Context: ContextGuildOnly})
 	register(t, &Command{Name: "t-both", Desc: "d", Visibility: Private, Response: Direct, Run: noRun,
-		Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}, Context: ContextEverywhere})
+		Installs: []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}, Context: ContextBoth})
 
 	mod := definition(t, "t-mod")
 	if mod.DefaultMemberPermissions == nil || *mod.DefaultMemberPermissions != manage {

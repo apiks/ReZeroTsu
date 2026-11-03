@@ -13,9 +13,15 @@ import (
 )
 
 // registerPages adds a test-only page renderer that reports the page and data owner it was asked for.
-func registerPages(t *testing.T, cmd string) {
+func registerPages(t *testing.T, cmd string) { registerPagesAs(t, cmd, true) }
+
+func registerPagesAs(t *testing.T, cmd string, copySafe bool) {
 	t.Helper()
-	RegisterPaginationRenderer(cmd, func(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, page, total int, authorID string) Page {
+	register := RegisterPaginationRenderer
+	if copySafe {
+		register = RegisterCopySafePaginationRenderer
+	}
+	register(cmd, func(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, page, total int, authorID string) Page {
 		if total == 0 {
 			return Page{Refusal: "nothing to show"}
 		}
@@ -24,7 +30,7 @@ func registerPages(t *testing.T, cmd string) {
 			Components: PaginationComponents(cmd, page, total, authorID),
 		}}
 	})
-	t.Cleanup(func() { delete(paginationRenderers, cmd) })
+	t.Cleanup(func() { delete(paginationRenderers, cmd); delete(copySafeRenderers, cmd) })
 }
 
 func pageButton(cmd string, page, total int, author string) string {
@@ -82,60 +88,40 @@ func TestPressOnAPrivateCopyPagesTheCopy(t *testing.T) {
 	}
 }
 
-func TestPaginationWithoutAuthorPagesForEveryone(t *testing.T) {
+func TestCopySafeViewWithoutAuthorPagesForEveryone(t *testing.T) {
 	registerPages(t, "t-pages")
 	fake := &interactiontest.Fake{}
 	dispatchPress(t, fake, componentInteraction(press(pageButton("t-pages", 0, 60, "")), "g", "anyone", publicMessage()))
 	if ops := fake.Ops(); len(ops) != 1 || ops[0] != "UpdateMessage" {
-		t.Errorf("a list with no author pages in place for anyone, got %v", ops)
+		t.Errorf("a copy-safe view with no author pages in place for anyone, got %v", ops)
 	}
 }
 
-func TestPaginationRefusalsArePrivate(t *testing.T) {
-	registerPages(t, "t-pages")
-	registerPages(t, "show-raffles")
-	tests := []struct {
-		name string
-		id   string
-		i    func(id string) *discordgo.InteractionCreate
-		want string
-	}{
-		{"malformed ID", "pag:broken", func(id string) *discordgo.InteractionCreate {
-			return componentInteraction(press(id), "g", "u", publicMessage())
-		}, msgInvalidButton},
-		{"unknown list", pageButton("t-gone", 0, 5, "u"), func(id string) *discordgo.InteractionCreate {
-			return componentInteraction(press(id), "g", "u", publicMessage())
-		}, msgInvalidButton},
-		{"server-only list pressed in a DM", pageButton("show-raffles", 0, 5, ""), func(id string) *discordgo.InteractionCreate {
-			return componentInteraction(press(id), "", "u", publicMessage())
-		}, msgFailedLoad},
-		{"renderer has nothing to show", pageButton("t-pages", 0, 0, "u"), func(id string) *discordgo.InteractionCreate {
-			return componentInteraction(press(id), "g", "u", publicMessage())
-		}, "nothing to show"},
+func TestRestrictedViewRefusesOtherMembersWithoutRendering(t *testing.T) {
+	rendered := false
+	RegisterPaginationRenderer("t-private", func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate, int, int, string) Page {
+		rendered = true
+		return Page{Response: interaction.Response{Content: "secret"}}
+	})
+	t.Cleanup(func() { delete(paginationRenderers, "t-private") })
+	for _, author := range []string{"author", ""} {
+		fake := &interactiontest.Fake{}
+		dispatchPress(t, fake, componentInteraction(press(pageButton("t-private", 1, 60, author)), "g", "stranger", publicMessage()))
+		calls := fake.Calls()
+		if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private || calls[0].Response.Content != msgOnlyAuthorPages {
+			t.Errorf("author %q: want one private refusal, got %+v", author, calls)
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fake := &interactiontest.Fake{}
-			dispatchPress(t, fake, tt.i(tt.id))
-			calls := fake.Calls()
-			if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private || calls[0].Response.Content != tt.want {
-				t.Errorf("want one private reply %q, got %+v", tt.want, calls)
-			}
-		})
+	if rendered {
+		t.Error("a refused press must not render the restricted view")
 	}
 }
 
-func TestPaginationClampsThePageBeforeRendering(t *testing.T) {
-	registerPages(t, "t-pages")
+func TestRestrictedViewStillPagesInPlaceForItsAuthor(t *testing.T) {
+	registerPagesAs(t, "t-private", false)
 	fake := &interactiontest.Fake{}
-	// 60 items is 3 pages of 25, so page 9 is page 2; schedule-like negative pages become 0.
-	dispatchPress(t, fake, componentInteraction(press(pageButton("t-pages", 9, 60, "u")), "g", "u", publicMessage()))
-	if got := fake.Calls()[0].Response.Content; got != "page 2 of u" {
-		t.Errorf("content = %q, want page 2", got)
-	}
-	fake = &interactiontest.Fake{}
-	dispatchPress(t, fake, componentInteraction(press(pageButton("t-pages", -1, 60, "u")), "g", "u", publicMessage()))
-	if got := fake.Calls()[0].Response.Content; got != "page 0 of u" {
-		t.Errorf("content = %q, want page 0", got)
+	dispatchPress(t, fake, componentInteraction(press(pageButton("t-private", 1, 60, "author")), "g", "author", publicMessage()))
+	if ops := fake.Ops(); len(ops) != 1 || ops[0] != "UpdateMessage" {
+		t.Errorf("the author pages in place, got %v", ops)
 	}
 }

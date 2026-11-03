@@ -1,6 +1,7 @@
 package interaction
 
 import (
+	"context"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -116,11 +117,11 @@ func (p *DiscordgoPort) DeleteMessages(channelID string, messageIDs []string) er
 }
 
 // Guild reads the cached guild and falls back to REST when the cache has no entry.
-func (p *DiscordgoPort) Guild(guildID string) (*discordgo.Guild, error) {
+func (p *DiscordgoPort) Guild(ctx context.Context, guildID string) (*discordgo.Guild, error) {
 	if g, err := p.s.State.Guild(guildID); err == nil {
 		return g, nil
 	}
-	return p.s.Guild(guildID)
+	return p.s.Guild(guildID, discordgo.WithContext(ctx))
 }
 
 func (p *DiscordgoPort) Roles(guildID string) ([]*discordgo.Role, error) {

@@ -435,7 +435,7 @@ func handleRaffles(ctx context.Context, db *database.Client, s *discordgo.Sessio
 	if len(raffles) > discord.MaxEmbedFields {
 		totalPages := (len(raffles) + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 		description = "Page 1 of " + strconv.Itoa(totalPages) + ". Showing 1–" + strconv.Itoa(discord.MaxEmbedFields) + " of " + strconv.Itoa(len(raffles)) + "."
-		components = commands.PaginationComponents("show-raffles", 0, len(raffles), "")
+		components = commands.PaginationComponents("show-raffles", 0, len(raffles), commands.UserID(i))
 	}
 	if len(components) > 0 {
 		commands.RespondEmbedWithFieldsAndComponents(s, i, embedTitleRaffle, description, fields, components, hintShowRaffles)
@@ -499,7 +499,7 @@ func RenderShowRafflesPage(ctx context.Context, db *database.Client, s *discordg
 	start := page * discord.MaxEmbedFields
 	fields := raffleFieldsForPage(raffles, start, true)
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(min(start+len(fields), n)) + " of " + strconv.Itoa(n) + "."
-	components := commands.PaginationComponents("show-raffles", page, n, "")
+	components := commands.PaginationComponents("show-raffles", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleRaffle, description, fields, hintShowRaffles)
 	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

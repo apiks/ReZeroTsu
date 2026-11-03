@@ -17,6 +17,8 @@ import (
 const (
 	msgInvalidButton = "Invalid button. Run the command again."
 	msgFailedLoad    = "Could not load. Please run the command again."
+
+	msgOnlyAuthorPages = "Only the user who ran the command can change pages."
 )
 
 // RespondEmbedWithFieldsAndComponents edits the deferred response with embed, optional fields, and components (e.g. pagination buttons).
@@ -145,9 +147,22 @@ type PageRenderer func(ctx context.Context, db *database.Client, s *discordgo.Se
 
 var paginationRenderers = make(map[string]PageRenderer)
 
-// RegisterPaginationRenderer registers a page renderer for a command. Call from init().
+// copySafeRenderers holds the commands whose view anyone may run, so a private copy for another member leaks
+// nothing.
+var copySafeRenderers = make(map[string]bool)
+
+// RegisterPaginationRenderer registers a page renderer for a command whose view is restricted (moderator setup,
+// someone's personal list): only the author pages it, anyone else gets msgOnlyAuthorPages. Call from init().
 func RegisterPaginationRenderer(cmd string, fn PageRenderer) {
 	paginationRenderers[cmd] = fn
+	delete(copySafeRenderers, cmd)
+}
+
+// RegisterCopySafePaginationRenderer registers a page renderer for a command anyone may run, so another member's
+// press gets a private copy of the page. Call from init().
+func RegisterCopySafePaginationRenderer(cmd string, fn PageRenderer) {
+	paginationRenderers[cmd] = fn
+	copySafeRenderers[cmd] = true
 }
 
 func init() {
@@ -155,8 +170,8 @@ func init() {
 }
 
 // handlePagination handles a page button. The author's press (or any press on a private copy) replaces the
-// message the button is on; anyone else's press gets a private copy of the requested page, whose buttons page
-// the copy.
+// message the button is on. Anyone else's press gets a private copy of the requested page, whose buttons page
+// the copy, when the command is copy-safe, and a private refusal otherwise.
 func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 	cmd, page, total, authorID, ok := ParsePaginationCustomID(ic.CustomID)
 	if !ok {
@@ -173,6 +188,11 @@ func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 	}
 	if page >= totalPages {
 		page = totalPages - 1
+	}
+	// Guard home: a restricted list (moderator setup, personal lists) is refused to anyone but its author before
+	// anything renders. Only copy-safe views reach the private-copy path below.
+	if !copySafeRenderers[cmd] && ic.Invoker.ID != authorID {
+		return ic.Refuse(msgOnlyAuthorPages)
 	}
 	render, ok := paginationRenderers[cmd]
 	if !ok {
