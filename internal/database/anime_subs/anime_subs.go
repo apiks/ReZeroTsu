@@ -344,19 +344,6 @@ func (r *Repo) ClearShows(ctx context.Context, id string) error {
 	return nil
 }
 
-// SetShowAirUnix records airUnix as the last notified air time of the named show, only where none is recorded yet.
-func (r *Repo) SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error {
-	update := bson.M{"$set": bson.M{"shows.$[s].last_notified_air_unix": airUnix}}
-	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{
-		"s.show":                   showName,
-		"s.last_notified_air_unix": bson.M{"$not": bson.M{"$gt": 0}},
-	}})
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
-		return fmt.Errorf("SetShowAirUnix: %w", err)
-	}
-	return nil
-}
-
 func (r *Repo) DeleteByID(ctx context.Context, id string) error {
 	_, err := r.coll.DeleteOne(ctx, bson.M{"id": id})
 	if err != nil {

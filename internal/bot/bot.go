@@ -163,13 +163,6 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		startRemindersOnce.Do(func() {
 			go RunReminderLoop(ctx, db, s, ops, senders, 15*time.Second)
 		})
-		backfillLastNotifiedOnce.Do(func() {
-			go func() {
-				if err := backfillLastNotifiedAirUnix(ctx, db, animeschedule.Now()); err != nil && !errors.Is(err, context.Canceled) {
-					logger.For("animesubs").Error("backfillLastNotifiedAirUnix failed", "err", err)
-				}
-			}()
-		})
 		httpclient.SetUserAgent(config.UserAgent(cfg))
 		getShardCount := func() int { return mgr.ShardCount }
 		startRedditFetchLoopOnce.Do(func() {

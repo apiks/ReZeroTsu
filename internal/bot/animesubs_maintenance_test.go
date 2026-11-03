@@ -115,7 +115,6 @@ func namesRoster(airing map[string]struct{}) keepRoster {
 type fakeUserSubs struct {
 	docs    []*anime_subs.AnimeSubs
 	removed map[string][]string
-	airSet  map[string]int64 // "id|show" -> airUnix
 	// collapsed lists the IDs CollapseDuplicateShows was called for; ops is "remove:id" / "collapse:id" in order.
 	collapsed []string
 	ops       []string
@@ -130,7 +129,7 @@ func (f *fakeUserSubs) CollapseDuplicateShows(_ context.Context, id string) (boo
 }
 
 func newFakeUserSubs(docs ...*anime_subs.AnimeSubs) *fakeUserSubs {
-	return &fakeUserSubs{docs: docs, removed: map[string][]string{}, airSet: map[string]int64{}}
+	return &fakeUserSubs{docs: docs, removed: map[string][]string{}}
 }
 
 func (f *fakeUserSubs) IterateUserSubs(_ context.Context, fn func(*anime_subs.AnimeSubs) error) error {
@@ -145,11 +144,6 @@ func (f *fakeUserSubs) IterateUserSubs(_ context.Context, fn func(*anime_subs.An
 func (f *fakeUserSubs) RemoveShows(_ context.Context, id string, names []string) error {
 	f.removed[id] = append(f.removed[id], names...)
 	f.ops = append(f.ops, "remove:"+id)
-	return nil
-}
-
-func (f *fakeUserSubs) SetShowAirUnix(_ context.Context, id, show string, airUnix int64) error {
-	f.airSet[id+"|"+show] = airUnix
 	return nil
 }
 
@@ -256,26 +250,5 @@ func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
 				t.Errorf("ops = %v, want %v", st.ops, tc.wantOps)
 			}
 		})
-	}
-}
-
-func TestBackfillShows(t *testing.T) {
-	aired := map[string]int64{"frieren": 9_000, "dandadan": 8_000}
-	st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{
-		{Show: "Frieren", Notified: true},
-		{Show: "Dandadan", Notified: true, LastNotifiedAirUnix: 5},
-		{Show: "Unnotified", Notified: false},
-		{Show: "Unknown", Notified: true},
-		{Show: "Guild", Notified: true, Guild: true},
-	}})
-	n, err := backfillUserSubs(context.Background(), st, aired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Errorf("users updated = %d, want 1", n)
-	}
-	if len(st.airSet) != 1 || st.airSet["u|Frieren"] != 9_000 {
-		t.Errorf("airSet = %v, want only u|Frieren=9000", st.airSet)
 	}
 }

@@ -18,8 +18,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var backfillLastNotifiedOnce sync.Once
-
 const (
 	animeSubRunInterval             = 15 * time.Second
 	animeSubFinishedCleanupInterval = 24 * time.Hour
@@ -91,7 +89,6 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 type userSubsStore interface {
 	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
 	RemoveShows(ctx context.Context, id string, showNames []string) error
-	SetShowAirUnix(ctx context.Context, id, showName string, airUnix int64) error
 	// CollapseDuplicateShows drops null and nameless entries and keeps one entry per anime_subs.CollapseKey (the
 	// one with the latest last-notified air time, ties going to the later entry), in a single update statement.
 	// It reports whether the document was modified.
@@ -207,75 +204,6 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster
 		return nil
 	})
 	return updated, err
-}
-
-// backfillUserSubs sets the last notified air time on notified user shows that lack one, one show at a time,
-// and returns how many user documents were changed. aired maps anime_subs.MatchKey show names to their latest air time.
-func backfillUserSubs(ctx context.Context, st userSubsStore, aired map[string]int64) (int, error) {
-	var updatedUsers int
-	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if doc == nil {
-			return nil
-		}
-		updated := false
-		for _, sub := range doc.Shows {
-			if sub == nil || sub.Guild || sub.LastNotifiedAirUnix != 0 || !sub.Notified {
-				continue
-			}
-			key := anime_subs.MatchKey(sub.Show)
-			if key == "" {
-				continue
-			}
-			t, ok := aired[key]
-			if !ok || t <= 0 {
-				continue
-			}
-			if err := st.SetShowAirUnix(ctx, doc.ID, sub.Show, t); err != nil {
-				logger.For("animesubs").Error("backfill SetShowAirUnix failed", "user_id", doc.ID, "err", err)
-				continue
-			}
-			updated = true
-		}
-		if updated {
-			updatedUsers++
-		}
-		return nil
-	})
-	return updatedUsers, err
-}
-
-func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now time.Time) error {
-	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
-		logger.For("animesubs").Debug("backfill skipped: timetable not loaded")
-		return nil
-	}
-	shows := make(map[string]int64)
-	nowUnix := now.Unix()
-	for _, show := range animeschedule.AllEntries() {
-		if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
-			continue
-		}
-		key := anime_subs.MatchKey(show.Name)
-		if key == "" {
-			continue
-		}
-		if show.AirTimeUnix > shows[key] {
-			shows[key] = show.AirTimeUnix
-		}
-	}
-	updatedUsers, err := backfillUserSubs(ctx, db.AnimeSubs(), shows)
-	if err != nil {
-		return err
-	}
-	if updatedUsers > 0 {
-		logger.For("animesubs").Debug("backfill LastNotifiedAirUnix", "count", updatedUsers)
-	}
-	return nil
 }
 
 func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {

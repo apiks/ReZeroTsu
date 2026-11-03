@@ -10,31 +10,6 @@ import (
 	"ReZeroTsu/internal/database/guilds"
 )
 
-// backfillUserSubs looks subscriptions up in a map keyed by anime_subs.MatchKey, like every other pass.
-func TestBackfillUserSubsKeysLikeMatchKey(t *testing.T) {
-	tests := []struct {
-		name    string
-		subName string
-		aired   string // the key backfillLastNotifiedAirUnix stores: anime_subs.MatchKey of the schedule name
-		want    bool
-	}{
-		{"trailing space is trimmed", "Frieren ", anime_subs.MatchKey("Frieren"), true},
-		{"U+3000 is kept, as the notifier keeps it", "Frieren　", anime_subs.MatchKey("Frieren　"), true},
-		{"U+3000 is not trimmed to match a plain name", "Frieren　", anime_subs.MatchKey("Frieren"), false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: tc.subName, Notified: true}}})
-			if _, err := backfillUserSubs(context.Background(), st, map[string]int64{tc.aired: 9_000}); err != nil {
-				t.Fatal(err)
-			}
-			if got := len(st.airSet) == 1; got != tc.want {
-				t.Errorf("backfilled = %v, want %v (airSet %v)", got, tc.want, st.airSet)
-			}
-		})
-	}
-}
-
 func TestGuildShowNamesMatchUsesMatchKey(t *testing.T) {
 	day := func(names ...string) []animeschedule.ShowEntry {
 		var out []animeschedule.ShowEntry
