@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
@@ -481,17 +482,15 @@ func handleMyRaffles(ctx context.Context, db *database.Client, s *discordgo.Sess
 }
 
 // RenderShowRafflesPage renders one page of show-raffles for pagination.
-func RenderShowRafflesPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderShowRafflesPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	raffles, err := db.Guilds().GetRaffles(ctx, i.GuildID)
 	if err != nil {
 		logger.For("commands").Error("raffle GetRaffles page failed", "guild_id", i.GuildID, "err", err)
-		_ = commands.RespondEphemeral(s, i, "Could not load raffles.")
-		return
+		return commands.Page{Refusal: "Could not load raffles."}
 	}
 	n := len(raffles)
 	if n == 0 {
-		_ = commands.RespondEphemeral(s, i, "There are no raffles.")
-		return
+		return commands.Page{Refusal: "There are no raffles."}
 	}
 	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 	if page >= totalPages {
@@ -502,28 +501,18 @@ func RenderShowRafflesPage(ctx context.Context, db *database.Client, s *discordg
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(min(start+len(fields), n)) + " of " + strconv.Itoa(n) + "."
 	components := commands.PaginationComponents("show-raffles", page, n, "")
 	emb := commands.NewEmbedWithFields(s, embedTitleRaffle, description, fields, hintShowRaffles)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("raffle RenderShowRafflesPage respond failed", args...)
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }
 
 // RenderMyRafflesPage renders one page of my-raffles for pagination.
-func RenderMyRafflesPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderMyRafflesPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	raffles, err := db.Guilds().GetRaffles(ctx, i.GuildID)
 	if err != nil {
 		logger.For("commands").Error("raffle GetRaffles page failed", "guild_id", i.GuildID, "err", err)
-		_ = commands.RespondEphemeral(s, i, "Could not load raffles.")
-		return
+		return commands.Page{Refusal: "Could not load raffles."}
 	}
-	userID := commands.UserID(i)
+	// The list belongs to the message's author, so a private copy for someone else shows the author's raffles.
+	userID := authorID
 	var mine []*guilds.Raffle
 	for _, r := range raffles {
 		if r != nil && participantContains(r.ParticipantIDs, userID) {
@@ -532,8 +521,7 @@ func RenderMyRafflesPage(ctx context.Context, db *database.Client, s *discordgo.
 	}
 	n := len(mine)
 	if n == 0 {
-		_ = commands.RespondEphemeral(s, i, "You're not in any raffles.")
-		return
+		return commands.Page{Refusal: "You're not in any raffles."}
 	}
 	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 	if page >= totalPages {
@@ -544,15 +532,5 @@ func RenderMyRafflesPage(ctx context.Context, db *database.Client, s *discordgo.
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(min(start+len(fields), n)) + " of " + strconv.Itoa(n) + "."
 	components := commands.PaginationComponents("my-raffles", page, n, userID)
 	emb := commands.NewEmbedWithFields(s, embedTitleRaffle, description, fields, hintMyRaffles)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("raffle RenderMyRafflesPage respond failed", args...)
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

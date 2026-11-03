@@ -10,7 +10,7 @@ import (
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/logger"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -43,7 +43,7 @@ func init() {
 				Autocomplete: true,
 			},
 		},
-		Handler:            handleSchedule,
+		Run:                handleSchedule,
 		AutocompleteOption: autocompleteScheduleDay,
 	})
 	commands.RegisterPaginationRenderer("schedule", RenderSchedulePage)
@@ -183,92 +183,56 @@ func BuildScheduleEmbed(weekday int, shows []animeschedule.ShowEntry) *discordgo
 	return emb
 }
 
-func handleSchedule(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
+// donghuaSetting reports whether the server shows donghua; the default, and DMs, show it.
+func donghuaSetting(ctx context.Context, db *database.Client, guildID string) bool {
+	if guildID == "" {
+		return true
+	}
+	settings, err := commands.GetSettings(ctx, db, guildID)
+	if err == nil && settings != nil {
+		return settings.Donghua
+	}
+	return true
+}
+
+// handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.
+func handleSchedule(ic *interaction.Context) error {
 	if !animeschedule.APIKeyConfigured() {
-		commands.RespondEmbed(s, i, embedTitleUnavailable, msgNotConfigured)
-		return
+		return ic.Refuse(msgNotConfigured)
 	}
 	if !animeschedule.HasData() {
-		commands.RespondEmbed(s, i, embedTitleUnavailable, msgTryAgainMinutes)
-		return
+		return ic.Refuse(msgTryAgainMinutes)
 	}
 
-	data := i.ApplicationCommandData()
-	var weekday int
-	if opt := commands.ParseOption(data.Options, "day"); opt != nil && opt.StringValue() != "" {
+	weekday := int(time.Now().Weekday())
+	if opt := commands.ParseOption(ic.Command.Options, "day"); opt != nil && opt.StringValue() != "" {
 		weekday = parseDay(opt.StringValue())
 		if weekday < 0 || weekday > 6 {
-			commands.RespondEmbed(s, i, embedTitleSchedule, msgCannotParseDay)
-			return
-		}
-	} else {
-		weekday = int(time.Now().Weekday())
-	}
-
-	donghua := true
-	if i.GuildID != "" {
-		settings, err := commands.GetSettings(ctx, db, i.GuildID)
-		if err == nil && settings != nil {
-			donghua = settings.Donghua
+			return ic.Refuse(msgCannotParseDay)
 		}
 	}
 
-	shows := animeschedule.GetDayShows(weekday, donghua)
-	emb := BuildScheduleEmbed(weekday, shows)
-	components := commands.BuildSchedulePaginationComponents(weekday, commands.UserID(i))
-	edit := &discordgo.WebhookEdit{
-		Embeds:     &[]*discordgo.MessageEmbed{emb},
-		Components: &components,
-	}
-	if _, err := s.InteractionResponseEdit(i.Interaction, edit); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("schedule edit failed", args...)
-	}
+	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ic.Context(), ic.DB, ic.GuildID))
+	return ic.EditReply(interaction.Response{
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
+		Components: commands.BuildSchedulePaginationComponents(weekday, ic.Invoker.ID),
+	})
 }
 
 // RenderSchedulePage renders one day's schedule for pagination.
-func RenderSchedulePage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderSchedulePage(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	if !animeschedule.HasData() {
-		emb := commands.NewEmbedWithFields(s, embedTitleUnavailable, msgTryAgainLater, nil)
-		embeds := []*discordgo.MessageEmbed{emb}
-		emptyComponents := []discordgo.MessageComponent{}
-		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseUpdateMessage,
-			Data: &discordgo.InteractionResponseData{
-				Embeds:     embeds,
-				Components: emptyComponents,
-			},
-		})
-		if err != nil {
-			args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-			logger.For("commands").Error("schedule RenderSchedulePage failed", args...)
-		}
-		return
+		emb := commands.NewEmbedWithFields(nil, embedTitleUnavailable, msgTryAgainLater, nil)
+		return commands.Page{Response: interaction.Response{
+			Embeds:     []*discordgo.MessageEmbed{emb},
+			Components: []discordgo.MessageComponent{},
+		}}
 	}
 
 	weekday := min(max(page, 0), 6)
-
-	donghua := true
-	if i.GuildID != "" {
-		settings, err := commands.GetSettings(ctx, db, i.GuildID)
-		if err == nil && settings != nil {
-			donghua = settings.Donghua
-		}
-	}
-
-	shows := animeschedule.GetDayShows(weekday, donghua)
-	emb := BuildScheduleEmbed(weekday, shows)
-	components := commands.BuildSchedulePaginationComponents(weekday, authorID)
-	embeds := []*discordgo.MessageEmbed{emb}
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     embeds,
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("schedule RenderSchedulePage failed", args...)
-	}
+	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ctx, db, i.GuildID))
+	return commands.Page{Response: interaction.Response{
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
+		Components: commands.BuildSchedulePaginationComponents(weekday, authorID),
+	}}
 }

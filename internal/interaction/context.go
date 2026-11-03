@@ -1,6 +1,8 @@
 package interaction
 
 import (
+	"context"
+
 	"ReZeroTsu/internal/database"
 
 	"github.com/bwmarrin/discordgo"
@@ -26,6 +28,16 @@ type Context struct {
 	// DB holds the stores.
 	DB *database.Client
 
+	// Ctx is the bot's context for database work; dispatch sets it. Use Context() to read it.
+	Ctx context.Context
+
+	// CustomID is the custom ID of the pressed button or picker, or of the submitted form; empty for commands.
+	CustomID string
+	// Values holds the chosen options of a picker press.
+	Values []string
+	// Submitted holds a form submission; nil unless a form was submitted.
+	Submitted *discordgo.ModalSubmitInteractionData
+
 	// Visibility is the command's declared visibility.
 	Visibility Visibility
 	Mode       ResponseMode
@@ -44,10 +56,28 @@ func NewContext(p Port, i *discordgo.Interaction, db *database.Client, v Visibil
 	default:
 		c.Invoker = i.User
 	}
-	if data, ok := i.Data.(discordgo.ApplicationCommandInteractionData); ok {
+	switch data := i.Data.(type) {
+	case discordgo.ApplicationCommandInteractionData:
 		c.Command = data
+	case discordgo.MessageComponentInteractionData:
+		c.CustomID, c.Values = data.CustomID, data.Values
+	case discordgo.ModalSubmitInteractionData:
+		c.CustomID, c.Submitted = data.CustomID, &data
 	}
 	return c
+}
+
+// Context returns the bot's context for database work, or a background one when dispatch did not set it.
+func (c *Context) Context() context.Context {
+	if c.Ctx == nil {
+		return context.Background()
+	}
+	return c.Ctx
+}
+
+// OnPrivateMessage reports whether the pressed component sits on a private message, one only the presser sees.
+func (c *Context) OnPrivateMessage() bool {
+	return c.Interaction.Message != nil && c.Interaction.Message.Flags&discordgo.MessageFlagsEphemeral != 0
 }
 
 func (c *Context) resolve(v Visibility) Visibility {

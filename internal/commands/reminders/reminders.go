@@ -12,6 +12,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/reminders"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -352,20 +353,17 @@ func handleReminders(ctx context.Context, db *database.Client, s *discordgo.Sess
 }
 
 // RenderRemindersPage renders one page of reminders for pagination.
-func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	if authorID == "" {
-		_ = commands.RespondEphemeral(s, i, "Could not load reminders.")
-		return
+		return commands.Page{Refusal: "Could not load reminders."}
 	}
 	slice, err := db.Reminders().GetByID(ctx, authorID)
 	if err != nil {
 		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[reminders] GetByID %s: %v", authorID, err))
-		_ = commands.RespondEphemeral(s, i, "Could not load your reminders.")
-		return
+		return commands.Page{Refusal: "Could not load your reminders."}
 	}
 	if slice == nil || len(slice.Reminders) == 0 {
-		_ = commands.RespondEphemeral(s, i, "No saved reminders for you found.")
-		return
+		return commands.Page{Refusal: "No saved reminders for you found."}
 	}
 	n := len(slice.Reminders)
 	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
@@ -378,14 +376,5 @@ func RenderRemindersPage(ctx context.Context, db *database.Client, s *discordgo.
 	desc := fmt.Sprintf("Page %d of %d. Showing %d–%d of %d.", page+1, totalPages, start+1, endShow, n)
 	components := commands.PaginationComponents("reminders", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleReminders, desc, fields, hintRemoveRemind)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[reminders] RenderRemindersPage respond: %v", err))
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

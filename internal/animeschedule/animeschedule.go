@@ -73,6 +73,20 @@ func SetAPIKey(key string) {
 	apiKey = key
 }
 
+// Seed replaces the cached timetable and marks it populated, keyed by weekday (0=Sunday .. 6=Saturday), and
+// returns a function that restores the previous state. It exists so command tests need no HTTP server.
+func Seed(days map[int][]ShowEntry) (restore func()) {
+	cacheMu.Lock()
+	prev, prevPopulated := cache, cachePopulated
+	cache, cachePopulated = days, true
+	cacheMu.Unlock()
+	return func() {
+		cacheMu.Lock()
+		cache, cachePopulated = prev, prevPopulated
+		cacheMu.Unlock()
+	}
+}
+
 // APIKeyConfigured reports whether an API key is set.
 func APIKeyConfigured() bool {
 	apiKeyMu.RLock()
