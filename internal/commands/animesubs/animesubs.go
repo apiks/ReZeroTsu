@@ -153,7 +153,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	}
 
 	now := animeschedule.Now()
-	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true), show.Route, showName, now.Unix())
+	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true, animeschedule.PreferSub), show.Route, showName, now.Unix())
 
 	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Notified: hasAiredToday, Guild: false}
 	if hasAiredToday {

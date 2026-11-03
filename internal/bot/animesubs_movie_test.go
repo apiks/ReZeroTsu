@@ -17,6 +17,8 @@ func TestEpisodeEmbedWording(t *testing.T) {
 		want string
 	}{
 		{"tv sub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", AirType: "sub"}, "**Ep 5** subbed is out!"},
+		{"tv dub", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", AirType: "dub"}, "**Ep 5** dubbed is out!"},
+		{"movie dub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", AirType: "dub", MediaType: animeschedule.MediaMovie}, "**Film** is out, dubbed!"},
 		{"tv raw", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", AirType: "raw"}, "**Ep 5** raw is out!"},
 		{"ova keeps episode wording", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1F", AirType: "sub", MediaType: animeschedule.MediaOVA}, "**Ep 1F** subbed is out!"},
 		{"movie sub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", AirType: "sub", MediaType: animeschedule.MediaMovie}, "**Film** is out, subbed!"},

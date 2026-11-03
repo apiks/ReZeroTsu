@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/interaction/interactiontest"
@@ -78,7 +79,7 @@ func TestChoosingADayShowsItsPageWithUpdatedControls(t *testing.T) {
 
 func TestPickerChoiceByAnotherMemberGetsAPrivateCopyAndOnAPrivateCopyUpdatesIt(t *testing.T) {
 	seedWeeks(t)
-	id := pickerCustomID("author")
+	id := pickerCustomID("author", animeschedule.PreferSub)
 	calls := choosePick(t, id, "2026-11-05", "stranger", publicMsg())
 	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private {
 		t.Fatalf("other member: want a private copy, got %+v", calls)
@@ -93,7 +94,7 @@ func TestPickerChoiceByAnotherMemberGetsAPrivateCopyAndOnAPrivateCopyUpdatesIt(t
 func TestPickerChoiceOutsideTheLoadedRangeIsRefusedPrivately(t *testing.T) {
 	seedWeeks(t)
 	for _, day := range []string{staleDay, "2026-11-16", "garbage"} {
-		calls := choosePick(t, pickerCustomID("user"), day, "user", publicMsg())
+		calls := choosePick(t, pickerCustomID("user", animeschedule.PreferSub), day, "user", publicMsg())
 		if len(calls) != 1 || calls[0].Visibility != interaction.Private || calls[0].Response.Content != msgDayNotLoaded {
 			t.Errorf("%s: want the private refusal %q, got %+v", day, msgDayNotLoaded, calls)
 		}

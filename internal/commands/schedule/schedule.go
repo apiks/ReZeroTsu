@@ -32,7 +32,7 @@ func init() {
 		Visibility: commands.Public,
 		Response:   commands.Deferred,
 		Name:       "schedule",
-		Desc:       "Anime release times for today, tomorrow or a day; a day picker jumps across the loaded weeks.",
+		Desc:       "Anime release times for today, tomorrow or a day, as sub, dub or raw; jump across the loaded weeks.",
 		Context:    commands.ContextBoth,
 		Module:     "schedule",
 		Installs:   commands.BothInstalls(),
@@ -43,6 +43,17 @@ func init() {
 				Description:  "A day: today, tomorrow, or a weekday like monday or tue (its next occurrence). Omit for today.",
 				Required:     false,
 				Autocomplete: true,
+			},
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "track",
+				Description: "Track to show: Sub (sub, else raw), Dub (dub, else sub, else raw) or Raw. Omit for the server's.",
+				Required:    false,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					{Name: "Sub", Value: "sub"},
+					{Name: "Dub", Value: "dub"},
+					{Name: "Raw", Value: "raw"},
+				},
 			},
 		},
 		Run:                handleSchedule,
@@ -117,11 +128,7 @@ func parseDay(s string) int {
 
 // scheduleLine renders one entry; onToday adds the live relative time.
 func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
-	airLabel := "SUB"
-	if e.AirType == "raw" {
-		airLabel = "RAW"
-	}
-	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, airLabel)
+	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, e.AirType.Label())
 	if e.Delayed != "" {
 		line += " " + e.Delayed
 	}
@@ -169,10 +176,10 @@ func utf16Len(s string) int {
 	return n
 }
 
-// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list. Both /schedule and the
-// daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC day adds live
-// relative times.
-func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
+// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list, read under pref. Both
+// /schedule and the daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC
+// day adds live relative times. The footer names a Dub or Raw preference.
+func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pref animeschedule.PreferredTrack) *discordgo.MessageEmbed {
 	date = date.UTC()
 	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
@@ -190,6 +197,12 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry) *d
 	footerText := fmt.Sprintf("%d shows", len(shows))
 	if len(shows) == 1 {
 		footerText = "1 show"
+	}
+	switch pref {
+	case animeschedule.PreferDub:
+		footerText += " · Dub preferred"
+	case animeschedule.PreferRaw:
+		footerText += " · Raw preferred"
 	}
 	footerText += " · days run on UTC, times show in your time zone"
 	emb := &discordgo.MessageEmbed{
@@ -224,6 +237,22 @@ func donghuaSetting(ctx context.Context, db *database.Client, i *discordgo.Inter
 	return true
 }
 
+// serverPreferredTrack reads the server's preferred track. The server setting does not exist yet, so it is Sub
+// everywhere, and a press on a message from before tracks opens Sub.
+func serverPreferredTrack(_ context.Context, _ *database.Client, _ *discordgo.Interaction) animeschedule.PreferredTrack {
+	return animeschedule.PreferSub
+}
+
+// trackOption reads the track option; omitted, it is the server's preferred track.
+func trackOption(ic *interaction.Context) animeschedule.PreferredTrack {
+	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
+		if pref, ok := animeschedule.ParsePreferredTrack(opt.StringValue()); ok {
+			return pref
+		}
+	}
+	return serverPreferredTrack(ic.Context(), ic.DB, ic.Interaction)
+}
+
 // handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.
 func handleSchedule(ic *interaction.Context) error {
 	if !animeschedule.APIKeyConfigured() {
@@ -246,9 +275,10 @@ func handleSchedule(ic *interaction.Context) error {
 		date = resolved
 	}
 
-	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
+	pref := trackOption(ic)
+	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction), pref)
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows)},
-		Components: pageComponents(v, date, ic.Invoker.ID),
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
+		Components: pageComponents(v, date, ic.Invoker.ID, pref),
 	})
 }

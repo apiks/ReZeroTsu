@@ -119,14 +119,14 @@ func TestGetDayShowsReadsOneUTCDateAndFiltersDonghua(t *testing.T) {
 	})()
 	// A local time on the other side of midnight still reads its UTC date.
 	date := time.Date(2026, 11, 3, 23, 0, 0, 0, time.FixedZone("west", -5*3600)) // 2026-11-04 04:00 UTC
-	if got := GetDayShows(date, true); len(got) != 0 {
+	if got := GetDayShows(date, true, PreferSub); len(got) != 0 {
 		t.Errorf("2026-11-04 shows = %v, want none", got)
 	}
 	date = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	if got := GetDayShows(date, true); len(got) != 2 {
+	if got := GetDayShows(date, true, PreferSub); len(got) != 2 {
 		t.Errorf("with donghua = %v, want 2 shows", got)
 	}
-	if got := GetDayShows(date, false); len(got) != 1 || got[0].Name != "Mon" {
+	if got := GetDayShows(date, false, PreferSub); len(got) != 1 || got[0].Name != "Mon" {
 		t.Errorf("without donghua = %v, want only Mon", got)
 	}
 }
