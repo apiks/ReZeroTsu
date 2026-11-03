@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"ReZeroTsu/internal/animeschedule"
@@ -122,7 +123,7 @@ var showLookup = findShowByName
 
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
 // already held), which is when the DMs footer applies. only narrows the lookup to one media type.
-func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType) (responseDesc string, confirmed bool, logErr error) {
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType, set animeschedule.SubscriptionTracks) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
@@ -153,12 +154,11 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	}
 
 	now := animeschedule.Now()
-	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true, animeschedule.PreferSub), show.Route, showName, now.Unix())
-
-	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Notified: hasAiredToday, Guild: false}
-	if hasAiredToday {
-		newSub.LastNotifiedAirUnix = airedToday.AirTimeUnix
+	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Guild: false}
+	if set != animeschedule.SubscribeSub {
+		newSub.Tracks = set.String()
 	}
+	seedMemory(newSub, set, now)
 	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
 	if err != nil {
 		return "Could not save subscription.", false, err
@@ -167,6 +167,9 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
 	}
 	desc := fmt.Sprintf("Subscribed to **%s**.", showName)
+	if set != animeschedule.SubscribeSub {
+		desc = fmt.Sprintf("Subscribed to **%s** (%s).", showName, set.Title())
+	}
 	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, now).confirmationLine(); line != "" {
 		desc += "\n" + line
 	}
@@ -217,6 +220,22 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		return "Could not update subscriptions.", err
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
+}
+
+// seedMemory marks, for each member of the set, the row of that member that already aired today as sent, so
+// subscribing after an airing never DMs it. A member with no aired row today keeps no memory.
+func seedMemory(sub *anime_subs.ShowSub, set animeschedule.SubscriptionTracks, now time.Time) {
+	byMember := make(map[animeschedule.Track][]animeschedule.ShowEntry)
+	for _, row := range animeschedule.SelectRows(now, set) {
+		for _, m := range row.MembersIn(set) {
+			byMember[m] = append(byMember[m], row.ShowEntry)
+		}
+	}
+	for _, m := range set.Members() {
+		if aired, ok := airedTodayEntry(byMember[m], sub.Route, sub.Show, now.Unix()); ok {
+			sub.Remember(anime_subs.Mark{Track: string(m), AirUnix: aired.AirTimeUnix})
+		}
+	}
 }
 
 // airedTodayEntry returns today's entry for the show with this route and title if it has already aired at nowUnix.

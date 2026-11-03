@@ -25,6 +25,58 @@ type ShowSub struct {
 	// the tracks release lack them).
 	Track   string `bson:"track,omitempty"`
 	Episode string `bson:"episode,omitempty"`
+	// Tracks is the subscription tracks of a user's entry, in the stored form of animeschedule.SubscriptionTracks;
+	// optional (an entry without one reads as Sub).
+	Tracks string `bson:"tracks,omitempty"`
+	// The Dub and Raw members' memory of what was last DMed; the Sub member's is LastNotifiedAirUnix and
+	// LastNotifiedEpisode. Optional.
+	LastNotifiedDubAirUnix int64  `bson:"last_notified_dub_air_unix,omitempty"`
+	LastNotifiedDubEpisode string `bson:"last_notified_dub_episode,omitempty"`
+	LastNotifiedRawAirUnix int64  `bson:"last_notified_raw_air_unix,omitempty"`
+	LastNotifiedRawEpisode string `bson:"last_notified_raw_episode,omitempty"`
+}
+
+// Mark is what one track member of a subscription last sent: the air time and the episode key.
+type Mark struct {
+	Track   string
+	AirUnix int64
+	Episode string
+}
+
+// Memory is what the named track member ("sub", "dub" or "raw") last sent; the Sub member's memory is the entry's
+// original fields.
+func (s *ShowSub) Memory(track string) (airUnix int64, episode string) {
+	switch track {
+	case "dub":
+		return s.LastNotifiedDubAirUnix, s.LastNotifiedDubEpisode
+	case "raw":
+		return s.LastNotifiedRawAirUnix, s.LastNotifiedRawEpisode
+	}
+	return s.LastNotifiedAirUnix, s.LastNotifiedEpisode
+}
+
+// Remember records m on the member it names and marks the entry notified.
+func (s *ShowSub) Remember(m Mark) {
+	s.Notified = true
+	switch m.Track {
+	case "dub":
+		s.LastNotifiedDubAirUnix, s.LastNotifiedDubEpisode = m.AirUnix, m.Episode
+	case "raw":
+		s.LastNotifiedRawAirUnix, s.LastNotifiedRawEpisode = m.AirUnix, m.Episode
+	default:
+		s.LastNotifiedAirUnix, s.LastNotifiedEpisode = m.AirUnix, m.Episode
+	}
+}
+
+// memoryFields are the stored field names of one member's memory.
+func memoryFields(track string) (air, episode string) {
+	switch track {
+	case "dub":
+		return "last_notified_dub_air_unix", "last_notified_dub_episode"
+	case "raw":
+		return "last_notified_raw_air_unix", "last_notified_raw_episode"
+	}
+	return "last_notified_air_unix", "last_notified_episode"
 }
 
 // AnimeSubs is an anime_subs document; key field is id (not _id).
@@ -129,16 +181,20 @@ func identityFilter(shows []*ShowSub) bson.M {
 	return bson.M{"$or": or}
 }
 
-// MarkShowNotified records one show of the document as notified, with its air time and episode key,
-// in a single update statement. The show is matched by exact name.
-func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
-	update := bson.M{"$set": bson.M{
-		"shows.$[s].notified":               true,
-		"shows.$[s].last_notified_air_unix": airUnix,
-		"shows.$[s].last_notified_episode":  episodeKey,
-	}}
+// MarkShowNotified records one show of the document as notified, with the air time and episode key of each given
+// member, in a single update statement. The show is matched by exact name.
+func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks []Mark) error {
+	if len(marks) == 0 {
+		return nil
+	}
+	set := bson.M{"shows.$[s].notified": true}
+	for _, m := range marks {
+		air, episode := memoryFields(m.Track)
+		set["shows.$[s]."+air] = m.AirUnix
+		set["shows.$[s]."+episode] = m.Episode
+	}
 	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": set}, opts); err != nil {
 		return fmt.Errorf("MarkShowNotified: %w", err)
 	}
 	return nil

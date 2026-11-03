@@ -87,7 +87,7 @@ func TestSpanAlertReachesASubscribersDMOnce(t *testing.T) {
 	d := newFakeDiscord()
 	for i := 0; i < 2; i++ {
 		doc, _ := st.GetAnimeSubs(context.Background(), user)
-		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, []animeschedule.ShowEntry{show}, trackedNow)
+		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, subRows([]animeschedule.ShowEntry{show}), trackedNow)
 	}
 	msgs := d.deliveredTo("dm-" + user)
 	if len(msgs) != 1 || len(msgs[0].Msg.Embeds) != 1 || msgs[0].Msg.Embeds[0].Description != "**Ep 1-12F** dubbed is out!" {
@@ -107,7 +107,7 @@ func TestSpanRowAlreadyDMedUnderItsOldLabelIsNotDMedAgain(t *testing.T) {
 	span.Episode = "Ep 1-12F"
 	d := newFakeDiscord()
 	doc, _ := st.GetAnimeSubs(context.Background(), user)
-	_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, []animeschedule.ShowEntry{span}, trackedNow)
+	_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, subRows([]animeschedule.ShowEntry{span}), trackedNow)
 	if n := len(d.deliveredTo("dm-" + user)); n != 0 {
 		t.Errorf("DMs = %d, want 0", n)
 	}

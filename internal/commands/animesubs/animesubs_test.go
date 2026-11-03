@@ -104,7 +104,7 @@ func TestSubCore(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, _, err := subCore(context.Background(), tt.store, "u", tt.input, nil)
+			msg, _, err := subCore(context.Background(), tt.store, "u", tt.input, nil, animeschedule.SubscribeSub)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +125,7 @@ func TestSubCoreMaxSubscriptions(t *testing.T) {
 	for i := 0; i < maxUserSubscriptions; i++ {
 		st.with("u", "show"+strings.Repeat("x", i))
 	}
-	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil)
+	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil, animeschedule.SubscribeSub)
 	if err != nil || !strings.Contains(msg, "maximum") {
 		t.Fatalf("msg=%q err=%v", msg, err)
 	}
@@ -172,7 +172,7 @@ func TestUnsubCore(t *testing.T) {
 func TestSubCoreLegacyTrimmedEntryIsAlreadySubscribed(t *testing.T) {
 	withLookup(t, "Frieren")
 	st := newFakeStore().with("u", "Frieren ")
-	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil)
+	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil, animeschedule.SubscribeSub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestSubCoreStoresTheResolvedShowRoute(t *testing.T) {
 	}
 	t.Cleanup(func() { showLookup = old })
 	st := newFakeStore()
-	if _, _, err := subCore(context.Background(), st, "u", "frieren", nil); err != nil {
+	if _, _, err := subCore(context.Background(), st, "u", "frieren", nil, animeschedule.SubscribeSub); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.docs["u"]; len(got) != 1 || got[0].Route != "sousou-no-frieren" {

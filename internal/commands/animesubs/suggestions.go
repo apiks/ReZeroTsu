@@ -28,6 +28,20 @@ var typeChoices = []*discordgo.ApplicationCommandOptionChoice{
 	typeChoice(animeschedule.MediaMovie, "movie"),
 }
 
+const optTrack = "track"
+
+// trackChoices are the fixed values of the `track` option: each subscription tracks set and its stored form.
+var trackChoices = func() []*discordgo.ApplicationCommandOptionChoice {
+	var out []*discordgo.ApplicationCommandOptionChoice
+	for _, set := range []animeschedule.SubscriptionTracks{
+		animeschedule.SubscribeSub, animeschedule.SubscribeDub, animeschedule.SubscribeRaw,
+		animeschedule.SubscribeSubDub, animeschedule.SubscribeEvery,
+	} {
+		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: set.Title(), Value: set.String()})
+	}
+	return out
+}()
+
 // typeChoice is the choice for a media type: its label (TV carries none, so it is named here) and its route.
 func typeChoice(mt animeschedule.MediaType, route string) *discordgo.ApplicationCommandOptionChoice {
 	name := mt.Label()
