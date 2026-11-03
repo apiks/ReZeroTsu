@@ -1,6 +1,6 @@
 # Coding standards
 
-Read during review. Mechanical rules (formatting, unused code, direct Discord sends, show-name matching) are enforced by checks, not listed here.
+Read during review. Mechanical rules (formatting, unused code, direct Discord sends, show-name matching, text sliced at a Discord length limit) are enforced by checks, not listed here.
 
 ## Behaviour parity
 
@@ -15,4 +15,4 @@ A change described as behaviour-preserving keeps every check the old code ran on
 
 Names, comments and test titles use the terms in `GLOSSARY.md`. A term listed under its `_Avoid_` line is a finding, as is a coined synonym for a defined term.
 
-The archcheck rule `checkAvoidTerms` flags the Avoid terms that mean nothing else (such as "moderator role" and "giveaway") in identifiers and string literals. Review the rest: everyday words like "pick", "roll", "sub" and "cache", every comment and test title, and every user-facing sentence.
+Two archcheck rules cover the mechanical part. `checkAvoidTerms` flags the Avoid terms that mean nothing else (such as "moderator role" and "giveaway") in identifiers and string literals. `checkAvoidPhrases` flags every multi-word Avoid term in `GLOSSARY.md` (such as "post type" and "ONA (Chinese)") in comments and string literals; a line that must quote an upstream or stored name carries `archcheck:allow`. Review the rest: single everyday words like "pick", "roll", "sub" and "cache", every test title, and every user-facing sentence.

@@ -206,9 +206,7 @@ func processReminderSlice(ctx context.Context, d RunOperations, senders *channel
 		}
 		dueVal := fmt.Sprintf("<t:%d:R>", r.Date.UTC().Unix())
 		desc := fmt.Sprintf("**Set:** %s · **Due:** %s%s\n\n%s", setVal, dueVal, reminderOriginLine(r), r.Message)
-		if len(desc) > discord.MaxEmbedDescriptionLength {
-			desc = desc[:discord.MaxEmbedDescriptionLength]
-		}
+		desc = discord.Fit(desc, discord.MaxEmbedDescriptionLength)
 		emb := &discordgo.MessageEmbed{
 			Title:       "Reminder",
 			Description: desc,

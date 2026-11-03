@@ -477,7 +477,7 @@ func (r *Repo) RemoveFeedsByChannel(ctx context.Context, guildID, channelID stri
 	return res.ModifiedCount, nil
 }
 
-// RemoveFeedsBySubredditAndPostType removes all feeds for the subreddit and post type.
+// RemoveFeedsBySubredditAndPostType removes all Reddit feeds for the subreddit and sort (stored as post_type).
 func (r *Repo) RemoveFeedsBySubredditAndPostType(ctx context.Context, guildID, subreddit, postType string) (int64, error) {
 	filter := bson.M{"_id": guildID}
 	update := bson.M{"$pull": bson.M{"feeds": bson.M{"subreddit": subreddit, "post_type": postType}}}

@@ -16,13 +16,8 @@ Input for `/to-spec`. This log records the decisions from a grilling session on 
 - Reddit feeds always post through the bot account (`feedPinPolicy` is bot-account-only), never a webhook. Verifying an unknown send reads recent messages, so Read Message History is needed. Auto-pin needs Manage Messages and Pin Messages (`discord.PermissionPinMessages`).
 - `commands.handlePagination` holds the rule for navigation presses (the author replaces the message, another member gets a private copy of a copy-safe view). The new schedule day picker must follow the same rule, so that logic needs to be callable from a picker handler too.
 
-### AnimeSchedule API (checked live on 2026-11-03)
-- `GET /timetables` with no parameters returns the current ISO week, Monday to Sunday: week 45 of 2026 ran 2 Nov 01:00Z to 8 Nov 17:00Z, identical to `?year=2026&week=45`. `?year=2026&week=46` returned next week. Week numbering is ISO; `week` and `year` must be passed together.
-- Times come back as ISO 8601 with their real offset, so the instants are right in any `tz`. The week boundaries, though, are computed in the `tz` zone, which defaults to Europe/London. Summer week 30 of 2026 ran from Monday 02:00+01:00 to Sunday 23:00+01:00. Under BST the default week therefore starts and ends at Sunday 23:00 UTC. Today's bot loses the last UTC hour of each Sunday and files the previous Sunday's late shows under this Sunday, because it groups by weekday. With `tz=Asia/Tokyo` the times carry `+09:00`, and `tz=Etc/UTC` is accepted and gives a Monday-to-Sunday UTC week.
-- Rate limits are documented on the API docs' rate-limits page: 120 requests per minute, counted per IP and per app, and subject to change. `X-RateLimit-Reset` is a Unix time in seconds: live, it was about 60 seconds away. The docs don't say what happens when the limit is exceeded. AnimeSchedule's terms ask to cache API data only as needed and to respect the limits.
-- `GET /anime?airing-statuses=upcoming` returns `{anime, page, totalAmount}`, 18 per page; there were 576 upcoming anime (32 pages). Items carry `title`, `route`, `names` (romaji, english, native, synonyms), `premier`, `subPremier`, `dubPremier`, `status`, `episodes`, `mediaTypes`, `imageVersionRoute`. Most have no premiere date (zero time). There is no donghua flag on anime items.
-- The `q` text search is loose (it falls back to genres, studios, sources): "frieren" returned 8 upcoming shows, one of them Frieren.
-- Timetable entries carry `mediaTypes`. Over weeks 44 to 46 the types seen were TV, TV Short, ONA, ONA (Chinese) (`ona-chinese`), OVA, Special and Movie. Movies appear on the timetable as episode 1 of 1 on their release date (e.g. "Rakuen Tsuihou: Kokoro no Resonance", 2026-11-13), so a movie can send an alert.
+### AnimeSchedule API
+Verified facts (weeks, time zones, rate limits, media types, the upcoming list) are in `docs/animeschedule-api.md`. One consequence drove this batch: before it, the bot grouped the default week, whose boundaries follow London time, by weekday. Under summer time that lost the last UTC hour of each Sunday and filed the previous Sunday's late shows under the next one.
 
 ## Decisions
 

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // directSendCalls are the discordgo methods that put a message in front of a user or read the channel to check
@@ -234,7 +235,7 @@ func scanTree(t *testing.T, root string, c check) []string {
 			return nil
 		}
 		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, nil, 0)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
 		}
@@ -267,7 +268,7 @@ func scanDir(t *testing.T, dir string, c check) []string {
 		}
 		fset := token.NewFileSet()
 		path := filepath.Join(dir, name)
-		file, err := parser.ParseFile(fset, path, nil, 0)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
@@ -303,6 +304,18 @@ func TestRemovedModeratorSettingsAreNotReferenced(t *testing.T) {
 
 func TestGlossaryAvoidTermsAreNotUsedInNames(t *testing.T) {
 	for _, v := range scanTree(t, "..", checkAvoidTerms) {
+		t.Error(v)
+	}
+}
+
+func TestGlossaryAvoidPhrasesAreNotUsedInCommentsOrStrings(t *testing.T) {
+	for _, v := range scanTree(t, "..", checkAvoidPhrases(avoidPhrases(t))) {
+		t.Error(v)
+	}
+}
+
+func TestTextIsNotSlicedAtDiscordLengthLimits(t *testing.T) {
+	for _, v := range scanTree(t, "..", checkLimitSlices) {
 		t.Error(v)
 	}
 }
@@ -367,9 +380,25 @@ func init() {
 		"// ModeratorRole may be named in a comment.\n" +
 		"const prefix = \"command-role:\"\n\n" +
 		"func f(giveawayID string) { _ = \"fine\" }\n"
+	const slicing = `package bot
+
+func f(title string, fields []int) {
+	_ = title[:discord.MaxEmbedAuthorNameLength-1]
+	_ = title[:discord.MaxEmbedFooterLength]
+	_ = fields[:discord.MaxEmbedFields]
+	_ = title[:n]
+}
+`
+	const phrasing = "package feeds\n\n" +
+		"// The post type of a feed.\n" +
+		"// The upstream ONA (Chinese) label. archcheck:allow\n" +
+		"const note = \"Invalid post type\"\n" +
+		"const quoted = \"ONA (Chinese)\" // archcheck:allow\n" +
+		"const stored = \"post_type\"\n" +
+		"const fine = \"sort\"\n"
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, "sample.go", src, 0)
+		file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,6 +425,10 @@ func init() {
 		{"unrelated code is not a removed moderator setting", clean, checkRemovedModeratorSettings, "x.go", 0},
 		{"glossary Avoid terms are flagged in names and strings, not comments", avoiding, checkAvoidTerms, "x.go", 2},
 		{"unrelated code has no Avoid term", clean, checkAvoidTerms, "x.go", 0},
+		{"multi-word Avoid terms are flagged in comments and strings, not where allowed or stored names", phrasing, checkAvoidPhrases(avoidPhrases(t)), "x.go", 2},
+		{"unrelated code has no Avoid phrase", clean, checkAvoidPhrases(avoidPhrases(t)), "x.go", 0},
+		{"text sliced at a Discord length limit is flagged, a count limit is not", slicing, checkLimitSlices, "x.go", 2},
+		{"unrelated slices are fine", clean, checkLimitSlices, "x.go", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -405,6 +438,113 @@ func init() {
 			}
 		})
 	}
+}
+
+// allowMarker on a line (or inside a comment) exempts that line from the Avoid-phrase check, for the places that
+// must quote an upstream or stored name, such as AnimeSchedule's "ONA (Chinese)" label.
+const allowMarker = "archcheck:allow"
+
+// avoidPhrases returns a matcher for the multi-word `_Avoid_` terms in GLOSSARY.md ("post type", "ONA (Chinese)",
+// "episode feed"). The glossary stays the single source: add a term there and this check follows. A space in a term
+// also matches a hyphen, and a trailing "s" is allowed. Single words stay in avoidTerms and CODING_STANDARDS.md.
+func avoidPhrases(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	raw, err := os.ReadFile("../../GLOSSARY.md")
+	if err != nil {
+		t.Fatalf("read GLOSSARY.md: %v", err)
+	}
+	var alts []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "_Avoid_:")
+		if !ok {
+			continue
+		}
+		for _, term := range strings.Split(rest, ",") {
+			term = strings.TrimSpace(term)
+			if strings.Contains(term, " ") {
+				alts = append(alts, strings.ReplaceAll(regexp.QuoteMeta(term), " ", "[ -]"))
+			}
+		}
+	}
+	if len(alts) == 0 {
+		t.Fatal("GLOSSARY.md has no multi-word Avoid terms; the parser is out of date")
+	}
+	return regexp.MustCompile(`(?i)(?:^|[^\pL\pN])(?:` + strings.Join(alts, "|") + `)s?(?:$|[^\pL\pN])`)
+}
+
+// checkAvoidPhrases reports comments and string literals that contain a multi-word glossary Avoid term.
+func checkAvoidPhrases(re *regexp.Regexp) check {
+	return func(fset *token.FileSet, file *ast.File, name string) []string {
+		allowed := map[int]bool{}
+		for _, g := range file.Comments {
+			for _, c := range g.List {
+				if strings.Contains(c.Text, allowMarker) {
+					allowed[fset.Position(c.End()).Line] = true
+				}
+			}
+		}
+		var out []string
+		report := func(pos token.Pos, kind, text string) {
+			if allowed[fset.Position(pos).Line] {
+				return
+			}
+			if m := re.FindString(text); m != "" {
+				out = append(out, fmt.Sprintf("%s:%d: %s contains the glossary Avoid term %q; use the term GLOSSARY.md defines",
+					name, fset.Position(pos).Line, kind, strings.TrimFunc(m, func(r rune) bool { return !unicode.IsLetter(r) && r != ')' })))
+			}
+		}
+		for _, g := range file.Comments {
+			for _, c := range g.List {
+				if !strings.Contains(c.Text, allowMarker) {
+					report(c.Pos(), "a comment", c.Text)
+				}
+			}
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				report(lit.Pos(), "a string", lit.Value)
+			}
+			return true
+		})
+		return out
+	}
+}
+
+// checkLimitSlices reports a string sliced at a Discord length limit (s[:discord.MaxEmbedDescriptionLength-1]).
+// Discord counts UTF-16 units and the slice counts bytes, so it cuts early and can split a character. Use
+// discord.Fit or discord.Head.
+func checkLimitSlices(fset *token.FileSet, file *ast.File, name string) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		s, ok := n.(*ast.SliceExpr)
+		if !ok {
+			return true
+		}
+		for _, bound := range []ast.Expr{s.Low, s.High, s.Max} {
+			if bound != nil && mentionsLengthLimit(bound) {
+				out = append(out, fmt.Sprintf("%s:%d: sliced at a Discord length limit; cut with discord.Fit or discord.Head",
+					name, fset.Position(s.Pos()).Line))
+				break
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// mentionsLengthLimit reports whether e refers to a discord.Max...Length constant.
+func mentionsLengthLimit(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "discord" &&
+				strings.HasPrefix(sel.Sel.Name, "Max") && strings.HasSuffix(sel.Sel.Name, "Length") {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // avoidTerms are the GLOSSARY.md `_Avoid_` terms that mean nothing else in this codebase, written lowercase with
