@@ -30,7 +30,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Server settings:** `/bot-log`, `/new-episodes`, `/daily-schedule`, `/donghua`, `/ping-message`, `/mod-only`, `/react-module`, `/moderator-roles`, `/add-moderator-role`, `/remove-moderator-role`.
 
-**Voice roles:** `/add-voice`, `/remove-voice`, `/voice-roles`.
+**Voice roles:** `/voicerole add`, `/voicerole remove`, `/voicerole list`.
 
 **Reddit feeds:** `/reddit add`, `/reddit remove`, `/reddit list`.
 
