@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
@@ -332,7 +333,7 @@ func handleReactsAutorole(ctx context.Context, db *database.Client, s *discordgo
 }
 
 // RenderReactsAutorolePage renders one page of reacts-autorole for pagination.
-func RenderReactsAutorolePage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderReactsAutorolePage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	roles, err := s.GuildRoles(i.GuildID)
 	roleNames := make(map[string]string)
 	if err == nil {
@@ -348,8 +349,7 @@ func RenderReactsAutorolePage(ctx context.Context, db *database.Client, s *disco
 	m, err := db.Guilds().GetReactJoinMap(ctx, i.GuildID)
 	if err != nil {
 		logger.For("commands").Error("react GetReactJoinMap page failed", "guild_id", i.GuildID, "err", err)
-		_ = commands.RespondEphemeral(s, i, "Could not load react joins.")
-		return
+		return commands.Page{Refusal: "Could not load react joins."}
 	}
 	messageIDs := make([]string, 0, len(m))
 	for msgID, entry := range m {
@@ -360,8 +360,7 @@ func RenderReactsAutorolePage(ctx context.Context, db *database.Client, s *disco
 	sort.Strings(messageIDs)
 	n := len(messageIDs)
 	if n == 0 {
-		_ = commands.RespondEphemeral(s, i, "There are no set react autoroles.")
-		return
+		return commands.Page{Refusal: "There are no set react autoroles."}
 	}
 	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 	if page >= totalPages {
@@ -374,19 +373,9 @@ func RenderReactsAutorolePage(ctx context.Context, db *database.Client, s *disco
 		endShow = n
 	}
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(endShow) + " of " + strconv.Itoa(n) + " messages."
-	components := commands.PaginationComponents("reacts-autorole", page, n, commands.UserID(i))
+	components := commands.PaginationComponents("reacts-autorole", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleReact, description, fields, hintRemoveReact)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("react RenderReactsAutorolePage respond failed", args...)
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }
 
 func buildMessageRoleEmojiValue(entry *guilds.ReactJoin, roleNames map[string]string, guildEmojiIDs map[string]struct{}) string {

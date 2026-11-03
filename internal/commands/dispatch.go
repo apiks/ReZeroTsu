@@ -87,6 +87,7 @@ func dispatch(ctx context.Context, db *database.Client, settings settingsReader,
 		return nil
 	}
 	ic := interaction.NewContext(port, i.Interaction, db, cmd.Visibility, cmd.Response)
+	ic.Ctx = ctx
 
 	if msg := contextRefusal(cmd.Context, i.GuildID); msg != "" {
 		refuse(ic, msg)
@@ -142,10 +143,10 @@ func refuse(ic *interaction.Context, text string) {
 	}
 }
 
-// OnInteraction dispatches slash commands, pagination, and autocomplete; reports errors privately.
+// OnInteraction dispatches slash commands, buttons, pickers, forms and autocomplete; reports errors privately.
 func OnInteraction(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type == discordgo.InteractionMessageComponent && HasPaginationPrefix(i.MessageComponentData().CustomID) {
-		HandlePagination(ctx, db, s, i)
+	if i.Type == discordgo.InteractionMessageComponent || i.Type == discordgo.InteractionModalSubmit {
+		dispatchComponent(ctx, db, interaction.NewDiscordgoPort(s, i.Interaction), s, i)
 		return
 	}
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {

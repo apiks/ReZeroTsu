@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 	"ReZeroTsu/internal/reddit"
 
@@ -417,17 +418,15 @@ func handleRedditFeeds(ctx context.Context, db *database.Client, s *discordgo.Se
 }
 
 // RenderRedditFeedsPage renders one page of reddit-feeds for pagination.
-func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) {
+func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
 	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
 	if err != nil {
 		logger.For("commands").Error("reddit GetFeeds page failed", "guild_id", i.GuildID, "err", err)
-		_ = commands.RespondEphemeral(s, i, "Could not load feeds.")
-		return
+		return commands.Page{Refusal: "Could not load feeds."}
 	}
 	n := len(feeds)
 	if n == 0 {
-		_ = commands.RespondEphemeral(s, i, "There are no set Reddit feeds.")
-		return
+		return commands.Page{Refusal: "There are no set Reddit feeds."}
 	}
 	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
 	if page >= totalPages {
@@ -439,15 +438,5 @@ func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordg
 	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(end) + " of " + strconv.Itoa(n) + "."
 	components := commands.PaginationComponents("reddit-feeds", page, n, authorID)
 	emb := commands.NewEmbedWithFields(s, embedTitleReddit, description, fields, hintRemoveReddit)
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
-			Embeds:     []*discordgo.MessageEmbed{emb},
-			Components: components,
-		},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("reddit RenderRedditFeedsPage respond failed", args...)
-	}
+	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

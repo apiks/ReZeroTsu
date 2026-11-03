@@ -8,15 +8,15 @@ import (
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 const (
-	msgInvalidButton   = "Invalid button. Run the command again."
-	msgOnlyAuthorPages = "Only the user who ran the command can change pages."
-	msgFailedLoad      = "Could not load. Please run the command again."
+	msgInvalidButton = "Invalid button. Run the command again."
+	msgFailedLoad    = "Could not load. Please run the command again."
 )
 
 // RespondEmbedWithFieldsAndComponents edits the deferred response with embed, optional fields, and components (e.g. pagination buttons).
@@ -130,8 +130,18 @@ func PaginationComponents(cmd string, page, totalCount int, authorID string) []d
 	return []discordgo.MessageComponent{row}
 }
 
-// PageRenderer renders one page: re-fetches data, builds embed, responds.
-type PageRenderer func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string)
+// Page is what a renderer produces for one page: the content to show, or a Refusal to show only to the presser
+// (nothing to list, data could not load).
+type Page struct {
+	Response interaction.Response
+	Refusal  string
+}
+
+// PageRenderer renders one page: re-fetches the data, builds the embed and its buttons, and returns them. It
+// never answers the interaction; the pagination handler decides whether the page replaces the message or goes
+// to a private copy. authorID is whose message it is; the data shown belongs to them, whoever pressed. s and i
+// are only for legacy renderers that still read through the raw session.
+type PageRenderer func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) Page
 
 var paginationRenderers = make(map[string]PageRenderer)
 
@@ -140,19 +150,17 @@ func RegisterPaginationRenderer(cmd string, fn PageRenderer) {
 	paginationRenderers[cmd] = fn
 }
 
-// HandlePagination handles a pagination button; validates author when authorID present, dispatches to renderer.
-func HandlePagination(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	if i.Type != discordgo.InteractionMessageComponent {
-		return false
-	}
-	customID := i.MessageComponentData().CustomID
-	if !HasPaginationPrefix(customID) {
-		return false
-	}
-	cmd, page, total, authorID, ok := ParsePaginationCustomID(customID)
+func init() {
+	AddComponent(PaginationPrefix, handlePagination)
+}
+
+// handlePagination handles a page button. The author's press (or any press on a private copy) replaces the
+// message the button is on; anyone else's press gets a private copy of the requested page, whose buttons page
+// the copy.
+func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
+	cmd, page, total, authorID, ok := ParsePaginationCustomID(ic.CustomID)
 	if !ok {
-		_ = RespondEphemeral(s, i, msgInvalidButton)
-		return true
+		return ic.Refuse(msgInvalidButton)
 	}
 	var totalPages int
 	if cmd == "schedule" {
@@ -166,29 +174,23 @@ func HandlePagination(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if page >= totalPages {
 		page = totalPages - 1
 	}
-	if authorID != "" {
-		interactorID := UserID(i)
-		if interactorID != authorID {
-			_ = RespondEphemeral(s, i, msgOnlyAuthorPages)
-			return true
-		}
-	}
 	render, ok := paginationRenderers[cmd]
 	if !ok {
-		_ = RespondEphemeral(s, i, msgInvalidButton)
-		return true
+		return ic.Refuse(msgInvalidButton)
 	}
 	switch cmd {
 	case "show-raffles", "my-raffles", "reacts-autorole", "reddit-feeds":
-		if i.GuildID == "" || i.Member == nil {
-			_ = RespondEphemeral(s, i, msgFailedLoad)
-			return true
+		if ic.GuildID == "" || ic.Member == nil {
+			return ic.Refuse(msgFailedLoad)
 		}
 	}
-	render(ctx, db, s, i, page, total, authorID)
-	return true
-}
-
-func HasPaginationPrefix(customID string) bool {
-	return len(customID) >= len(PaginationPrefix) && customID[:len(PaginationPrefix)] == PaginationPrefix
+	p := render(ic.Context(), ic.DB, s, &discordgo.InteractionCreate{Interaction: ic.Interaction}, page, total, authorID)
+	if p.Refusal != "" {
+		return ic.Refuse(p.Refusal)
+	}
+	if authorID == "" || ic.Invoker.ID == authorID || ic.OnPrivateMessage() {
+		return ic.UpdateMessage(p.Response)
+	}
+	p.Response.Visibility = interaction.Private
+	return ic.Reply(p.Response)
 }
