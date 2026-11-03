@@ -73,6 +73,10 @@ func runAdd(ic *interaction.Context) error {
 	if o := commands.ParseOption(ic.Command.Options, optPin); o != nil {
 		pin = o.BoolValue()
 	}
+	refusal, pinWarning := checkFeedPermissions(ic, channelID, pin)
+	if refusal != "" {
+		return ic.Refuse(refusal)
+	}
 	feed := guilds.FeedEntry{
 		Subreddit: subreddit,
 		Title:     lower(stringOption(ic, optTitle)),
@@ -98,7 +102,7 @@ func runAdd(ic *interaction.Context) error {
 			return ic.Fail(err, interaction.ErrorContext{})
 		}
 		if feed.Pin {
-			return answer(ic, "Updated r/"+subreddit+" in "+mention+": now pinning the latest post.")
+			return answer(ic, "Updated r/"+subreddit+" in "+mention+": now pinning the latest post."+pinWarningLine(pinWarning))
 		}
 		return answer(ic, "Updated r/"+subreddit+" in "+mention+": no longer pinning the latest post.")
 	}
@@ -108,7 +112,7 @@ func runAdd(ic *interaction.Context) error {
 	if err := st.AddFeed(ic.Context(), ic.GuildID, feed); err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	return answer(ic, addedText(feed))
+	return answer(ic, addedText(feed)+pinWarningLine(pinWarning))
 }
 
 // addedText describes the whole saved feed, leaving out the clauses of absent filters and pin.
