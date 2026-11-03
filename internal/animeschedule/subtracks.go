@@ -51,6 +51,15 @@ func (s SubscriptionTracks) String() string {
 	return "sub"
 }
 
+// Stored is the form a subscription entry holds: the empty string for Sub, which an entry without a set reads as,
+// else String.
+func (s SubscriptionTracks) Stored() string {
+	if s == SubscribeSub {
+		return ""
+	}
+	return s.String()
+}
+
 // Title is the name shown to members: Sub, Dub, Raw, Sub and Dub, or Every track.
 func (s SubscriptionTracks) Title() string {
 	switch s {

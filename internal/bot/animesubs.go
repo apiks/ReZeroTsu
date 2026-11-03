@@ -109,11 +109,10 @@ type userSubsStore interface {
 // timetable, on the upcoming list, or with a non-final entry last week (a break). Shows are held by route and by
 // anime_subs.MatchKey of their title.
 //
-// routes and keys hold what keeps a Sub subscription (the Sub chain's rows) and, for every subscription, the
-// upcoming list. A Dub or Raw track of a subscription's set is judged by its own strict rows in strict.
+// A Dub or Raw track of a subscription's set is judged by its own strict rows in strict.
 type keepRoster struct {
-	routes map[string]struct{}
-	keys   map[string]struct{}
+	// chain holds what keeps a Sub subscription: the Sub chain's rows.
+	chain showSet
 	// upcoming holds the upcoming list, which keeps a subscription whatever its tracks.
 	upcoming showSet
 	strict   map[animeschedule.Track]*strictKeep
@@ -163,7 +162,7 @@ func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
 	set, _ := animeschedule.ParseSubscriptionTracks(sub.Tracks)
 	for _, m := range set.Tracks() {
 		if m == animeschedule.TrackSub {
-			if (showSet{routes: r.routes, keys: r.keys}).has(sub.Route, sub.Show) {
+			if r.chain.has(sub.Route, sub.Show) {
 				return true
 			}
 			continue
@@ -179,15 +178,11 @@ func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
 	return false
 }
 
-func (r keepRoster) add(route, title string) {
-	showSet{routes: r.routes, keys: r.keys}.add(route, title)
-}
-
 // buildKeepRoster reads the loaded timetable weeks and the upcoming list. It reports false, and the cleanup must
 // delete nothing, unless the upcoming list has loaded and both this week's and next week's timetables have been
 // fetched since startup and hold entries: with either missing, a show that airs now could look finished.
 func buildKeepRoster() (keepRoster, bool) {
-	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}, upcoming: newShowSet(),
+	r := keepRoster{chain: newShowSet(), upcoming: newShowSet(),
 		strict: map[animeschedule.Track]*strictKeep{}}
 	if !animeschedule.UpcomingLoaded() {
 		return r, false
@@ -197,14 +192,14 @@ func buildKeepRoster() (keepRoster, bool) {
 		return r, false
 	}
 	for _, e := range weeks.This {
-		r.add(e.Route, e.Name)
+		r.chain.add(e.Route, e.Name)
 	}
 	for _, e := range weeks.Next {
-		r.add(e.Route, e.Name)
+		r.chain.add(e.Route, e.Name)
 	}
 	// Last week: a show whose latest entry there was not its final episode may be on a break.
 	for _, e := range animeschedule.OnBreak(weeks.Last) {
-		r.add(e.Route, e.Name)
+		r.chain.add(e.Route, e.Name)
 	}
 	for _, track := range []animeschedule.Track{animeschedule.TrackDub, animeschedule.TrackRaw} {
 		snap := animeschedule.SnapshotTrackWeeks(track)

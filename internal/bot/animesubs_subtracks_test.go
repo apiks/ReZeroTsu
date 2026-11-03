@@ -97,6 +97,60 @@ func TestARowTwoTracksSelectIsSentOnceAndBothTracksRememberIt(t *testing.T) {
 	}
 }
 
+// The Sub track's episode key is the one every entry stored before subscription tracks holds, "route|Ep N"; a key
+// that carried the track would make a legacy entry's remembered episode stop matching and DM it again.
+func TestTheSubTracksEpisodeKeyStaysRouteAndEpisodeWhileOtherTracksCarryTheirTrack(t *testing.T) {
+	sub, dub := trackedAt("Ep 5", animeschedule.TrackSub, 600), trackedAt("Ep 2", animeschedule.TrackDub, 300)
+	if got, want := trackEpisodeKey(animeschedule.TrackSub, sub), "Frieren|Ep 5"; got != want {
+		t.Errorf("sub key = %q, want the legacy %q", got, want)
+	}
+	if got, want := trackEpisodeKey(animeschedule.TrackDub, dub), "Frieren|dub|Ep 2"; got != want {
+		t.Errorf("dub key = %q, want %q", got, want)
+	}
+	sel := seedToday(t, sub, dub)
+	_, st := dmTexts(t, &anime_subs.ShowSub{Show: "Frieren", Tracks: "sub_dub"}, sel, 1)
+	if _, ep := st.userShow("u1", "Frieren").Memory("sub"); ep != "Frieren|Ep 5" {
+		t.Errorf("stored sub episode key = %q, want the legacy %q", ep, "Frieren|Ep 5")
+	}
+}
+
+func TestARowTwoTracksSelectIsNotSentAgainWhenOneOfThemAlreadySentIt(t *testing.T) {
+	row := trackedAt("Ep 1", animeschedule.TrackRaw, 600)
+	sel := seedToday(t, row)
+	sub := &anime_subs.ShowSub{Show: "Frieren", Tracks: "every", Notified: true,
+		LastNotifiedRawAirUnix: row.AirTimeUnix, LastNotifiedRawEpisode: trackEpisodeKey(animeschedule.TrackRaw, row)}
+	got, st := dmTexts(t, sub, sel, 1)
+	if len(got) != 0 {
+		t.Errorf("DMs = %q, want none: the Raw track already sent this row", got)
+	}
+	if air, ep := st.userShow("u1", "Frieren").Memory("sub"); air != 0 || ep != "" {
+		t.Errorf("sub memory = %d %q, want untouched", air, ep)
+	}
+}
+
+func TestARowTwoTracksSelectRecordsNothingWhenItsSendFails(t *testing.T) {
+	sel := seedToday(t, trackedAt("Ep 1", animeschedule.TrackRaw, 600))
+	const user = "u1"
+	st := newFakeSentState()
+	st.AnimeSubs[user] = &anime_subs.AnimeSubs{ID: user, Shows: []*anime_subs.ShowSub{{Show: "Frieren", Tracks: "every"}}}
+	// 50007: the user does not accept DMs from the bot.
+	d := newFakeDiscord(rejectWith(50007))
+	doc, _ := st.GetAnimeSubs(context.Background(), user)
+	_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, sel, trackedNow)
+	if n := len(d.deliveredTo("dm-" + user)); n != 0 {
+		t.Fatalf("DMs = %d, want none: the send was rejected", n)
+	}
+	s := st.userShow(user, "Frieren")
+	for _, track := range []string{"sub", "dub", "raw"} {
+		if air, ep := s.Memory(track); air != 0 || ep != "" {
+			t.Errorf("%s memory = %d %q, want nothing recorded", track, air, ep)
+		}
+	}
+	if s.Notified {
+		t.Error("the subscription is marked notified")
+	}
+}
+
 func TestALegacyEntryKeepsItsMemoryAndNeverGetsADub(t *testing.T) {
 	aired := trackedNow.Unix() - 600
 	sub := trackedAt("Ep 5", animeschedule.TrackSub, 600)

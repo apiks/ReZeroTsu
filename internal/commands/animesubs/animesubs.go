@@ -44,7 +44,7 @@ func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages,
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(loadTimetable(subTracks(list[j])), upcoming, list[j].Route, list[j].Show, subTracks(list[j]), now).listStatus())
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(loadTimetable(subscriptionTracks(list[j])), upcoming, list[j].Route, list[j].Show, subscriptionTracks(list[j]), now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
@@ -54,9 +54,9 @@ func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages,
 	return b.String()
 }
 
-// subTracks is the subscription tracks a stored entry holds; an entry without a set, or with an unreadable one,
+// subscriptionTracks is the subscription tracks a stored entry holds; an entry without a set, or with an unreadable one,
 // reads as Sub.
-func subTracks(s *anime_subs.ShowSub) animeschedule.SubscriptionTracks {
+func subscriptionTracks(s *anime_subs.ShowSub) animeschedule.SubscriptionTracks {
 	set, _ := animeschedule.ParseSubscriptionTracks(s.Tracks)
 	return set
 }
@@ -163,10 +163,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	}
 
 	now := animeschedule.Now()
-	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Guild: false}
-	if set != animeschedule.SubscribeSub {
-		newSub.Tracks = set.String()
-	}
+	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Guild: false, Tracks: set.Stored()}
 	seedMemory(newSub, set, now)
 	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
 	if err != nil {
@@ -204,11 +201,7 @@ func replaceTracks(ctx context.Context, store subsStore, uid string, existing *a
 		air, episode := seeded.Memory(string(m))
 		marks = append(marks, anime_subs.Mark{Track: string(m), AirUnix: air, Episode: episode})
 	}
-	stored := ""
-	if set != animeschedule.SubscribeSub {
-		stored = set.String()
-	}
-	if err := store.SetShowTracks(ctx, uid, existing.Show, stored, marks); err != nil {
+	if err := store.SetShowTracks(ctx, uid, existing.Show, set.Stored(), marks); err != nil {
 		return "Could not save subscription.", false, err
 	}
 	return fmt.Sprintf("**%s** now alerts for %s.", showName, set.Title()), true, nil

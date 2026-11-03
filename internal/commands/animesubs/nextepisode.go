@@ -128,7 +128,13 @@ func findNextEpisode(tt timetableFor, upcoming []animeschedule.UpcomingShow, rou
 
 func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	nowUnix := now.Unix()
-	several := len(set.Tracks()) > 1
+	// named is the track a line names: the track itself when the set has several, else none.
+	named := func(t animeschedule.Track) animeschedule.Track {
+		if len(set.Tracks()) > 1 {
+			return t.Known()
+		}
+		return ""
+	}
 	var next, last animeschedule.ShowEntry
 	var haveNext, haveLast bool
 	for _, r := range selected {
@@ -144,17 +150,11 @@ func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animesche
 			last, haveLast = e, true
 		}
 	}
-	rowTrack := func(e animeschedule.ShowEntry) animeschedule.Track {
-		if several {
-			return e.Track.Known()
-		}
-		return ""
-	}
 	switch {
 	case haveNext:
-		return nextEpisode{Entry: next, Found: true, Upcoming: true, Track: rowTrack(next)}
+		return nextEpisode{Entry: next, Found: true, Upcoming: true, Track: named(next.Track)}
 	case haveLast:
-		return nextEpisode{Entry: last, Found: true, Track: rowTrack(last)}
+		return nextEpisode{Entry: last, Found: true, Track: named(last.Track)}
 	}
 	for _, u := range upcoming {
 		e := upcomingEntry(u)
@@ -166,9 +166,7 @@ func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animesche
 		var track animeschedule.Track
 		if p, premiereTrack, ok := u.SetPremiere(set); ok {
 			e.AirTimeUnix = p.Unix()
-			if several {
-				track = premiereTrack
-			}
+			track = named(premiereTrack)
 		}
 		return nextEpisode{Entry: e, Found: true, Upcoming: e.AirTimeUnix == 0 || e.AirTimeUnix >= nowUnix, Premiere: true, Track: track}
 	}
