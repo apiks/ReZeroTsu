@@ -24,7 +24,7 @@
 
 ### Commands overview
 
-The bot uses **slash commands** (`/`) as the main interface. Use `/help` in the bot to list commands by module. Optional prefix commands (e.g. `.` from config) are supported in DMs only and are less featured.
+The bot uses **slash commands** (`/`) as the main interface. Use `/help` in the bot to browse commands by category. Optional prefix commands (e.g. `.` from config) are supported in DMs only and are less featured.
 
 **General:** `help`, `about`, `ping`, `invite`, `avatar`, `roll`, `pick`, `joke`. **Channel:** `prune`. **Server settings:** mod-only mode, moderator roles, bot log channel, donghua in schedule.
 

@@ -131,7 +131,6 @@ var legacyResponseFiles = map[string]bool{
 	"commands/helpers.go":       true, // RespondEmbed helpers
 	"commands/pagination.go":    true, // pagination buttons
 	"commands/feeds/feeds.go":   true,
-	"commands/help/help.go":     true,
 	"commands/raffle/raffle.go": true,
 	"commands/react/react.go":   true,
 	"commands/say/say.go":       true,
@@ -370,7 +369,7 @@ func init() {
 		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
 		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
 		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
-		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/help/help.go", 0},
+		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/say/say.go", 0},
 		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 	}
