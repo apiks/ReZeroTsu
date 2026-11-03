@@ -84,18 +84,13 @@ func init() {
 }
 
 func autocompleteScheduleDay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, name := range dayNames {
-		if focusedLower != "" && !strings.HasPrefix(strings.ToLower(name), focusedLower) {
-			continue
-		}
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
+	names := commands.MatchAnywhere(dayNames, focusedValue, func(n string) []string { return []string{n} })
+	if len(names) == 0 {
+		names = dayNames
 	}
-	if len(choices) == 0 {
-		for _, name := range dayNames {
-			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
-		}
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(names))
+	for _, name := range names {
+		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
 	}
 	return choices
 }
