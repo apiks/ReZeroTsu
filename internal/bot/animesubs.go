@@ -243,7 +243,7 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 }
 
 // dayShowsFunc returns the shows of one UTC date, optionally including donghua.
-type dayShowsFunc func(donghua bool) []animeschedule.ShowEntry
+type dayShowsFunc func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry
 
 // rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
 type rolePresence int
@@ -293,8 +293,8 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 		return
 	}
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry {
-		return animeschedule.GetDayShows(today, donghua, animeschedule.PreferSub)
+	dayShows := func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry {
+		return animeschedule.GetDayShows(today, donghua, pref)
 	}
 
 	// Per-shard guild seed for the current UTC date (once per day); missing shard entry = not yet seeded.
@@ -546,27 +546,90 @@ func userShowAlreadyNotified(sub *anime_subs.ShowSub, show animeschedule.ShowEnt
 	return show.AirTimeUnix <= sub.LastNotifiedAirUnix
 }
 
-// guildShowNamesMatch reports whether dayShows and subs have the same show names (case-insensitive); used to preserve Notified across restarts.
-func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.ShowSub) bool {
-	daySet := make(map[string]struct{}, len(dayShows))
-	for _, show := range dayShows {
-		daySet[anime_subs.MatchKey(show.Name)] = struct{}{}
+// airing identifies one row of the new-episodes autopost's sent state: the show's match key, its track and its
+// episode.
+type airing struct {
+	show    string
+	track   animeschedule.Track
+	episode string
+}
+
+func airingOf(show animeschedule.ShowEntry) airing {
+	return airing{show: anime_subs.MatchKey(show.Name), track: show.AirType.Known(), episode: show.Episode}
+}
+
+func (a airing) sub(name string) *anime_subs.ShowSub {
+	return &anime_subs.ShowSub{Show: name, Track: string(a.track), Episode: a.episode, Guild: true}
+}
+
+// sentIndex finds the stored sent-state entry of a row. An entry carrying a track and an episode matches the row
+// of that identity. An entry from before the tracks release carries neither and matches that show's row of the
+// Sub chain whatever its episode.
+type sentIndex struct {
+	exact  map[airing]*anime_subs.ShowSub
+	legacy map[string]*anime_subs.ShowSub
+	// subTracks holds, per show key, the tracks of the Sub chain's rows today.
+	subTracks map[string]map[animeschedule.Track]bool
+}
+
+// newSentIndex indexes subs. Among entries of one identity a notified one wins, so a row any of them marks as
+// posted is never reposted; the entry chosen is the one marked after sending. subChain is today's Sub chain rows.
+func newSentIndex(subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) sentIndex {
+	idx := sentIndex{
+		exact:     map[airing]*anime_subs.ShowSub{},
+		legacy:    map[string]*anime_subs.ShowSub{},
+		subTracks: map[string]map[animeschedule.Track]bool{},
 	}
-	subSet := make(map[string]struct{}, len(subs))
+	for _, row := range subChain {
+		a := airingOf(row)
+		if idx.subTracks[a.show] == nil {
+			idx.subTracks[a.show] = map[animeschedule.Track]bool{}
+		}
+		idx.subTracks[a.show][a.track] = true
+	}
 	for _, sub := range subs {
-		if sub != nil {
-			subSet[anime_subs.MatchKey(sub.Show)] = struct{}{}
+		if sub == nil {
+			continue
+		}
+		key := anime_subs.MatchKey(sub.Show)
+		if sub.Track == "" && sub.Episode == "" {
+			if cur, ok := idx.legacy[key]; !ok || (!cur.Notified && sub.Notified) {
+				idx.legacy[key] = sub
+			}
+			continue
+		}
+		a := airing{show: key, track: animeschedule.Track(sub.Track).Known(), episode: sub.Episode}
+		if cur, ok := idx.exact[a]; !ok || (!cur.Notified && sub.Notified) {
+			idx.exact[a] = sub
 		}
 	}
-	if len(daySet) != len(subSet) {
-		return false
+	return idx
+}
+
+func (idx sentIndex) find(show animeschedule.ShowEntry) (*anime_subs.ShowSub, bool) {
+	a := airingOf(show)
+	if sub, ok := idx.exact[a]; ok {
+		return sub, true
 	}
-	for k := range daySet {
-		if _, ok := subSet[k]; !ok {
+	if sub, ok := idx.legacy[a.show]; ok && idx.subTracks[a.show][a.track] {
+		return sub, true
+	}
+	return nil, false
+}
+
+// guildSentMatches reports whether the stored entries and today's rows identify the same airings (case-insensitive
+// show names); it lets the same-day seeding skip a document that is already complete.
+func guildSentMatches(dayShows []animeschedule.ShowEntry, subs []*anime_subs.ShowSub, subChain []animeschedule.ShowEntry) bool {
+	idx := newSentIndex(subs, subChain)
+	found := make(map[*anime_subs.ShowSub]struct{}, len(dayShows))
+	for _, show := range dayShows {
+		sub, ok := idx.find(show)
+		if !ok {
 			return false
 		}
+		found[sub] = struct{}{}
 	}
-	return true
+	return len(found) == len(idx.exact)+len(idx.legacy)
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
@@ -587,18 +650,14 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 		settings, _ := st.GetGuildSettings(ctx, guildID)
-		donghua := true
+		donghua, pref := true, animeschedule.PreferSub
 		if settings != nil {
-			donghua = settings.Donghua
+			donghua, pref = settings.Donghua, settings.Preferred()
 		}
-		dayShows := shows(donghua)
+		dayShows := shows(donghua, pref)
 		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
 			logger.For("animesubs").Error("GetByID seed check failed", "channel_id", ap.ID, "err", err)
-			continue
-		}
-
-		if existing != nil && existing.LastSeedDate == today && len(existing.Shows) > 0 && guildShowNamesMatch(dayShows, existing.Shows) {
 			continue
 		}
 
@@ -615,21 +674,24 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 
-		// Same-day document: append newly listed shows, never rewrite existing entries.
-		known := make(map[string]struct{}, len(existing.Shows))
-		for _, sub := range existing.Shows {
-			if sub != nil {
-				known[anime_subs.MatchKey(sub.Show)] = struct{}{}
-			}
+		subChain := dayShows
+		if pref != animeschedule.PreferSub {
+			subChain = shows(donghua, animeschedule.PreferSub)
 		}
+		if len(existing.Shows) > 0 && guildSentMatches(dayShows, existing.Shows, subChain) {
+			continue
+		}
+
+		// Same-day document: append newly listed rows, never rewrite existing entries.
+		idx := newSentIndex(existing.Shows, subChain)
 		var added []*anime_subs.ShowSub
 		for _, show := range dayShows {
-			key := anime_subs.MatchKey(show.Name)
-			if _, ok := known[key]; ok {
+			if _, ok := idx.find(show); ok {
 				continue
 			}
-			known[key] = struct{}{}
-			added = append(added, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
+			sub := airingOf(show).sub(show.Name)
+			idx.exact[airingOf(show)] = sub
+			added = append(added, sub)
 		}
 		if err := st.AppendAnimeSubShows(ctx, ap.ID, added); err != nil {
 			logger.For("animesubs").Error("Append guild channel shows failed", "channel_id", ap.ID, "err", err)
@@ -637,16 +699,16 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 	}
 }
 
-// newGuildShowSubs returns a guild show list with every show not yet notified.
+// newGuildShowSubs returns a guild show list with every row not yet notified.
 func newGuildShowSubs(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
 	subs := make([]*anime_subs.ShowSub, 0, len(dayShows))
 	for _, show := range dayShows {
-		subs = append(subs, &anime_subs.ShowSub{Show: show.Name, Notified: false, Guild: true})
+		subs = append(subs, airingOf(show).sub(show.Name))
 	}
 	return subs
 }
 
-// seedGuildShowSubs returns the show list for a newly created guild document: shows that have
+// seedGuildShowSubs returns the show list for a newly created guild document: rows that have
 // already aired and are not delayed start as notified so enabling or moving the autopost does not repost them.
 func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*anime_subs.ShowSub {
 	subs := newGuildShowSubs(dayShows)
@@ -681,11 +743,11 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		roleID = ""
 	}
 	settings, _ := st.GetGuildSettings(ctx, guildID)
-	donghua := true
+	donghua, pref := true, animeschedule.PreferSub
 	if settings != nil {
-		donghua = settings.Donghua
+		donghua, pref = settings.Donghua, settings.Preferred()
 	}
-	todayShowsGuild := shows(donghua)
+	todayShowsGuild := shows(donghua, pref)
 	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
 		logger.For("animesubs").Error("GetByID failed", "channel_id", channelID, "err", err)
@@ -698,19 +760,11 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
-	// Shows are matched like the user path (anime_subs.MatchKey). Among duplicate entries a notified one wins, so
-	// a show any duplicate marks as notified is never reposted; the entry chosen is the one marked after sending.
-	subscriptionByShow := make(map[string]*anime_subs.ShowSub)
-	for _, sub := range doc.Shows {
-		if sub == nil {
-			continue
-		}
-		key := anime_subs.MatchKey(sub.Show)
-		if cur, ok := subscriptionByShow[key]; ok && (cur.Notified || !sub.Notified) {
-			continue
-		}
-		subscriptionByShow[key] = sub
+	subChain := todayShowsGuild
+	if pref != animeschedule.PreferSub {
+		subChain = shows(donghua, animeschedule.PreferSub)
 	}
+	sent := newSentIndex(doc.Shows, subChain)
 	type dueEntry struct {
 		show animeschedule.ShowEntry
 		sub  *anime_subs.ShowSub
@@ -727,7 +781,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if !donghua && show.Donghua {
 			continue
 		}
-		sub, ok := subscriptionByShow[anime_subs.MatchKey(show.Name)]
+		sub, ok := sent.find(show)
 		if !ok || sub.Notified {
 			continue
 		}
@@ -744,10 +798,10 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		end := min(i+discord.MaxEmbedsPerMessage, len(due))
 		batch := due[i:end]
 		embeds := make([]*discordgo.MessageEmbed, len(batch))
-		names := make([]string, len(batch))
+		marks := make([]*anime_subs.ShowSub, len(batch))
 		for j, e := range batch {
 			embeds[j] = e.emb
-			names[j] = e.sub.Show
+			marks[j] = e.sub
 		}
 		content := ""
 		if i == 0 && roleID != "" {
@@ -760,7 +814,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.
 			markErr := detachedWrite(ctx, func(wctx context.Context) error {
-				return st.MarkShowsNotified(wctx, channelID, names)
+				return st.MarkShowsNotified(wctx, channelID, marks)
 			})
 			if markErr != nil {
 				logger.For("animesubs").Error("mark shows notified failed", "channel_id", channelID, "err", markErr)

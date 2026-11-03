@@ -56,7 +56,7 @@ func TestProcessGuildNewEpisodesRolePing(t *testing.T) {
 			st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{{Show: "Aired", Guild: true}}}
 			d := newFakeDiscord()
 			d.RolePresence = map[string]rolePresence{"r1": tc.presence}
-			processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
+			processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }, now)
 			got := d.deliveredTo("c1")
 			if len(got) != 1 || got[0].Msg.Content != tc.wantContent {
 				t.Fatalf("delivered = %+v, want one message with content %q", got, tc.wantContent)
@@ -79,7 +79,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 		{Name: "Later", Route: "later", Episode: "Episode 3", AirTimeUnix: future, AirType: "sub"},
 		{Name: "Delayed", Route: "delayed", Episode: "Episode 4", AirTimeUnix: aired, Delayed: "delayed", AirType: "sub"},
 	}
-	dayShows := func(bool) []animeschedule.ShowEntry { return shows }
+	dayShows := func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }
 
 	newState := func() *fakeSentState {
 		st := newFakeSentState()
@@ -153,7 +153,7 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subs}
 				d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
 				d.script = []step{rejectWith(10015)}
-				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return many }, now)
+				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return many }, now)
 				if d.WebhookSends != 1 {
 					t.Errorf("webhook attempts = %d, want 1", d.WebhookSends)
 				}

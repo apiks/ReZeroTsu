@@ -39,7 +39,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	d := newFakeDiscord(script...)
 	d.Roles["r1"] = true
 	senders, clk := newTestSendersWithClock(d)
-	return &guildHarness{d: d, st: st, now: now, fn: func(bool) []animeschedule.ShowEntry { return shows }, senders: senders, clock: clk}
+	return &guildHarness{d: d, st: st, now: now, fn: func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }, senders: senders, clock: clk}
 }
 
 func (h *guildHarness) run(ctx context.Context) {

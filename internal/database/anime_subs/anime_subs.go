@@ -21,6 +21,10 @@ type ShowSub struct {
 	LastNotifiedAirUnix int64  `bson:"last_notified_air_unix,omitempty"`
 	// LastNotifiedEpisode is the show route plus episode label last DMed; optional (legacy documents lack it).
 	LastNotifiedEpisode string `bson:"last_notified_episode,omitempty"`
+	// Track and Episode complete a channel entry's identity (show, track, episode); optional (documents from before
+	// the tracks release lack them).
+	Track   string `bson:"track,omitempty"`
+	Episode string `bson:"episode,omitempty"`
 }
 
 // AnimeSubs is an anime_subs document; key field is id (not _id).
@@ -93,17 +97,36 @@ func (r *Repo) Seed(ctx context.Context, id string, isGuild bool, shows []*ShowS
 	return nil
 }
 
-// MarkShowsNotified sets notified=true on the named shows of the document in a single update statement.
-func (r *Repo) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
-	if len(showNames) == 0 {
+// MarkShowsNotified sets notified=true on the entries of the document with the identity (show, track, episode) of
+// each given entry, in a single update statement. An entry without a track or an episode matches stored entries
+// that lack them too.
+func (r *Repo) MarkShowsNotified(ctx context.Context, id string, shows []*ShowSub) error {
+	if len(shows) == 0 {
 		return nil
 	}
 	update := bson.M{"$set": bson.M{"shows.$[s].notified": true}}
-	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": bson.M{"$in": showNames}}})
+	opts := options.UpdateOne().SetArrayFilters([]any{identityFilter(shows)})
 	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, update, opts); err != nil {
 		return fmt.Errorf("MarkShowsNotified: %w", err)
 	}
 	return nil
+}
+
+// identityFilter is the array filter on "s" selecting the entries that share an identity with any of shows.
+func identityFilter(shows []*ShowSub) bson.M {
+	field := func(name, value string) bson.M {
+		if value == "" {
+			return bson.M{name: bson.M{"$in": bson.A{nil, ""}}}
+		}
+		return bson.M{name: value}
+	}
+	var or bson.A
+	for _, s := range shows {
+		or = append(or, bson.M{"$and": bson.A{
+			bson.M{"s.show": s.Show}, field("s.track", s.Track), field("s.episode", s.Episode),
+		}})
+	}
+	return bson.M{"$or": or}
 }
 
 // MarkShowNotified records one show of the document as notified, with its air time and episode key,

@@ -21,7 +21,7 @@ func TestGuildNewEpisodesSeeding(t *testing.T) {
 	late := animeschedule.ShowEntry{Name: "Late Listed", Route: "late-listed", Episode: "Episode 9", AirTimeUnix: future, AirType: "sub"}
 
 	schedule := func(list ...animeschedule.ShowEntry) dayShowsFunc {
-		return func(bool) []animeschedule.ShowEntry { return list }
+		return func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return list }
 	}
 	newState := func() *fakeSentState {
 		st := newFakeSentState()

@@ -1,6 +1,7 @@
 package about
 
 import (
+	"strings"
 	"testing"
 
 	"ReZeroTsu/internal/commands"
@@ -22,6 +23,23 @@ func TestAboutRepliesOncePubliclyWithTheBotsDetails(t *testing.T) {
 	}
 	if emb := calls[0].Response.Embeds[0]; emb.Title != "Tsu" || emb.URL != topGGBase+"99" {
 		t.Errorf("embed = %+v", emb)
+	}
+}
+
+func TestAboutDescribesAnimeScheduleAsSubDubOrRaw(t *testing.T) {
+	fake := &interactiontest.Fake{Bot: &discordgo.User{ID: "99", Username: "Tsu"}}
+	ic := interactiontest.NewCommandContext(fake, interaction.Public, interaction.Direct, discordgo.ApplicationCommandInteractionData{Name: "about"})
+	if err := run(ic); err != nil {
+		t.Fatal(err)
+	}
+	var features string
+	for _, f := range fake.Calls()[0].Response.Embeds[0].Fields {
+		if strings.Contains(f.Value, "Anime Schedule") {
+			features = f.Value
+		}
+	}
+	if !strings.Contains(features, "Anime Schedule (sub, dub or raw)") || strings.Contains(features, "subbed") {
+		t.Errorf("features = %q, want \"Anime Schedule (sub, dub or raw)\" and no \"subbed\"", features)
 	}
 }
 

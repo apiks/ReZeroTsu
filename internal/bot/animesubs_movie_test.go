@@ -40,7 +40,7 @@ func TestGuildNewEpisodesMovieWording(t *testing.T) {
 	st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1"}
 	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: []*anime_subs.ShowSub{{Show: "Film", Guild: true}}}
 	d := newFakeDiscord()
-	processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool) []animeschedule.ShowEntry { return shows }, now)
+	processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return shows }, now)
 	got := d.deliveredTo("c1")
 	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
 		t.Fatalf("delivered = %+v, want one message with one embed", got)

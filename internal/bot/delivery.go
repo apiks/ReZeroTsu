@@ -80,8 +80,9 @@ var (
 // Production wiring is the Mongo repositories; tests use an in-memory fake.
 type SentState interface {
 	GetAnimeSubs(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
-	// MarkShowsNotified sets notified=true for the named shows in one single-statement update.
-	MarkShowsNotified(ctx context.Context, id string, showNames []string) error
+	// MarkShowsNotified sets notified=true on the entries of the given identities (show, track, episode) in one
+	// single-statement update.
+	MarkShowsNotified(ctx context.Context, id string, shows []*anime_subs.ShowSub) error
 	// SeedAnimeSubs fully rewrites the document, stamping seedDate (YYYY-MM-DD, UTC) as its last seed date.
 	SeedAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error
 	// AppendAnimeSubShows adds shows to an existing document without touching its other entries or seed date.
@@ -235,8 +236,8 @@ func (m *mongoSentState) GetAnimeSubs(ctx context.Context, id string) (*anime_su
 	return m.db.AnimeSubs().GetByID(ctx, id)
 }
 
-func (m *mongoSentState) MarkShowsNotified(ctx context.Context, id string, showNames []string) error {
-	return m.db.AnimeSubs().MarkShowsNotified(ctx, id, showNames)
+func (m *mongoSentState) MarkShowsNotified(ctx context.Context, id string, shows []*anime_subs.ShowSub) error {
+	return m.db.AnimeSubs().MarkShowsNotified(ctx, id, shows)
 }
 
 func (m *mongoSentState) SeedAnimeSubs(ctx context.Context, id string, isGuild bool, shows []*anime_subs.ShowSub, seedDate string) error {

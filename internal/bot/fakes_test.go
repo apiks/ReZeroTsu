@@ -370,7 +370,7 @@ func (f *fakeSentState) AppendAnimeSubShows(_ context.Context, id string, shows 
 	return nil
 }
 
-func (f *fakeSentState) MarkShowsNotified(_ context.Context, id string, showNames []string) error {
+func (f *fakeSentState) MarkShowsNotified(_ context.Context, id string, marks []*anime_subs.ShowSub) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d, ok := f.AnimeSubs[id]
@@ -381,8 +381,8 @@ func (f *fakeSentState) MarkShowsNotified(_ context.Context, id string, showName
 		if s == nil {
 			continue
 		}
-		for _, n := range showNames {
-			if s.Show == n {
+		for _, m := range marks {
+			if s.Show == m.Show && s.Track == m.Track && s.Episode == m.Episode {
 				s.Notified = true
 			}
 		}
