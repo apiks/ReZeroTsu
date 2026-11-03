@@ -3,9 +3,11 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands/schedule"
 
 	"github.com/bwmarrin/discordgo"
@@ -157,6 +159,32 @@ func TestDailyScheduleShutdownDuringSendDoesNotRetry(t *testing.T) {
 	}
 	if h.lastPosted() != "" {
 		t.Fatal("undelivered post must not be recorded")
+	}
+}
+
+// The autopost posts the same page body as /schedule for today: relative times, media labels and the new footer.
+func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
+	h := newScheduleHarness()
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return h.now }))
+	h.fn = func(bool) []animeschedule.ShowEntry {
+		return []animeschedule.ShowEntry{{Name: "Movie A", Episode: "Movie", AirTimeUnix: h.now.Unix() + 3600, AirType: "sub", MediaType: animeschedule.MediaMovie}}
+	}
+	if err := h.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := h.fd.deliveredTo("sch")
+	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
+		t.Fatalf("delivered = %+v, want one embed", got)
+	}
+	emb := got[0].Msg.Embeds[0]
+	want := schedule.BuildScheduleEmbed(animeschedule.Today(), h.fn(true))
+	if emb.Description != want.Description || emb.Footer.Text != want.Footer.Text || emb.Title != want.Title {
+		t.Errorf("posted %q / %q, want the /schedule body %q / %q", emb.Description, emb.Footer.Text, want.Description, want.Footer.Text)
+	}
+	for _, frag := range []string{":R>", " · Movie", "Tuesday, 5 Mar 2024", "days run on UTC"} {
+		if !strings.Contains(emb.Description+emb.Title+emb.Footer.Text, frag) {
+			t.Errorf("posted body %q %q lacks %q", emb.Title, emb.Description, frag)
+		}
 	}
 }
 
