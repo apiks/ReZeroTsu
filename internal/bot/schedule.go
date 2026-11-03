@@ -90,8 +90,8 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	now := animeschedule.Now()
 	today := animeschedule.DayOf(now)
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry {
-		return animeschedule.GetDayShows(today, donghua, animeschedule.PreferSub)
+	dayShows := func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry {
+		return animeschedule.GetDayShows(today, donghua, pref)
 	}
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
@@ -136,13 +136,16 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	wg.Wait()
 }
 
+// scheduleDayFunc returns the shows of today under a preferred track, optionally including donghua.
+type scheduleDayFunc func(donghua bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry
+
 // scheduleRetryWait is the pause before the single retry of a verifiably missing schedule post.
 var scheduleRetryWait = 3 * time.Second
 
 // processDailyScheduleForGuild posts the daily schedule to one guild at most once per UTC day: one attempt
 // following the shared send rules, then at most one retry when the post is verifiably missing (or verification
 // itself failed, which is the opposite of the default policy). Rejected outcomes are never retried.
-func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, dayShows dayShowsFunc, now time.Time) error {
+func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, dayShows scheduleDayFunc, now time.Time) error {
 	if guildID == "" {
 		return nil
 	}
@@ -164,11 +167,11 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", shardID, "guild_id", guildID, "err", err)
 		}
 	}
-	donghua := true
+	donghua, pref := true, animeschedule.PreferSub
 	if settings != nil {
-		donghua = settings.Donghua
+		donghua, pref = settings.Donghua, settings.Preferred()
 	}
-	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua), animeschedule.PreferSub)
+	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua, pref), pref)
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
 	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))

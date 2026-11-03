@@ -47,6 +47,23 @@ func ParsePreferredTrack(s string) (PreferredTrack, bool) {
 	return PreferSub, false
 }
 
+// Next is the preference after p in the settings button's cycle: Sub, Dub, Raw, Sub.
+func (p PreferredTrack) Next() PreferredTrack {
+	switch p {
+	case PreferSub:
+		return PreferDub
+	case PreferDub:
+		return PreferRaw
+	}
+	return PreferSub
+}
+
+// Title is the capitalised name shown to members: Sub, Dub or Raw.
+func (p PreferredTrack) Title() string {
+	s := p.String()
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // String is the lower-case name ParsePreferredTrack reads.
 func (p PreferredTrack) String() string {
 	switch p {

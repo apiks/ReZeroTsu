@@ -5,6 +5,7 @@ Newest first. Each release lists the steps the bot owner does around the deploy,
 ## Raw, sub and dub tracks (spec #108)
 
 - `/schedule` track (#110): `/schedule` takes an optional `track` option, Sub, Dub or Raw. Sub shows sub, else raw (what the bot always showed). Dub shows a show's dub in a week it airs one, else its sub, else raw. Raw shows raw only. Previous, Next and the day picker keep the track you chose. Every line is labelled `RAW`, `SUB` or `DUB`, and the footer says "Dub preferred" or "Raw preferred" for those two. Schedule messages posted before this release open the Sub view when pressed. Subscriptions, the daily schedule autopost and the new-episodes autopost are unchanged. A dub episode alert reads "**Ep 5** dubbed is out!" (a dubbed movie, "**Title** is out, dubbed!").
+- Server preferred track (#112): moderators set the server's preferred track from `/settings` with the new "Track: Sub" button after Donghua. Each press cycles Sub, Dub, Raw, then Sub again and saves only that setting; the panel text gains "**Preferred track:** Sub". `/schedule` without its `track` option, and the buttons of older schedule messages, use the server's preference; the `track` option still overrides it for one message. In DMs, and in a server the bot has not joined, `/schedule` uses Sub. The daily-schedule autopost builds its page under the server's preference with the same line labels and footer; its title is unchanged. A server that changes nothing stays on Sub and sees no difference.
 
 ## Subscription UX (spec #79)
 
