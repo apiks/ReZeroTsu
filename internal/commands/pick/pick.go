@@ -17,6 +17,8 @@ const embedTitlePick = "Pick"
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "pick",
 		Desc:       "Picks a random item from a list of items.",
 		Permission: commands.PermEveryone,

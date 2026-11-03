@@ -29,6 +29,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "add-react-autorole",
 		Desc:       "Adds a react autorole on a specific message, emoji and role.",
 		Permission: commands.PermMod,
@@ -42,6 +44,8 @@ func init() {
 		Handler: handleAddReactAutorole,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-react-autorole",
 		Desc:       "Removes a set react autorole.",
 		Permission: commands.PermMod,
@@ -54,6 +58,8 @@ func init() {
 		Handler: handleRemoveReactAutorole,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "reacts-autorole",
 		Desc:       "Lists all set reaction autoroles.",
 		Permission: commands.PermMod,

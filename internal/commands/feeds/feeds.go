@@ -26,6 +26,8 @@ var postTypeChoices = []string{"hot", "rising", "new"}
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "add-reddit-feed",
 		Desc:       "Adds a Reddit RSS feed to a channel.",
 		Permission: commands.PermMod,
@@ -43,6 +45,8 @@ func init() {
 		AutocompleteOption: autocompletePostType,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-reddit-feed",
 		Desc:       "Removes a Reddit RSS feed from a channel.",
 		Permission: commands.PermMod,
@@ -59,6 +63,8 @@ func init() {
 		AutocompleteOption: autocompleteRemoveRedditFeed,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "reddit-feeds",
 		Desc:       "Lists all Reddit RSS feeds for this server.",
 		Permission: commands.PermMod,

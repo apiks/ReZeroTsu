@@ -15,6 +15,8 @@ const embedTitleAvatar = "Avatar"
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "avatar",
 		Desc:       "Show a user's avatar.",
 		Permission: commands.PermEveryone,

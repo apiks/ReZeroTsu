@@ -21,6 +21,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "add-moderator-role",
 		Desc:       "Add a role as a moderator (command) role.",
 		Permission: commands.PermMod,
@@ -37,6 +39,8 @@ func init() {
 		Handler: handleAddModeratorRole,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-moderator-role",
 		Desc:       "Remove a role from the moderator list.",
 		Permission: commands.PermMod,
@@ -53,6 +57,8 @@ func init() {
 		Handler: handleRemoveModeratorRole,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "moderator-roles",
 		Desc:       "List all moderator (command) roles.",
 		Permission: commands.PermMod,

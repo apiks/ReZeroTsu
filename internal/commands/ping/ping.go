@@ -16,6 +16,8 @@ import (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "ping",
 		Desc:       "Respond with Pong! and show bot latency.",
 		Permission: commands.PermEveryone,

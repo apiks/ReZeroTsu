@@ -1,0 +1,277 @@
+package commands
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"ReZeroTsu/internal/database"
+	"ReZeroTsu/internal/database/guilds"
+	"ReZeroTsu/internal/interaction"
+	"ReZeroTsu/internal/interaction/interactiontest"
+
+	"github.com/bwmarrin/discordgo"
+)
+
+type fakeSettings struct{ roles []string }
+
+func (f fakeSettings) GetGuildSettings(_ context.Context, _ string) (*guilds.GuildSettings, error) {
+	s := &guilds.GuildSettings{}
+	for _, id := range f.roles {
+		s.CommandRoles = append(s.CommandRoles, guilds.Role{ID: id})
+	}
+	return s, nil
+}
+
+// register adds cmd for one test and removes it afterwards.
+func register(t *testing.T, cmd *Command) {
+	t.Helper()
+	Add(cmd)
+	t.Cleanup(func() { delete(registry, cmd.Name) })
+}
+
+func slashInteraction(name, guildID string, perms int64, roles ...string) *discordgo.InteractionCreate {
+	i := &discordgo.Interaction{
+		Type:      discordgo.InteractionApplicationCommand,
+		ChannelID: "chan",
+		GuildID:   guildID,
+		Data:      discordgo.ApplicationCommandInteractionData{Name: name},
+	}
+	user := &discordgo.User{ID: "user"}
+	if guildID != "" {
+		i.Member = &discordgo.Member{User: user, Permissions: perms, Roles: roles}
+	} else {
+		i.User = user
+	}
+	return &discordgo.InteractionCreate{Interaction: i}
+}
+
+func run(t *testing.T, name string, fake *interactiontest.Fake, settings settingsReader, i *discordgo.InteractionCreate) error {
+	t.Helper()
+	return dispatch(context.Background(), (*database.Client)(nil), settings, name, fake, nil, i)
+}
+
+func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
+	legacyCalled := false
+	legacy := func(name string, mod PermissionLevel, c AllowedContext) *Command {
+		return &Command{Name: name, Permission: mod, Context: c, Visibility: Public, Response: Deferred,
+			Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {
+				legacyCalled = true
+			}}
+	}
+	register(t, legacy("t-guildonly", PermEveryone, ContextGuildOnly))
+	register(t, legacy("t-dmonly", PermEveryone, ContextDMOnly))
+	register(t, legacy("t-mod", PermMod, ContextBoth))
+	register(t, legacy("t-admin", PermAdmin, ContextBoth))
+
+	tests := []struct {
+		name string
+		cmd  string
+		i    *discordgo.InteractionCreate
+		want string
+	}{
+		{"server-only command in a DM", "t-guildonly", slashInteraction("t-guildonly", "", 0), "only be used in a server"},
+		{"DM-only command in a server", "t-dmonly", slashInteraction("t-dmonly", "g", 0), "only be used in DMs"},
+		{"mod command by a plain member", "t-mod", slashInteraction("t-mod", "g", 0), "moderator role"},
+		{"admin command by a plain member", "t-admin", slashInteraction("t-admin", "g", 0), "Administrator or Manage Server"},
+		{"unknown command", "t-missing", slashInteraction("t-missing", "g", 0), "Unknown command"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &interactiontest.Fake{}
+			if err := run(t, tt.cmd, fake, fakeSettings{}, tt.i); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			calls := fake.Calls()
+			replies := 0
+			for _, c := range calls {
+				if c.Op == "Defer" {
+					t.Fatalf("calls = %v, refusal came after acknowledging", fake.Ops())
+				}
+				if c.Op == "Reply" {
+					replies++
+				}
+			}
+			last := calls[len(calls)-1]
+			if replies != 1 || last.Op != "Reply" || last.Visibility != interaction.Private {
+				t.Fatalf("calls = %+v, want exactly one private Reply as the last call", calls)
+			}
+			text := last.Response.Content
+			for _, e := range last.Response.Embeds {
+				text += e.Description
+			}
+			if !strings.Contains(text, tt.want) {
+				t.Errorf("refusal %q does not contain %q", text, tt.want)
+			}
+			if legacyCalled {
+				t.Error("handler ran after a refusal")
+			}
+		})
+	}
+}
+
+func TestDispatchModeratorCheckStillGatesModCommands(t *testing.T) {
+	var ran int
+	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
+		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
+
+	tests := []struct {
+		name     string
+		i        *discordgo.InteractionCreate
+		settings fakeSettings
+		guild    *discordgo.Guild
+		ok       bool
+	}{
+		{"plain member is refused", slashInteraction("t-mod", "g", 0), fakeSettings{}, nil, false},
+		{"member with an unrelated role is refused", slashInteraction("t-mod", "g", 0, "other"), fakeSettings{roles: []string{"mods"}}, nil, false},
+		{"Manage Server passes", slashInteraction("t-mod", "g", discordgo.PermissionManageGuild), fakeSettings{}, nil, true},
+		{"Administrator passes", slashInteraction("t-mod", "g", discordgo.PermissionAdministrator), fakeSettings{}, nil, true},
+		{"granted role passes", slashInteraction("t-mod", "g", 0, "mods"), fakeSettings{roles: []string{"mods"}}, nil, true},
+		{"guild owner passes", slashInteraction("t-mod", "g", 0), fakeSettings{}, &discordgo.Guild{ID: "g", OwnerID: "user"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ran = 0
+			fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{}}
+			if tt.guild != nil {
+				fake.Guilds["g"] = tt.guild
+			}
+			if err := run(t, "t-mod", fake, tt.settings, tt.i); err != nil {
+				t.Fatal(err)
+			}
+			if (ran == 1) != tt.ok {
+				t.Errorf("handler ran %d times, want ran=%v; calls %v", ran, tt.ok, fake.Ops())
+			}
+			if !tt.ok && fake.Calls()[len(fake.Calls())-1].Visibility != interaction.Private {
+				t.Errorf("refusal was not private: %+v", fake.Calls())
+			}
+		})
+	}
+}
+
+func TestDispatchLegacyCommandsKeepThePublicDeferredShape(t *testing.T) {
+	ran := false
+	register(t, &Command{Name: "t-legacy", Visibility: Public, Response: Deferred,
+		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran = true }})
+	fake := &interactiontest.Fake{}
+	if err := run(t, "t-legacy", fake, fakeSettings{}, slashInteraction("t-legacy", "g", 0)); err != nil {
+		t.Fatal(err)
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Op != "Defer" || calls[0].Visibility != interaction.Public || !ran {
+		t.Errorf("calls = %+v, ran = %v; want one public Defer then the legacy handler", calls, ran)
+	}
+}
+
+func TestDispatchNewFormAcknowledgesByDeclaredMode(t *testing.T) {
+	register(t, &Command{Name: "t-private-deferred", Visibility: Private, Response: Deferred,
+		Run: func(ic *interaction.Context) error { return ic.EditReply(interaction.Response{Content: "done"}) }})
+	register(t, &Command{Name: "t-public-direct", Visibility: Public, Response: Direct,
+		Run: func(ic *interaction.Context) error { return ic.Reply(interaction.Response{Content: "pong"}) }})
+	register(t, &Command{Name: "t-override", Visibility: Public, Response: Direct,
+		Run: func(ic *interaction.Context) error {
+			return ic.Reply(interaction.Response{Content: "secret", Visibility: interaction.Private})
+		}})
+
+	tests := []struct {
+		cmd  string
+		want []string
+		vis  interaction.Visibility
+	}{
+		{"t-private-deferred", []string{"Defer", "EditReply"}, interaction.Private},
+		{"t-public-direct", []string{"Reply"}, interaction.Public},
+		{"t-override", []string{"Reply"}, interaction.Private},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			fake := &interactiontest.Fake{}
+			if err := run(t, tt.cmd, fake, fakeSettings{}, slashInteraction(tt.cmd, "g", 0)); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(fake.Ops(), ","); got != strings.Join(tt.want, ",") {
+				t.Fatalf("ops = %s, want %v", got, tt.want)
+			}
+			if got := fake.Calls()[0].Visibility; got != tt.vis {
+				t.Errorf("visibility = %v, want %v", got, tt.vis)
+			}
+		})
+	}
+}
+
+func TestDispatchLateFailureOnPublicDeferredCommandIsPrivate(t *testing.T) {
+	register(t, &Command{Name: "t-panic", Visibility: Public, Response: Deferred,
+		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {
+			panic("boom")
+		}})
+	register(t, &Command{Name: "t-err", Visibility: Public, Response: Deferred,
+		Run: func(*interaction.Context) error { return errors.New("db down") }})
+
+	for _, name := range []string{"t-panic", "t-err"} {
+		t.Run(name, func(t *testing.T) {
+			fake := &interactiontest.Fake{}
+			if err := run(t, name, fake, fakeSettings{}, slashInteraction(name, "g", 0)); err != nil {
+				t.Fatal(err)
+			}
+			calls := fake.Calls()
+			if got := strings.Join(fake.Ops(), ","); got != "Defer,DeleteReply,FollowUp" {
+				t.Fatalf("ops = %s, want Defer,DeleteReply,FollowUp", got)
+			}
+			last := calls[2]
+			if last.Visibility != interaction.Private || last.Response.Content != "Something went wrong." {
+				t.Errorf("follow-up = %+v, want the private generic error", last)
+			}
+		})
+	}
+}
+
+func TestDispatchFailureBeforeAnyReplyOnDirectCommandIsAPrivateReply(t *testing.T) {
+	register(t, &Command{Name: "t-direct-panic", Visibility: Public, Response: Direct,
+		Run: func(*interaction.Context) error { panic("boom") }})
+	fake := &interactiontest.Fake{}
+	if err := run(t, "t-direct-panic", fake, fakeSettings{}, slashInteraction("t-direct-panic", "g", 0)); err != nil {
+		t.Fatal(err)
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private {
+		t.Errorf("calls = %+v, want one private Reply", calls)
+	}
+}
+
+func TestDispatchFailureOnPrivateDeferredCommandReplacesThePlaceholder(t *testing.T) {
+	register(t, &Command{Name: "t-private-err", Visibility: Private, Response: Deferred,
+		Run: func(*interaction.Context) error { return errors.New("x") }})
+	fake := &interactiontest.Fake{}
+	if err := run(t, "t-private-err", fake, fakeSettings{}, slashInteraction("t-private-err", "g", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(fake.Ops(), ","); got != "Defer,EditReply" {
+		t.Errorf("ops = %s, want Defer,EditReply", got)
+	}
+}
+
+func TestAddRejectsUndeclaredOrInconsistentCommands(t *testing.T) {
+	noop := func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) {}
+	run1 := func(*interaction.Context) error { return nil }
+	tests := []struct {
+		name string
+		cmd  *Command
+	}{
+		{"no visibility", &Command{Name: "x", Response: Deferred, Handler: noop}},
+		{"no response mode", &Command{Name: "x", Visibility: Public, Handler: noop}},
+		{"no handler form", &Command{Name: "x", Visibility: Public, Response: Deferred}},
+		{"both handler forms", &Command{Name: "x", Visibility: Public, Response: Deferred, Handler: noop, Run: run1}},
+		{"legacy handler cannot be direct", &Command{Name: "x", Visibility: Public, Response: Direct, Handler: noop}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("Add did not panic")
+				}
+				delete(registry, "x")
+			}()
+			Add(tt.cmd)
+		})
+	}
+}
