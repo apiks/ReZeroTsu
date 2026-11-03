@@ -130,7 +130,6 @@ var legacyResponseFiles = map[string]bool{
 	"commands/command.go":     true, // autocomplete answers and RespondEphemeral
 	"commands/helpers.go":     true, // RespondEmbed helpers
 	"commands/pagination.go":  true, // pagination buttons
-	"commands/feeds/feeds.go": true,
 	"commands/react/react.go": true,
 	"commands/say/say.go":     true,
 }
