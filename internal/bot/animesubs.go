@@ -229,9 +229,16 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 }
 
 func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
-	desc := fmt.Sprintf("**%s** raw is out!", show.Episode)
-	if show.AirType == "sub" {
+	var desc string
+	switch {
+	case show.MediaType == animeschedule.MediaMovie && show.AirType == "sub":
+		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
+	case show.MediaType == animeschedule.MediaMovie:
+		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
+	case show.AirType == "sub":
 		desc = fmt.Sprintf("**%s** subbed is out!", show.Episode)
+	default:
+		desc = fmt.Sprintf("**%s** raw is out!", show.Episode)
 	}
 	url := animeschedule.BaseURL + "/anime/" + show.Route
 	airTime := time.Unix(show.AirTimeUnix, 0).UTC()
