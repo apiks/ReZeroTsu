@@ -127,13 +127,12 @@ const portAdapterFile = "interaction/discordgo.go"
 // internal/. Each area spec (#33 to #36) removes the entries it migrates, and ticket 7.2 deletes the allowlist.
 // A stale entry (a file that no longer makes such a call) fails the test, so the list only shrinks.
 var legacyResponseFiles = map[string]bool{
-	"commands/command.go":       true, // autocomplete answers and RespondEphemeral
-	"commands/helpers.go":       true, // RespondEmbed helpers
-	"commands/pagination.go":    true, // pagination buttons
-	"commands/feeds/feeds.go":   true,
-	"commands/raffle/raffle.go": true,
-	"commands/react/react.go":   true,
-	"commands/say/say.go":       true,
+	"commands/command.go":     true, // autocomplete answers and RespondEphemeral
+	"commands/helpers.go":     true, // RespondEmbed helpers
+	"commands/pagination.go":  true, // pagination buttons
+	"commands/feeds/feeds.go": true,
+	"commands/react/react.go": true,
+	"commands/say/say.go":     true,
 }
 
 // responseCalls lists every interaction-response call in a file, ignoring the allowlists.
