@@ -69,6 +69,13 @@ type Port interface {
 	// AddReaction adds the bot's reaction to a message.
 	AddReaction(channelID, messageID, emoji string) error
 
+	// ListMessages lists up to limit messages of a channel, newest first, those before beforeID when it is set.
+	ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error)
+	// DeleteMessage deletes one message.
+	DeleteMessage(channelID, messageID string) error
+	// DeleteMessages bulk-deletes between 2 and 100 messages that are less than 14 days old.
+	DeleteMessages(channelID string, messageIDs []string) error
+
 	// Guild reads a guild's state.
 	Guild(guildID string) (*discordgo.Guild, error)
 	// Roles reads a guild's roles.
