@@ -35,7 +35,8 @@ type TimetableAnime struct {
 	Route         string    `json:"route"`
 	EpisodeDate   time.Time `json:"episodeDate"`
 	EpisodeNumber int       `json:"episodeNumber"`
-	// SubtractedEpisodeNumber is the lowest episode of several that air together; 0 when unset.
+	// SubtractedEpisodeNumber is the first episode of an episode span that ends at EpisodeNumber. Zero, or a value
+	// equal to or above EpisodeNumber, means no span: the entry is the single episode EpisodeNumber.
 	SubtractedEpisodeNumber int            `json:"subtractedEpisodeNumber"`
 	Episodes                int            `json:"episodes"`
 	DelayedText             string         `json:"delayedText"`

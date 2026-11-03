@@ -67,6 +67,18 @@ func (p PreferredTrack) Title() string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// Fallback says what p shows, in the order it falls back: "sub, else raw", "dub, else sub, else raw" or
+// "raw only".
+func (p PreferredTrack) Fallback() string {
+	switch p {
+	case PreferDub:
+		return "dub, else sub, else raw"
+	case PreferRaw:
+		return "raw only"
+	}
+	return "sub, else raw"
+}
+
 // String is the lower-case name ParsePreferredTrack reads.
 func (p PreferredTrack) String() string {
 	switch p {

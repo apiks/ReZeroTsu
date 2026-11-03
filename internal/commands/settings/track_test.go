@@ -40,7 +40,7 @@ func TestPanelShowsThePreferredTrackOnItsButtonAndInItsText(t *testing.T) {
 	}
 }
 
-func TestTrackButtonCyclesSubDubRawSubAndSavesOnlyThatField(t *testing.T) {
+func TestPreferredTrackButtonCyclesSubDubRawSubAndSavesOnlyThatField(t *testing.T) {
 	st := &fakeStore{gs: stored()}
 	useStore(t, st)
 	before := *st.gs

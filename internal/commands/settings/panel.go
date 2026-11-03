@@ -170,13 +170,7 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 
 // trackFallback says what a preferred track shows, in the order it falls back.
 func trackFallback(p animeschedule.PreferredTrack) string {
-	switch p.Title() {
-	case "Dub":
-		return "(dub, else sub, else raw)."
-	case "Raw":
-		return "(raw only)."
-	}
-	return "(sub, else raw)."
+	return "(" + p.Fallback() + ")."
 }
 
 // botLogRow is row 1: the bot-log channel picker, carrying the stored channel as its default value.

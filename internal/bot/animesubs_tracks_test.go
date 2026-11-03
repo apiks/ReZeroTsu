@@ -19,6 +19,16 @@ func trackedRow(name, ep string, track animeschedule.Track) animeschedule.ShowEn
 	}
 }
 
+// laterRow airs five minutes after trackedNow: a row met by the seeding before it aired.
+func laterRow(name, ep string, track animeschedule.Track) animeschedule.ShowEntry {
+	row := trackedRow(name, ep, track)
+	row.AirTimeUnix = trackedNow.Unix() + 300
+	return row
+}
+
+// afterAiring is a clock past laterRow's air time.
+var afterAiring = trackedNow.Add(10 * time.Minute)
+
 // byPreference serves a different row list per preferred track, like the timetable's chain.
 func byPreference(lists map[animeschedule.PreferredTrack][]animeschedule.ShowEntry) dayShowsFunc {
 	return func(_ bool, pref animeschedule.PreferredTrack) []animeschedule.ShowEntry { return lists[pref] }
@@ -49,7 +59,7 @@ func descriptions(d *fakeDiscord) []string {
 func TestNewEpisodesFollowThePreferredTrack(t *testing.T) {
 	lists := map[animeschedule.PreferredTrack][]animeschedule.ShowEntry{
 		animeschedule.PreferSub: {trackedRow("Frieren", "Ep 5", animeschedule.TrackSub), trackedRow("Rawonly", "Ep 1", animeschedule.TrackRaw)},
-		animeschedule.PreferDub: {trackedRow("Frieren", "Ep 5", animeschedule.TrackDub), trackedRow("Rawonly", "Ep 1", animeschedule.TrackRaw)},
+		animeschedule.PreferDub: {laterRow("Frieren", "Ep 5", animeschedule.TrackDub), trackedRow("Rawonly", "Ep 1", animeschedule.TrackRaw)},
 		animeschedule.PreferRaw: {trackedRow("Rawonly", "Ep 1", animeschedule.TrackRaw)},
 	}
 	for _, tc := range []struct {
@@ -64,7 +74,7 @@ func TestNewEpisodesFollowThePreferredTrack(t *testing.T) {
 			st := trackedState(tc.pref, &anime_subs.ShowSub{Show: "Frieren", Guild: true}, &anime_subs.ShowSub{Show: "Rawonly", Guild: true})
 			d := newFakeDiscord()
 			seedGuildNewEpisodesForShard(context.Background(), st, []string{"g1"}, byPreference(lists), trackedNow)
-			processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", byPreference(lists), trackedNow)
+			processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", byPreference(lists), afterAiring)
 			got := descriptions(d)
 			if len(got) != len(tc.want) {
 				t.Fatalf("posted %q, want %q", got, tc.want)
@@ -119,7 +129,7 @@ func TestDailyResetWritesTheTrackAndEpisodeIdentity(t *testing.T) {
 
 func TestSameDayAppendUsesTheIdentity(t *testing.T) {
 	// The show is already listed today, but its dub episode is a new airing.
-	rows := []animeschedule.ShowEntry{trackedRow("Frieren", "Ep 5", animeschedule.TrackSub), trackedRow("Frieren", "Ep 5", animeschedule.TrackDub)}
+	rows := []animeschedule.ShowEntry{trackedRow("Frieren", "Ep 5", animeschedule.TrackSub), laterRow("Frieren", "Ep 5", animeschedule.TrackDub)}
 	fn := func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return rows }
 	st := trackedState("", &anime_subs.ShowSub{Show: "Frieren", Track: "sub", Episode: "Ep 5", Guild: true, Notified: true})
 	seedGuildNewEpisodesForShard(context.Background(), st, []string{"g1"}, fn, trackedNow)
@@ -160,10 +170,10 @@ func TestDeployDayEntriesSuppressRepostsOfTheSubChainRow(t *testing.T) {
 		d := newFakeDiscord()
 		fn := byPreference(map[animeschedule.PreferredTrack][]animeschedule.ShowEntry{
 			animeschedule.PreferSub: {trackedRow("Frieren", "Ep 5", animeschedule.TrackSub)},
-			animeschedule.PreferDub: {trackedRow("Frieren", "Ep 5", animeschedule.TrackDub)},
+			animeschedule.PreferDub: {laterRow("Frieren", "Ep 5", animeschedule.TrackDub)},
 		})
 		seedGuildNewEpisodesForShard(context.Background(), st, []string{"g1"}, fn, trackedNow)
-		processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", fn, trackedNow)
+		processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", fn, afterAiring)
 		if got := descriptions(d); len(got) != 1 || got[0] != "**Ep 5** dubbed is out!" {
 			t.Errorf("posted %q, want the dub alert", got)
 		}
