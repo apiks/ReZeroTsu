@@ -1,6 +1,10 @@
 package bot
 
-import "time"
+import (
+	"time"
+
+	"ReZeroTsu/internal/animeschedule"
+)
 
 // The daily schedule embed has no URL, so the shared description/URL matcher alone could mistake an older
 // identical post for today's. Verification for the schedule therefore first narrows the recent messages to
@@ -9,10 +13,10 @@ import "time"
 // scheduleMessagesToday returns the messages in recent that have an embed titled title and were posted on
 // now's UTC date. A message with an unknown (zero) timestamp is kept: the title carries the date.
 func scheduleMessagesToday(recent []ChannelMessage, title string, now time.Time) []ChannelMessage {
-	today := now.UTC().Format("2006-01-02")
+	today := animeschedule.DateKey(now)
 	var out []ChannelMessage
 	for _, m := range recent {
-		if !m.Timestamp.IsZero() && m.Timestamp.UTC().Format("2006-01-02") != today {
+		if !m.Timestamp.IsZero() && animeschedule.DateKey(m.Timestamp) != today {
 			continue
 		}
 		for _, e := range m.Embeds {

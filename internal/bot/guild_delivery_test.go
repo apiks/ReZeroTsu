@@ -17,7 +17,7 @@ type guildHarness struct {
 	d   *fakeDiscord
 	st  *fakeSentState
 	now time.Time
-	fn  weekdayShows
+	fn  dayShowsFunc
 	// senders and clock are shared by every run of the harness, like the shard's factory and the shared cache.
 	senders *channelSenderFactory
 	clock   *fakeClock

@@ -85,14 +85,10 @@ func parseDay(s string) int {
 	}
 }
 
-// BuildScheduleEmbed builds the schedule embed for a weekday and show list.
-func BuildScheduleEmbed(weekday int, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
-	dayName := dayNames[weekday]
-	now := time.Now()
-	// Current week's date for this weekday (0=Sunday)
-	offset := weekday - int(now.Weekday())
-	dayDate := now.AddDate(0, 0, offset)
-	titleWithDate := fmt.Sprintf("%s, %s", dayName, dayDate.Format("2 Jan 2006"))
+// BuildScheduleEmbed builds the schedule embed for a UTC date and its show list.
+func BuildScheduleEmbed(date time.Time, shows []animeschedule.ShowEntry) *discordgo.MessageEmbed {
+	date = date.UTC()
+	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
 	var desc strings.Builder
 	if len(shows) == 0 {
@@ -170,18 +166,19 @@ func handleSchedule(ic *interaction.Context) error {
 		return ic.Refuse(msgTryAgainMinutes)
 	}
 
-	weekday := int(time.Now().Weekday())
+	date := animeschedule.Today()
 	if opt := commands.ParseOption(ic.Command.Options, "day"); opt != nil && opt.StringValue() != "" {
-		weekday = parseDay(opt.StringValue())
+		weekday := parseDay(opt.StringValue())
 		if weekday < 0 || weekday > 6 {
 			return ic.Refuse(msgCannotParseDay)
 		}
+		date = animeschedule.DateInWeek(time.Weekday(weekday))
 	}
 
-	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
+	shows := animeschedule.GetDayShows(date, donghuaSetting(ic.Context(), ic.DB, ic.Interaction))
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
-		Components: commands.BuildSchedulePaginationComponents(weekday, ic.Invoker.ID),
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
+		Components: commands.BuildSchedulePaginationComponents(int(date.Weekday()), ic.Invoker.ID),
 	})
 }
 
@@ -196,9 +193,10 @@ func RenderSchedulePage(ctx context.Context, db *database.Client, _ *discordgo.S
 	}
 
 	weekday := min(max(page, 0), 6)
-	shows := animeschedule.GetDayShows(weekday, donghuaSetting(ctx, db, i.Interaction))
+	date := animeschedule.DateInWeek(time.Weekday(weekday))
+	shows := animeschedule.GetDayShows(date, donghuaSetting(ctx, db, i.Interaction))
 	return commands.Page{Response: interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(weekday, shows)},
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, shows)},
 		Components: commands.BuildSchedulePaginationComponents(weekday, authorID),
 	}}
 }

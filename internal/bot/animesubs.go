@@ -30,9 +30,9 @@ const (
 var animeSubThrottlePerUser = 100 * time.Millisecond
 
 var (
-	lastGuildSeedWeekdayByShard = make(map[int]int)
-	lastGuildSeedWeekdayMu      sync.RWMutex
-	animeSubRoundRobin          ShardRoundRobin
+	lastGuildSeedDateByShard = make(map[int]string)
+	lastGuildSeedDateMu      sync.RWMutex
+	animeSubRoundRobin       ShardRoundRobin
 )
 
 // RunAnimeSubLoop runs the anime-sub check loop for this shard (round-robin). Exits when ctx is cancelled.
@@ -71,11 +71,11 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 				continue
 			}
-			airing := animeschedule.GetAiringShowNames()
-			if len(airing) == 0 {
+			keep, ready := buildKeepRoster()
+			if !ready {
 				continue
 			}
-			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), airing)
+			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), keep)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.For("animesubs").Error("finished cleanup IterateUserSubs failed", "err", err)
 			}
@@ -98,16 +98,78 @@ type userSubsStore interface {
 	CollapseDuplicateShows(ctx context.Context, id string) (bool, error)
 }
 
-// cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
+// keepRoster is the set of shows whose subscriptions the cleanup keeps: shows on this week's or next week's
+// timetable, on the upcoming list, or with a non-final entry last week (a break). Shows are held by route and by
+// anime_subs.MatchKey of their title.
+type keepRoster struct {
+	routes map[string]struct{}
+	keys   map[string]struct{}
+}
+
+// keeps matches a subscription by its route when it has one, otherwise by its title's match key (ADR-0002).
+func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
+	if sub.Route != "" {
+		_, ok := r.routes[sub.Route]
+		return ok
+	}
+	_, ok := r.keys[anime_subs.MatchKey(sub.Show)]
+	return ok
+}
+
+func (r keepRoster) add(route, title string) {
+	if route != "" {
+		r.routes[route] = struct{}{}
+	}
+	if key := anime_subs.MatchKey(title); key != "" {
+		r.keys[key] = struct{}{}
+	}
+}
+
+// buildKeepRoster reads the loaded timetable weeks and the upcoming list. It reports false, and the cleanup must
+// delete nothing, unless the upcoming list has loaded and both this week's and next week's timetables have been
+// fetched since startup and hold entries: with either missing, a show that airs now could look finished.
+func buildKeepRoster() (keepRoster, bool) {
+	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+	if !animeschedule.UpcomingLoaded() {
+		return r, false
+	}
+	weeks := animeschedule.SnapshotWeeks()
+	if !weeks.ThisLoaded || !weeks.NextLoaded {
+		return r, false
+	}
+	for _, e := range weeks.This {
+		r.add(e.Route, e.Name)
+	}
+	for _, e := range weeks.Next {
+		r.add(e.Route, e.Name)
+	}
+	// Last week: a show whose latest entry there was not its final episode may be on a break.
+	latest := map[string]animeschedule.ShowEntry{}
+	for _, e := range weeks.Last {
+		id := e.Route
+		if id == "" {
+			id = anime_subs.MatchKey(e.Name)
+		}
+		if cur, ok := latest[id]; !ok || e.AirTimeUnix >= cur.AirTimeUnix {
+			latest[id] = e
+		}
+	}
+	for _, e := range latest {
+		if !e.Final {
+			r.add(e.Route, e.Name)
+		}
+	}
+	for _, u := range animeschedule.UpcomingShows() {
+		r.add(u.Route, u.Name)
+	}
+	return r, true
+}
+
+// cleanupFinishedShows removes, per user document, the subscriptions the keep roster does not keep (see buildKeepRoster), then collapses legacy
 // duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
 // returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
-// airing holds the airing schedule names in any case-folded form (GetAiringShowNames lowercases them); they are
-// re-keyed with anime_subs.MatchKey so a show counts as airing exactly when the notifier can match it.
-func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
-	airingKeys := make(map[string]struct{}, len(airing))
-	for name := range airing {
-		airingKeys[anime_subs.MatchKey(name)] = struct{}{}
-	}
+// keep says which subscriptions survive (see keepRoster).
+func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster) (int, error) {
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
 		if doc == nil {
@@ -127,7 +189,7 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 				needsCollapse = true
 				continue
 			}
-			if _, ok := airingKeys[anime_subs.MatchKey(sub.Show)]; !ok {
+			if !keep.keeps(sub) {
 				finished = append(finished, sub.Show)
 				continue
 			}
@@ -206,18 +268,16 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 	}
 	shows := make(map[string]int64)
 	nowUnix := now.Unix()
-	for day := 0; day <= 6; day++ {
-		for _, show := range animeschedule.GetDayShows(day, true) {
-			if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
-				continue
-			}
-			key := anime_subs.MatchKey(show.Name)
-			if key == "" {
-				continue
-			}
-			if show.AirTimeUnix > shows[key] {
-				shows[key] = show.AirTimeUnix
-			}
+	for _, show := range animeschedule.AllEntries() {
+		if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
+			continue
+		}
+		key := anime_subs.MatchKey(show.Name)
+		if key == "" {
+			continue
+		}
+		if show.AirTimeUnix > shows[key] {
+			shows[key] = show.AirTimeUnix
 		}
 	}
 	updatedUsers, err := backfillUserSubs(ctx, db.AnimeSubs(), shows)
@@ -231,9 +291,16 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 }
 
 func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
-	desc := fmt.Sprintf("**%s** raw is out!", show.Episode)
-	if show.AirType == "sub" {
+	var desc string
+	switch {
+	case show.MediaType == animeschedule.MediaMovie && show.AirType == "sub":
+		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
+	case show.MediaType == animeschedule.MediaMovie:
+		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
+	case show.AirType == "sub":
 		desc = fmt.Sprintf("**%s** subbed is out!", show.Episode)
+	default:
+		desc = fmt.Sprintf("**%s** raw is out!", show.Episode)
 	}
 	url := animeschedule.BaseURL + "/anime/" + show.Route
 	airTime := time.Unix(show.AirTimeUnix, 0).UTC()
@@ -255,8 +322,8 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	return emb
 }
 
-// weekdayShows returns the shows for a weekday, optionally including donghua.
-type weekdayShows func(donghua bool) []animeschedule.ShowEntry
+// dayShowsFunc returns the shows of one UTC date, optionally including donghua.
+type dayShowsFunc func(donghua bool) []animeschedule.ShowEntry
 
 // rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
 type rolePresence int
@@ -298,20 +365,21 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 		return
 	}
-	now := time.Now().UTC()
-	weekday := int(now.Weekday())
-	todayShows := animeschedule.GetDayShows(weekday, true)
+	now := animeschedule.Now()
+	today := animeschedule.DayOf(now)
+	todayKey := animeschedule.DateKey(today)
+	todayShows := animeschedule.GetDayShows(today, true)
 	if len(todayShows) == 0 {
 		return
 	}
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
 
-	// Per-shard guild seed for current weekday (once per day); missing shard entry = not yet seeded.
-	lastGuildSeedWeekdayMu.RLock()
-	lastSeen, seeded := lastGuildSeedWeekdayByShard[s.ShardID]
-	needGuildSeed := !seeded || lastSeen != weekday
-	lastGuildSeedWeekdayMu.RUnlock()
+	// Per-shard guild seed for the current UTC date (once per day); missing shard entry = not yet seeded.
+	lastGuildSeedDateMu.RLock()
+	lastSeen, seeded := lastGuildSeedDateByShard[s.ShardID]
+	needGuildSeed := !seeded || lastSeen != todayKey
+	lastGuildSeedDateMu.RUnlock()
 	if needGuildSeed {
 		guildIDs := make([]string, 0, len(s.State.Guilds))
 		for _, g := range s.State.Guilds {
@@ -320,9 +388,9 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 			}
 		}
 		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows, now)
-		lastGuildSeedWeekdayMu.Lock()
-		lastGuildSeedWeekdayByShard[s.ShardID] = weekday
-		lastGuildSeedWeekdayMu.Unlock()
+		lastGuildSeedDateMu.Lock()
+		lastGuildSeedDateByShard[s.ShardID] = todayKey
+		lastGuildSeedDateMu.Unlock()
 	}
 
 	if s.ShardID == 0 {
@@ -421,16 +489,22 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 
 	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
 	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
-	subByShow := make(map[string]*anime_subs.ShowSub)
+	// A subscription with a route is matched only by that route; one without is matched by its title's match key
+	// (ADR-0002).
+	subscriptionByRoute := make(map[string]*anime_subs.ShowSub)
+	subscriptionByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
 		if sub == nil {
 			continue
 		}
-		key := anime_subs.MatchKey(sub.Show)
-		if cur, ok := subByShow[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
+		index, key := subscriptionByShow, anime_subs.MatchKey(sub.Show)
+		if sub.Route != "" {
+			index, key = subscriptionByRoute, sub.Route
+		}
+		if cur, ok := index[key]; ok && !anime_subs.SupersedesDuplicate(cur, sub) {
 			continue
 		}
-		subByShow[key] = sub
+		index[key] = sub
 	}
 
 	var dmID string
@@ -450,9 +524,23 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
+		sub, ok := subscriptionByRoute[show.Route]
 		if !ok {
-			continue
+			if sub, ok = subscriptionByShow[anime_subs.MatchKey(show.Name)]; !ok {
+				continue
+			}
+			// A title match records the route, so a later rename of the show still matches.
+			if show.Route != "" {
+				if routeErr := detachedWrite(ctx, func(wctx context.Context) error {
+					return st.SetUserShowRoute(wctx, userID, sub.Show, show.Route)
+				}); routeErr != nil {
+					logger.For("animesubs").Error("save subscription route failed", "user_id", userID, "title", sub.Show, "err", routeErr)
+				} else {
+					sub.Route = show.Route
+					delete(subscriptionByShow, anime_subs.MatchKey(sub.Show))
+					subscriptionByRoute[show.Route] = sub
+				}
+			}
 		}
 		epKey := episodeKey(show)
 		if userShowAlreadyNotified(sub, show, epKey) {
@@ -560,8 +648,8 @@ func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
-func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows, now time.Time) {
-	today := now.UTC().Format("2006-01-02")
+func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows dayShowsFunc, now time.Time) {
+	today := animeschedule.DateKey(now)
 
 	for _, guildID := range guildIDs {
 		select {
@@ -648,7 +736,7 @@ func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*ani
 	return subs
 }
 
-func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows weekdayShows, now time.Time) {
+func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows dayShowsFunc, now time.Time) {
 	if guildID == "" {
 		return
 	}
@@ -683,23 +771,23 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 	}
 	if doc == nil || len(doc.Shows) == 0 {
 		showSubs := seedGuildShowSubs(todayShowsGuild, now)
-		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubs, now.UTC().Format("2006-01-02")); err != nil {
+		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubs, animeschedule.DateKey(now)); err != nil {
 			logger.For("animesubs").Error("Set guild channel seed failed", "channel_id", channelID, "err", err)
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
 	// Shows are matched like the user path (anime_subs.MatchKey). Among duplicate entries a notified one wins, so
 	// a show any duplicate marks as notified is never reposted; the entry chosen is the one marked after sending.
-	subByShow := make(map[string]*anime_subs.ShowSub)
+	subscriptionByShow := make(map[string]*anime_subs.ShowSub)
 	for _, sub := range doc.Shows {
 		if sub == nil {
 			continue
 		}
 		key := anime_subs.MatchKey(sub.Show)
-		if cur, ok := subByShow[key]; ok && (cur.Notified || !sub.Notified) {
+		if cur, ok := subscriptionByShow[key]; ok && (cur.Notified || !sub.Notified) {
 			continue
 		}
-		subByShow[key] = sub
+		subscriptionByShow[key] = sub
 	}
 	type dueEntry struct {
 		show animeschedule.ShowEntry
@@ -717,7 +805,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if !donghua && show.Donghua {
 			continue
 		}
-		sub, ok := subByShow[anime_subs.MatchKey(show.Name)]
+		sub, ok := subscriptionByShow[anime_subs.MatchKey(show.Name)]
 		if !ok || sub.Notified {
 			continue
 		}

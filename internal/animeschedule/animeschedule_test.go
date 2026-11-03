@@ -11,17 +11,19 @@ import (
 	"time"
 )
 
-func TestProcessTimetableBucketsByUTCWeekday(t *testing.T) {
+func TestProcessTimetableBucketsByUTCDate(t *testing.T) {
 	tests := []struct {
 		name        string
 		episodeDate string
-		wantDay     time.Weekday
+		wantDate    string
 	}{
-		// 2025-01-06 is a Monday in UTC; 2025-01-06T05:00+09:00 = 2025-01-05T20:00Z (Sunday).
-		{"positive offset previous UTC day", "2025-01-06T05:00:00+09:00", time.Sunday},
-		// 2025-01-06T22:00-05:00 = 2025-01-07T03:00Z (Tuesday).
-		{"negative offset next UTC day", "2025-01-06T22:00:00-05:00", time.Tuesday},
-		{"UTC unchanged", "2025-01-06T12:00:00Z", time.Monday},
+		// 2025-01-06T05:00+09:00 = 2025-01-05T20:00Z.
+		{"positive offset previous UTC day", "2025-01-06T05:00:00+09:00", "2025-01-05"},
+		// 2025-01-06T22:00-05:00 = 2025-01-07T03:00Z.
+		{"negative offset next UTC day", "2025-01-06T22:00:00-05:00", "2025-01-07"},
+		{"UTC unchanged", "2025-01-06T12:00:00Z", "2025-01-06"},
+		// The same weekday a week earlier is a different date, so it no longer shares a bucket.
+		{"previous week same weekday", "2024-12-30T12:00:00Z", "2024-12-30"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,8 +32,8 @@ func TestProcessTimetableBucketsByUTCWeekday(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := processTimetable([]TimetableAnime{{Title: "Show", Route: "show", AirType: "sub", EpisodeDate: ts}})
-			if len(got[int(tc.wantDay)]) != 1 {
-				t.Fatalf("expected entry under weekday %d, got %v", tc.wantDay, got)
+			if len(got[tc.wantDate]) != 1 || len(got) != 1 {
+				t.Fatalf("expected one entry under %s, got %v", tc.wantDate, got)
 			}
 		})
 	}
@@ -43,7 +45,7 @@ func TestTimetableDecodesAllFourNames(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &list); err != nil {
 		t.Fatal(err)
 	}
-	got := processTimetable(list)[int(time.Monday)]
+	got := processTimetable(list)["2025-01-06"]
 	if len(got) != 1 {
 		t.Fatalf("entries = %v", got)
 	}
@@ -61,9 +63,10 @@ func TestAllNamesIgnoresEmptyAndRepeatedNames(t *testing.T) {
 }
 
 func TestAiringShowsListsEachShowOnceAcrossTheWeek(t *testing.T) {
-	restore := Seed(map[int][]ShowEntry{
-		1: {{Name: "A", Route: "a"}, {Name: "B", Route: "b"}},
-		4: {{Name: "A", Route: "a"}},
+	defer SetClock(func() time.Time { return time.Date(2025, 1, 8, 12, 0, 0, 0, time.UTC) })()
+	restore := Seed(map[string][]ShowEntry{
+		"2025-01-09": {{Name: "A", Route: "a"}},
+		"2025-01-06": {{Name: "A", Route: "a"}, {Name: "B", Route: "b"}},
 	})
 	defer restore()
 	var names []string
@@ -72,6 +75,70 @@ func TestAiringShowsListsEachShowOnceAcrossTheWeek(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "A,B" {
 		t.Errorf("AiringShows = %v", names)
+	}
+}
+
+func TestAiringShowsCoverThisWeekAndNextWeekOnly(t *testing.T) {
+	// 2026-11-04 is a Wednesday; this week runs 2026-11-02 to 2026-11-08.
+	defer SetClock(func() time.Time { return time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC) })()
+	defer Seed(map[string][]ShowEntry{
+		"2026-10-28": {{Name: "Ended", Route: "ended", Final: true}, {Name: "Old Ep", Route: "both", Episode: "Ep 1"}},
+		"2026-11-04": {{Name: "Now", Route: "now"}, {Name: "New Ep", Route: "both", Episode: "Ep 2"}},
+		"2026-11-11": {{Name: "Later", Route: "later"}},
+	})()
+	var got []string
+	for _, e := range AiringShows() {
+		got = append(got, e.Name)
+	}
+	if want := "Now,New Ep,Later"; strings.Join(got, ",") != want {
+		t.Errorf("AiringShows = %v, want %s (nothing from last week)", got, want)
+	}
+}
+
+func TestClockIsReplaceableAndReturnsUTC(t *testing.T) {
+	zone := time.FixedZone("far", -10*3600)
+	// 2026-11-03 23:30 in UTC-10 is 2026-11-04 09:30 UTC.
+	restore := SetClock(func() time.Time { return time.Date(2026, 11, 3, 23, 30, 0, 0, zone) })
+	defer restore()
+	if got := Now(); got.Location() != time.UTC || got.Hour() != 9 {
+		t.Errorf("Now = %v, want 09:30 UTC", got)
+	}
+	if got := Today(); !got.Equal(time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("Today = %v, want 2026-11-04 00:00 UTC", got)
+	}
+	restore()
+	if got := Now(); time.Since(got) > time.Minute || time.Since(got) < -time.Minute {
+		t.Errorf("restored clock = %v, want the system time", got)
+	}
+}
+
+func TestGetDayShowsReadsOneUTCDateAndFiltersDonghua(t *testing.T) {
+	defer Seed(map[string][]ShowEntry{
+		"2026-11-03": {{Name: "Mon", Route: "mon"}, {Name: "Soul Land", Route: "sl", Donghua: true}},
+		"2026-11-10": {{Name: "Next", Route: "next"}},
+	})()
+	// A local time on the other side of midnight still reads its UTC date.
+	date := time.Date(2026, 11, 3, 23, 0, 0, 0, time.FixedZone("west", -5*3600)) // 2026-11-04 04:00 UTC
+	if got := GetDayShows(date, true); len(got) != 0 {
+		t.Errorf("2026-11-04 shows = %v, want none", got)
+	}
+	date = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	if got := GetDayShows(date, true); len(got) != 2 {
+		t.Errorf("with donghua = %v, want 2 shows", got)
+	}
+	if got := GetDayShows(date, false); len(got) != 1 || got[0].Name != "Mon" {
+		t.Errorf("without donghua = %v, want only Mon", got)
+	}
+}
+
+func TestDateInWeekIsTheCurrentISOWeeksDay(t *testing.T) {
+	// 2026-11-04 is a Wednesday; its ISO week runs Monday 2026-11-02 to Sunday 2026-11-08.
+	defer SetClock(func() time.Time { return time.Date(2026, 11, 4, 0, 30, 0, 0, time.UTC) })()
+	tests := map[time.Weekday]string{time.Monday: "2026-11-02", time.Wednesday: "2026-11-04", time.Sunday: "2026-11-08"}
+	for wd, want := range tests {
+		if got := DateKey(DateInWeek(wd)); got != want {
+			t.Errorf("DateInWeek(%v) = %s, want %s", wd, got, want)
+		}
 	}
 }
 
@@ -109,11 +176,15 @@ func TestUpdateAnimeScheduleClosesBothBodiesOn429(t *testing.T) {
 	old := newClient
 	newClient = func() *http.Client { return &http.Client{Transport: rt} }
 	defer func() { newClient = old }()
+	// The 429 carries no reset header, so the retry waits the fallback; do not sleep it for real.
+	oldSleep := upcomingSleep
+	upcomingSleep = func(ctx context.Context, d time.Duration) error { return ctx.Err() }
+	defer func() { upcomingSleep = oldSleep }()
 
 	UpdateAnimeSchedule(context.Background(), "key")
 
-	if calls != 2 {
-		t.Fatalf("expected 2 requests, got %d", calls)
+	if calls != 4 {
+		t.Fatalf("expected 4 requests (three weeks, one retried), got %d", calls)
 	}
 	for i, c := range bodies {
 		if atomic.LoadInt32(c) == 0 {

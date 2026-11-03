@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
@@ -138,14 +137,10 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string) (resp
 		return fmt.Sprintf("You've reached the maximum number of subscriptions (%d). Unsubscribe from some shows to add more.", maxUserSubscriptions), nil
 	}
 
-	now := time.Now().UTC()
-	var airedToday animeschedule.ShowEntry
-	hasAiredToday := false
-	if weekday := int(now.Weekday()); weekday >= 0 && weekday <= 6 {
-		airedToday, hasAiredToday = airedTodayEntry(animeschedule.GetDayShows(weekday, true), showName, now.Unix())
-	}
+	now := animeschedule.Now()
+	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true), showName, now.Unix())
 
-	newSub := &anime_subs.ShowSub{Show: showName, Notified: hasAiredToday, Guild: false}
+	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Notified: hasAiredToday, Guild: false}
 	if hasAiredToday {
 		newSub.LastNotifiedAirUnix = airedToday.AirTimeUnix
 	}
