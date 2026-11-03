@@ -134,7 +134,8 @@ func voiceHintListAdd() string {
 
 // runVoiceAdd is /voicerole add (was /add-voice). Guard homes: the moderator check and the server-only check are the command's
 // PermMod and ContextGuildOnly; both options present, resolvable and a voice channel, the duplicate-pair refusal,
-// the merge into an existing channel entry and the load and save failures are below.
+// the merge into an existing channel entry and the load and save failures are below. New: commands.CanHandOutRole
+// refuses a role at or above the moderator's own highest role.
 func runVoiceAdd(ic *interaction.Context) error {
 	chID, roleID := voiceIDOption(ic, "channel"), voiceIDOption(ic, "role")
 	if chID == "" || roleID == "" {
@@ -150,6 +151,13 @@ func runVoiceAdd(ic *interaction.Context) error {
 	}
 	if ch.Type != discordgo.ChannelTypeGuildVoice {
 		return ic.Refuse("That channel is not a voice channel.")
+	}
+	roles, err := ic.Roles(ic.GuildID)
+	if err != nil {
+		return voiceFail(ic, err)
+	}
+	if !commands.CanHandOutRole(ic, roles, role) {
+		return ic.Refuse(commands.RoleAboveInvoker(role.ID, "a voice role"))
 	}
 	store := voiceStoreOf(ic.DB)
 	settings, err := store.GetGuildSettings(ic.Context(), ic.GuildID)

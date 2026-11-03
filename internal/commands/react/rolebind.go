@@ -256,7 +256,7 @@ func runAddForm(ic *interaction.Context) error {
 //   - the bot's own reaction: AddReaction below, on the message's own channel instead of the channel the command
 //     ran in, and a failure is now shown instead of only logged.
 //
-// New: canHandOut refuses a role at or above the moderator's own highest role, before anything is reacted or stored.
+// New: commands.CanHandOutRole refuses a role at or above the moderator's own highest role, before anything is reacted or stored.
 func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 	parts := strings.Split(strings.TrimPrefix(ic.CustomID, formPrefix), ":")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -283,8 +283,8 @@ func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 	if role == nil {
 		return ic.Refuse(msgRoleGone)
 	}
-	if !canHandOut(ic, roles, role) {
-		return ic.Refuse(commands.RoleMention(roleID) + " is at or above your highest role, so you can't set it up as a reaction role. Ask someone with a higher role, or the server owner.")
+	if !commands.CanHandOutRole(ic, roles, role) {
+		return ic.Refuse(commands.RoleAboveInvoker(roleID, "a reaction role"))
 	}
 
 	store := bindStoreOf(ic.DB)
@@ -344,26 +344,6 @@ func findRole(roles []*discordgo.Role, id string) *discordgo.Role {
 		}
 	}
 	return nil
-}
-
-// canHandOut applies Discord's own role hierarchy to the moderator: a role at or above their highest role is
-// refused, so a reaction role can never hand out more than they could assign by hand. The server owner may bind any
-// role. Administrator does not lift the rule, as in Discord. When the owner cannot be read, the role is refused.
-func canHandOut(ic *interaction.Context, roles []*discordgo.Role, role *discordgo.Role) bool {
-	if ic.Member == nil {
-		return false
-	}
-	top, held := 0, false
-	for _, id := range ic.Member.Roles {
-		if r := findRole(roles, id); r != nil && (!held || r.Position > top) {
-			top, held = r.Position, true
-		}
-	}
-	if held && role.Position < top {
-		return true
-	}
-	guild, err := ic.Guild(ic.Context(), ic.GuildID)
-	return err == nil && guild != nil && ic.Invoker != nil && guild.OwnerID == ic.Invoker.ID
 }
 
 // botHighestPosition is the position of the bot's highest role, read from the bot's cached member. known is false

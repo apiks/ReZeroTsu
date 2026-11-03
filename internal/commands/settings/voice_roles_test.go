@@ -95,11 +95,28 @@ func resolved(chType discordgo.ChannelType) *discordgo.ApplicationCommandInterac
 	}
 }
 
+// voiceTopRole sits above every role in these tests; the default invoker holds it, so their own hierarchy never gets in the way.
+const voiceTopRole = "top"
+
+// voiceServer is a server owned by "owner" where r1 is at position 3 and "mid" at position 3.
+func voiceServer() *interactiontest.Fake {
+	return &interactiontest.Fake{
+		Guilds:   map[string]*discordgo.Guild{"g": {ID: "g", OwnerID: "owner"}},
+		RoleSets: map[string][]*discordgo.Role{"g": {{ID: "r1", Position: 3}, {ID: "mid", Position: 3}, {ID: "low", Position: 1}, {ID: voiceTopRole, Position: 20}}},
+	}
+}
+
 func runVoice(t *testing.T, name string, res *discordgo.ApplicationCommandInteractionDataResolved, opts ...*discordgo.ApplicationCommandInteractionDataOption) *interactiontest.Fake {
 	t.Helper()
-	fake := &interactiontest.Fake{}
+	return runVoiceAs(t, voiceServer(), "user", []string{voiceTopRole}, name, res, opts...)
+}
+
+func runVoiceAs(t *testing.T, fake *interactiontest.Fake, user string, roles []string, name string, res *discordgo.ApplicationCommandInteractionDataResolved, opts ...*discordgo.ApplicationCommandInteractionDataOption) *interactiontest.Fake {
+	t.Helper()
 	cmd := voiceCommand(t)
 	ic := interactiontest.NewCommandContext(fake, cmd.Visibility, cmd.Response, discordgo.ApplicationCommandInteractionData{Name: "voicerole", Options: opts, Resolved: res})
+	ic.Member.User.ID, ic.Member.Roles = user, roles
+	ic.Invoker = ic.Member.User
 	if err := ic.Defer(0); err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +206,35 @@ func TestAddRefusalsStorePrivatelyNothing(t *testing.T) {
 				t.Errorf("saves %d, reply %q, want %q", st.saves, textOf(last.Response), c.want)
 			}
 		})
+	}
+}
+
+func TestAddRefusesARoleAtOrAboveTheModeratorsHighestRole(t *testing.T) {
+	for _, mine := range []string{"mid", "low"} { // r1 is equal to "mid" and above "low"
+		st := useVoice(t)
+		fake := runVoiceAs(t, voiceServer(), "mod", []string{mine}, "add", resolved(discordgo.ChannelTypeGuildVoice), chanOpt("v1"), roleOpt("r1"))
+		got := textOf(lastOf(t, fake).Response)
+		if st.saves != 0 || !strings.Contains(got, "<@&r1>") || !strings.Contains(got, "your highest role") {
+			t.Errorf("holding %s: saves %d, reply %q", mine, st.saves, got)
+		}
+	}
+}
+
+func TestAddLetsTheServerOwnerSetAnyRole(t *testing.T) {
+	st := useVoice(t)
+	runVoiceAs(t, voiceServer(), "owner", nil, "add", resolved(discordgo.ChannelTypeGuildVoice), chanOpt("v1"), roleOpt("r1"))
+	if st.saves != 1 {
+		t.Errorf("saves %d, want the owner's role stored", st.saves)
+	}
+}
+
+func TestAddRefusesWhenTheOwnerCannotBeRead(t *testing.T) {
+	st := useVoice(t)
+	fake := voiceServer()
+	fake.Guilds = nil
+	runVoiceAs(t, fake, "mod", []string{"low"}, "add", resolved(discordgo.ChannelTypeGuildVoice), chanOpt("v1"), roleOpt("r1"))
+	if st.saves != 0 {
+		t.Errorf("saves %d, want nothing stored", st.saves)
 	}
 }
 
