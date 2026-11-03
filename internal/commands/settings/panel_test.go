@@ -21,6 +21,43 @@ type fakeStore struct {
 	failGet error
 	failSet error
 	sets    int
+
+	// autoposts is keyed by post type; deletedSubs lists the sent-state documents that were deleted, in order.
+	autoposts    map[string]*guilds.Autopost
+	deletedSubs  []string
+	failAutopost error
+}
+
+func (f *fakeStore) GetAutopostByType(_ context.Context, _, postType string) (*guilds.Autopost, error) {
+	if f.failGet != nil {
+		return nil, f.failGet
+	}
+	if ap := f.autoposts[postType]; ap != nil {
+		c := *ap
+		return &c, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) SetAutopost(_ context.Context, _, postType string, ap *guilds.Autopost) error {
+	if f.failAutopost != nil {
+		return f.failAutopost
+	}
+	if f.autoposts == nil {
+		f.autoposts = map[string]*guilds.Autopost{}
+	}
+	if ap == nil || ap.ID == "" {
+		delete(f.autoposts, postType)
+		return nil
+	}
+	c := *ap
+	f.autoposts[postType] = &c
+	return nil
+}
+
+func (f *fakeStore) DeleteAnimeSubs(_ context.Context, id string) error {
+	f.deletedSubs = append(f.deletedSubs, id)
+	return nil
 }
 
 func (f *fakeStore) GetGuildSettings(_ context.Context, _ string) (*guilds.GuildSettings, error) {
@@ -123,12 +160,12 @@ func panelOf(t *testing.T, r interaction.Response) (desc string, picker discordg
 		t.Fatalf("panel has %d embeds, want 1", len(r.Embeds))
 	}
 	desc = r.Embeds[0].Description
-	if len(r.Components) != 2 {
-		t.Fatalf("panel has %d rows, want 2 (bot log, toggles)", len(r.Components))
+	if len(r.Components) != 5 {
+		t.Fatalf("panel has %d rows, want 5", len(r.Components))
 	}
 	row1 := r.Components[0].(discordgo.ActionsRow)
 	picker = row1.Components[0].(discordgo.SelectMenu)
-	for _, c := range r.Components[1].(discordgo.ActionsRow).Components {
+	for _, c := range r.Components[4].(discordgo.ActionsRow).Components {
 		buttons = append(buttons, c.(discordgo.Button))
 	}
 	return desc, picker, buttons
