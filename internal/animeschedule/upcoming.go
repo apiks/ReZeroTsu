@@ -3,6 +3,7 @@ package animeschedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -68,7 +69,11 @@ var (
 
 const (
 	upcomingMaxPages = 200
-	maxResetWait     = 5 * time.Minute
+	// maxResetWait caps the wait for a rate-limit reset; fallbackResetWait replaces an unusable reset.
+	maxResetWait      = 5 * time.Minute
+	fallbackResetWait = time.Minute
+	// upcomingRetryEvery is the wait before the next load attempt while the list has never loaded.
+	upcomingRetryEvery = 15 * time.Minute
 )
 
 var (
@@ -119,24 +124,34 @@ func SeedUpcoming(shows []UpcomingShow, loaded bool) (restore func()) {
 	}
 }
 
-// waitForReset sleeps until the X-RateLimit-Reset time (Unix seconds) of h, when it parses and lies within
-// maxResetWait.
-func waitForReset(ctx context.Context, h http.Header) error {
+// rateLimitWait is how long to wait after a spent rate limit. A reset (Unix seconds in X-RateLimit-Reset) within
+// maxResetWait is waited for. A reset already past waits one page gap. A missing, unparsable or distant reset
+// waits fallbackResetWait.
+func rateLimitWait(h http.Header) time.Duration {
 	resetStr := h.Get("X-RateLimit-Reset")
 	if resetStr == "" {
-		return nil
+		return fallbackResetWait
 	}
 	resetUnix, err := strconv.ParseInt(resetStr, 10, 64)
 	if err != nil {
-		logger.For("animeschedule").Warn("X-RateLimit-Reset parse failed, skipping wait", "value", resetStr, "err", err)
-		return nil
+		logger.For("animeschedule").Warn("X-RateLimit-Reset parse failed, using the fallback wait", "value", resetStr, "err", err)
+		return fallbackResetWait
 	}
-	resetAt := time.Unix(resetUnix, 0)
-	if d := time.Until(resetAt); d > 0 && d < maxResetWait {
-		logger.For("animeschedule").Warn("rate limited; waiting until reset", "reset_at", resetAt.UTC().Format(time.RFC3339))
-		return upcomingSleep(ctx, d)
+	switch d := time.Until(time.Unix(resetUnix, 0)); {
+	case d <= 0:
+		return upcomingPageGap
+	case d > maxResetWait:
+		return fallbackResetWait
+	default:
+		return d
 	}
-	return nil
+}
+
+// waitForReset sleeps for rateLimitWait of h.
+func waitForReset(ctx context.Context, h http.Header) error {
+	d := rateLimitWait(h)
+	logger.For("animeschedule").Warn("rate limited; waiting", "wait", d.String())
+	return upcomingSleep(ctx, d)
 }
 
 // fetchUpcomingPage reads one page. A 429 waits until the reset and asks once more. It returns the page and the
@@ -178,22 +193,28 @@ func fetchUpcomingPage(ctx context.Context, key string, page int) (upcomingPage,
 }
 
 // RefreshUpcoming reads every page of AnimeSchedule's upcoming anime and replaces the list. Requests are spaced by
-// upcomingPageGap, and a spent rate limit waits until X-RateLimit-Reset. On any failure the last good list stays.
+// upcomingPageGap, and a spent rate limit waits for its reset. Without a totalAmount it reads until an empty page.
+// On any failure, including a read that hits the page cap or ends short of totalAmount, the last good list stays.
 func RefreshUpcoming(ctx context.Context, key string) error {
 	if key == "" {
 		return nil
 	}
 	var all []UpcomingShow
+	total, complete := 0, false
 	for page := 1; page <= upcomingMaxPages; page++ {
 		p, h, err := fetchUpcomingPage(ctx, key, page)
 		if err != nil {
-			logger.For("animeschedule").Error("upcoming page failed", "page", page, "err", err)
+			if !errors.Is(err, context.Canceled) {
+				logger.For("animeschedule").Error("upcoming page failed", "page", page, "err", err)
+			}
 			return err
 		}
 		for _, it := range p.Anime {
 			all = append(all, it.show())
 		}
-		if len(p.Anime) == 0 || len(all) >= p.TotalAmount {
+		total = p.TotalAmount
+		if len(p.Anime) == 0 || (total > 0 && len(all) >= total) {
+			complete = true
 			break
 		}
 		if h.Get("X-RateLimit-Remaining") == "0" {
@@ -205,28 +226,36 @@ func RefreshUpcoming(ctx context.Context, key string) error {
 			return err
 		}
 	}
+	if !complete {
+		logger.For("animeschedule").Warn("upcoming list hit the page cap; keeping the last list", "pages", upcomingMaxPages, "read", len(all))
+		return fmt.Errorf("upcoming list not read within %d pages", upcomingMaxPages)
+	}
+	if total > 0 && len(all) < total {
+		logger.For("animeschedule").Warn("upcoming list ended short of its total; keeping the last list", "read", len(all), "total", total)
+		return fmt.Errorf("upcoming list has %d of %d shows", len(all), total)
+	}
 	upcomingMu.Lock()
 	upcomingList, upcomingLoaded = all, true
 	upcomingMu.Unlock()
 	return nil
 }
 
-// RunUpcomingLoop loads the upcoming list shortly after startup, then once a day, until ctx is cancelled.
+// RunUpcomingLoop loads the upcoming list shortly after startup, then once a day, until ctx is cancelled. While the
+// list has never loaded, a failed load is retried every upcomingRetryEvery.
 func RunUpcomingLoop(ctx context.Context, key string) {
 	if key == "" {
 		return
 	}
-	if err := sleepCtx(ctx, upcomingStartDelay); err != nil {
-		return
-	}
-	ticker := time.NewTicker(upcomingRefreshEvery)
-	defer ticker.Stop()
+	wait := upcomingStartDelay
 	for {
-		_ = RefreshUpcoming(ctx, key)
-		select {
-		case <-ctx.Done():
+		if err := upcomingSleep(ctx, wait); err != nil {
 			return
-		case <-ticker.C:
+		}
+		err := RefreshUpcoming(ctx, key)
+		if err != nil && !UpcomingLoaded() {
+			wait = upcomingRetryEvery
+		} else {
+			wait = upcomingRefreshEvery
 		}
 	}
 }

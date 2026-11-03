@@ -89,12 +89,14 @@ func (e ShowEntry) ImageURL() string {
 var newClient = httpclient.Default
 
 var (
-	apiKeyMu       sync.RWMutex
-	apiKey         string
-	cacheMu        sync.RWMutex
-	cache          = make(map[string][]ShowEntry) // UTC calendar date (DateKey) -> entries sorted by air time
-	cachePopulated bool
-	lastFetchErr   error
+	apiKeyMu           sync.RWMutex
+	apiKey             string
+	timetableMu        sync.RWMutex
+	timetable          = make(map[string][]ShowEntry) // UTC calendar date (DateKey) -> entries sorted by air time
+	timetablePopulated bool
+	// fetchedWeeks holds the Monday (DateKey) of each week fetched successfully since startup.
+	fetchedWeeks = make(map[string]bool)
+	lastFetchErr error
 )
 
 // clock returns the current time; replaceable through SetClock.
@@ -125,23 +127,34 @@ func Now() time.Time {
 	return now().UTC()
 }
 
+// DayOf returns the UTC date of t, as midnight UTC.
+func DayOf(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
 // Today returns the current UTC date from the shared clock, as midnight UTC.
 func Today() time.Time {
-	n := Now()
-	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	return DayOf(Now())
 }
+
+const dateKeyLayout = "2006-01-02"
 
 // DateKey is the timetable key of t's UTC calendar date ("2006-01-02").
 func DateKey(t time.Time) string {
-	return t.UTC().Format("2006-01-02")
+	return t.UTC().Format(dateKeyLayout)
+}
+
+// mondayOf returns the Monday, as midnight UTC, of the UTC ISO week that holds t.
+func mondayOf(t time.Time) time.Time {
+	d := DayOf(t)
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
 }
 
 // DateInWeek returns the date, as midnight UTC, of the given weekday in the current UTC ISO week (Monday to
 // Sunday) of the shared clock.
 func DateInWeek(weekday time.Weekday) time.Time {
-	today := Today()
-	monday := today.AddDate(0, 0, -((int(today.Weekday()) + 6) % 7))
-	return monday.AddDate(0, 0, (int(weekday)+6)%7)
+	return mondayOf(Today()).AddDate(0, 0, (int(weekday)+6)%7)
 }
 
 func SetAPIKey(key string) {
@@ -150,17 +163,24 @@ func SetAPIKey(key string) {
 	apiKey = key
 }
 
-// Seed replaces the cached timetable and marks it populated, keyed by UTC date (see DateKey), and returns a
-// function that restores the previous state. It exists so tests need no HTTP server.
+// Seed replaces the loaded timetable and marks it populated, keyed by UTC date (see DateKey), and returns a
+// function that restores the previous state. Every week that holds a date counts as fetched. It exists so tests
+// need no HTTP server.
 func Seed(days map[string][]ShowEntry) (restore func()) {
-	cacheMu.Lock()
-	prev, prevPopulated := cache, cachePopulated
-	cache, cachePopulated = days, true
-	cacheMu.Unlock()
+	weeks := make(map[string]bool)
+	for date := range days {
+		if t, err := time.Parse(dateKeyLayout, date); err == nil {
+			weeks[DateKey(mondayOf(t))] = true
+		}
+	}
+	timetableMu.Lock()
+	prev, prevPopulated, prevWeeks := timetable, timetablePopulated, fetchedWeeks
+	timetable, timetablePopulated, fetchedWeeks = days, true, weeks
+	timetableMu.Unlock()
 	return func() {
-		cacheMu.Lock()
-		cache, cachePopulated = prev, prevPopulated
-		cacheMu.Unlock()
+		timetableMu.Lock()
+		timetable, timetablePopulated, fetchedWeeks = prev, prevPopulated, prevWeeks
+		timetableMu.Unlock()
 	}
 }
 
@@ -171,17 +191,17 @@ func APIKeyConfigured() bool {
 	return apiKey != ""
 }
 
-// HasData reports whether the cache has been populated.
+// HasData reports whether the timetable has been populated.
 func HasData() bool {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	return cachePopulated
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	return timetablePopulated
 }
 
-// loadedDates returns the cached dates in ascending order. The caller holds cacheMu.
+// loadedDates returns the loaded dates in ascending order. The caller holds timetableMu.
 func loadedDates() []string {
-	dates := make([]string, 0, len(cache))
-	for d := range cache {
+	dates := make([]string, 0, len(timetable))
+	for d := range timetable {
 		dates = append(dates, d)
 	}
 	sort.Strings(dates)
@@ -190,9 +210,9 @@ func loadedDates() []string {
 
 // GetDayShows returns the shows of the UTC date of day, sorted by air time. Excludes donghua when false.
 func GetDayShows(day time.Time, donghua bool) []ShowEntry {
-	cacheMu.RLock()
-	entries := cache[DateKey(day)]
-	cacheMu.RUnlock()
+	timetableMu.RLock()
+	entries := timetable[DateKey(day)]
+	timetableMu.RUnlock()
 	if len(entries) == 0 {
 		return nil
 	}
@@ -206,15 +226,22 @@ func GetDayShows(day time.Time, donghua bool) []ShowEntry {
 	return out
 }
 
-// AiringShows returns the airing shows of the loaded dates, one entry per route (or per title when a route is
-// missing), in date then air-time order. Donghua is included.
+// AiringShows returns the shows on this week's and next week's timetable, one entry per route (or per title when
+// a route is missing), in date then air-time order, so a route on both weeks keeps its earliest entry from this
+// week or later. Donghua is included. Last week is left out: a show whose final episode aired there is not
+// airing. AllEntries covers every loaded week.
 func AiringShows() []ShowEntry {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
+	weeks := weekLayout(Now())
+	from, to := DateKey(weeks[1].monday), DateKey(weeks[2].monday.AddDate(0, 0, 6))
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
 	var out []ShowEntry
 	seen := make(map[string]bool)
 	for _, date := range loadedDates() {
-		for _, e := range cache[date] {
+		if date < from || date > to {
+			continue
+		}
+		for _, e := range timetable[date] {
 			key := e.Route
 			if key == "" {
 				key = strings.ToLower(e.Name)
@@ -229,28 +256,41 @@ func AiringShows() []ShowEntry {
 	return out
 }
 
-// GetAiringShowNames returns the set of airing show names (lowercased).
-func GetAiringShowNames() map[string]struct{} {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	out := make(map[string]struct{})
-	for _, entries := range cache {
-		for _, e := range entries {
-			out[strings.ToLower(e.Name)] = struct{}{}
-		}
+// AllEntries returns every entry of the loaded dates in date then air-time order, donghua included.
+func AllEntries() []ShowEntry {
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	var out []ShowEntry
+	for _, date := range loadedDates() {
+		out = append(out, timetable[date]...)
 	}
 	return out
 }
 
-// AllEntries returns every entry of the loaded dates in date then air-time order, donghua included.
-func AllEntries() []ShowEntry {
-	cacheMu.RLock()
-	defer cacheMu.RUnlock()
-	var out []ShowEntry
-	for _, date := range loadedDates() {
-		out = append(out, cache[date]...)
+// WeekSnapshot is last week's, this week's and next week's entries (date then air-time order, donghua included),
+// read under one lock and one clock reading. ThisLoaded and NextLoaded say whether that week was fetched
+// successfully since startup and holds entries.
+type WeekSnapshot struct {
+	Last, This, Next       []ShowEntry
+	ThisLoaded, NextLoaded bool
+}
+
+// SnapshotWeeks reads the three weeks around the shared clock's now.
+func SnapshotWeeks() WeekSnapshot {
+	weeks := weekLayout(Now())
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	read := func(w timetableWeek) (entries []ShowEntry, loaded bool) {
+		for d := range 7 {
+			entries = append(entries, timetable[DateKey(w.monday.AddDate(0, 0, d))]...)
+		}
+		return entries, fetchedWeeks[DateKey(w.monday)] && len(entries) > 0
 	}
-	return out
+	var s WeekSnapshot
+	s.Last, _ = read(weeks[0])
+	s.This, s.ThisLoaded = read(weeks[1])
+	s.Next, s.NextLoaded = read(weeks[2])
+	return s
 }
 
 // timetableWeek is one ISO week of the loaded range: its Monday (midnight UTC) and ISO year and number.
@@ -260,9 +300,9 @@ type timetableWeek struct {
 	week   int
 }
 
-// loadedWeeks returns last week, this week and next week by the shared UTC clock.
-func loadedWeeks() []timetableWeek {
-	thisMonday := DateInWeek(time.Monday)
+// weekLayout returns last week, this week and next week around now (UTC).
+func weekLayout(now time.Time) []timetableWeek {
+	thisMonday := mondayOf(now)
 	weeks := make([]timetableWeek, 0, 3)
 	for _, offset := range []int{-7, 0, 7} {
 		monday := thisMonday.AddDate(0, 0, offset)
@@ -275,17 +315,18 @@ func loadedWeeks() []timetableWeek {
 // LoadedRange returns the first and last loaded UTC dates, as midnight UTC: last week's Monday and next week's
 // Sunday by the shared clock.
 func LoadedRange() (first, last time.Time) {
-	weeks := loadedWeeks()
+	weeks := weekLayout(Now())
 	return weeks[0].monday, weeks[len(weeks)-1].monday.AddDate(0, 0, 6)
 }
 
 // UpdateAnimeSchedule fetches last week, this week and next week from the timetables API (each by ISO year and
-// week, as a UTC week) and updates the cache. A week that fails to fetch keeps its previous entries.
+// week, as a UTC week) and updates the loaded timetable. A week that fails to fetch keeps its previous entries.
 func UpdateAnimeSchedule(ctx context.Context, key string) {
 	if key == "" {
 		return
 	}
-	weeks := loadedWeeks()
+	weeks := weekLayout(Now())
+	first, last := weeks[0].monday, weeks[len(weeks)-1].monday.AddDate(0, 0, 6)
 	fetched := make(map[string][]ShowEntry, 21)
 	ok := make(map[time.Time]bool, len(weeks))
 	for _, w := range weeks {
@@ -300,7 +341,7 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 		ok[w.monday] = true
 		for date, entries := range processTimetable(list) {
 			// An entry outside the week it was requested for never lands on a loaded date.
-			if t, perr := time.Parse("2006-01-02", date); perr == nil && !t.Before(w.monday) && t.Before(w.monday.AddDate(0, 0, 7)) {
+			if t, perr := time.Parse(dateKeyLayout, date); perr == nil && !t.Before(w.monday) && t.Before(w.monday.AddDate(0, 0, 7)) {
 				fetched[date] = entries
 			}
 		}
@@ -309,26 +350,32 @@ func UpdateAnimeSchedule(ctx context.Context, key string) {
 		return
 	}
 
-	first, last := LoadedRange()
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	newCache := make(map[string][]ShowEntry, len(cache))
-	for date, entries := range cache {
-		t, perr := time.Parse("2006-01-02", date)
+	timetableMu.Lock()
+	defer timetableMu.Unlock()
+	next := make(map[string][]ShowEntry, len(timetable))
+	for date, entries := range timetable {
+		t, perr := time.Parse(dateKeyLayout, date)
 		if perr != nil || t.Before(first) || t.After(last) {
 			continue
 		}
-		monday := t.AddDate(0, 0, -((int(t.Weekday()) + 6) % 7))
-		if ok[monday] {
+		if ok[mondayOf(t)] {
 			continue
 		}
-		newCache[date] = entries
+		next[date] = entries
 	}
 	for date, entries := range fetched {
-		newCache[date] = entries
+		next[date] = entries
 	}
-	cache = newCache
-	cachePopulated = true
+	timetable = next
+	timetablePopulated = true
+	// Only the weeks of the current layout stay fetched; the window moving past a week drops it.
+	weeksFetched := make(map[string]bool, len(weeks))
+	for _, w := range weeks {
+		if k := DateKey(w.monday); ok[w.monday] || fetchedWeeks[k] {
+			weeksFetched[k] = true
+		}
+	}
+	fetchedWeeks = weeksFetched
 	if len(ok) == len(weeks) {
 		lastFetchErr = nil
 	}
@@ -360,24 +407,8 @@ func fetchWeek(ctx context.Context, key string, w timetableWeek) ([]TimetableAni
 
 	// Rate limit: if 429 or remaining 0, wait until reset then retry once
 	if resp.StatusCode == http.StatusTooManyRequests || resp.Header.Get("X-RateLimit-Remaining") == "0" {
-		resetStr := resp.Header.Get("X-RateLimit-Reset")
-		if resetStr != "" {
-			resetUnix, parseErr := strconv.ParseInt(resetStr, 10, 64)
-			if parseErr != nil {
-				logger.For("animeschedule").Warn("X-RateLimit-Reset parse failed, skipping wait", "value", resetStr, "err", parseErr)
-			} else {
-				resetAt := time.Unix(resetUnix, 0)
-				if d := time.Until(resetAt); d > 0 && d < 5*time.Minute {
-					logger.For("animeschedule").Warn("rate limited; waiting until reset", "reset_at", resetAt.UTC().Format(time.RFC3339))
-					resetWait := time.NewTimer(d)
-					defer resetWait.Stop()
-					select {
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					case <-resetWait.C:
-					}
-				}
-			}
+		if err := waitForReset(ctx, resp.Header); err != nil {
+			return nil, err
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			// Retry once after reset
@@ -412,9 +443,9 @@ func fetchWeek(ctx context.Context, key string, w timetableWeek) ([]TimetableAni
 }
 
 func setFetchErr(err error) {
-	cacheMu.Lock()
+	timetableMu.Lock()
 	lastFetchErr = err
-	cacheMu.Unlock()
+	timetableMu.Unlock()
 }
 
 // processTimetable builds UTC date -> []ShowEntry from API; sub preferred, raw if no sub. Sorts each day by air time.

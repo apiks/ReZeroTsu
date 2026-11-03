@@ -193,6 +193,104 @@ func TestUpcomingNotLoadedUntilFirstSuccess(t *testing.T) {
 	}
 }
 
+func TestRefreshUpcomingWithoutATotalReadsUntilAnEmptyPage(t *testing.T) {
+	f := &upcomingFixture{total: 0, pages: []string{
+		"[" + item("A", "a", zeroTime, "tv") + "]",
+		"[" + item("B", "b", zeroTime, "tv") + "]",
+	}}
+	useUpcomingServer(t, f)
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(UpcomingShows()); got != 2 {
+		t.Errorf("shows = %d, want both pages read despite the missing total", got)
+	}
+}
+
+func TestRefreshUpcomingShortOfTheTotalFailsAndKeepsTheLastGoodList(t *testing.T) {
+	f := &upcomingFixture{total: 1, pages: []string{"[" + item("A", "a", zeroTime, "tv") + "]"}}
+	useUpcomingServer(t, f)
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	// The next refresh ends on an empty page with 1 of 3 shows read.
+	f.mu.Lock()
+	f.total = 3
+	f.mu.Unlock()
+	if err := RefreshUpcoming(context.Background(), "key"); err == nil {
+		t.Fatal("expected an error for a list shorter than totalAmount")
+	}
+	if got := UpcomingShows(); len(got) != 1 {
+		t.Errorf("shows = %v, want the last good list", got)
+	}
+}
+
+func TestRefreshUpcomingHittingThePageCapFails(t *testing.T) {
+	f := &upcomingFixture{total: 0}
+	for range upcomingMaxPages + 1 {
+		f.pages = append(f.pages, "["+item("A", "a", zeroTime, "tv")+"]")
+	}
+	useUpcomingServer(t, f)
+	if err := RefreshUpcoming(context.Background(), "key"); err == nil {
+		t.Error("expected an error when the page cap ends the read")
+	}
+	if UpcomingLoaded() {
+		t.Error("a partial list was stored as loaded")
+	}
+}
+
+func TestRefreshUpcomingWaitsWhenNoRequestsRemainAndTheResetIsUnusable(t *testing.T) {
+	tests := []struct {
+		name   string
+		header http.Header
+		want   time.Duration
+	}{
+		{"missing reset", http.Header{"X-Ratelimit-Remaining": {"0"}}, time.Minute},
+		{"unparsable reset", http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {"soon"}}, time.Minute},
+		{"reset too far away", http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)}}, time.Minute},
+		{"reset already passed", http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)}}, 3 * time.Second},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &upcomingFixture{total: 2, headers: map[int]http.Header{1: tc.header}, pages: []string{
+				"[" + item("A", "a", zeroTime, "tv") + "]",
+				"[" + item("B", "b", zeroTime, "tv") + "]",
+			}}
+			waits := useUpcomingServer(t, f)
+			if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+				t.Fatal(err)
+			}
+			if len(*waits) != 1 || (*waits)[0] != tc.want {
+				t.Errorf("waits = %v, want one wait of %v", *waits, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpcomingLoopRetriesSoonAfterAFailedLoadThenGoesDaily(t *testing.T) {
+	f := &upcomingFixture{total: 1, pages: []string{"[" + item("A", "a", zeroTime, "tv") + "]"},
+		statuses: map[int][]int{1: {http.StatusInternalServerError}}}
+	waits := useUpcomingServer(t, f)
+	// The timeout only bounds a loop that ignores upcomingSleep.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	upcomingSleep = func(ctx context.Context, d time.Duration) error {
+		*waits = append(*waits, d)
+		if len(*waits) == 3 {
+			cancel()
+		}
+		return ctx.Err()
+	}
+	RunUpcomingLoop(ctx, "key")
+	want := []time.Duration{upcomingStartDelay, 15 * time.Minute, upcomingRefreshEvery}
+	if fmt.Sprint(*waits) != fmt.Sprint(want) {
+		t.Errorf("waits = %v, want %v", *waits, want)
+	}
+	if !UpcomingLoaded() {
+		t.Error("list not loaded after the retry")
+	}
+}
+
 func TestSeedUpcomingSeedsAndRestores(t *testing.T) {
 	restore := SeedUpcoming([]UpcomingShow{{Name: "Soon", Route: "soon"}}, true)
 	if !UpcomingLoaded() || len(UpcomingShows()) != 1 || UpcomingShows()[0].Route != "soon" {
@@ -207,6 +305,7 @@ func TestSeedUpcomingSeedsAndRestores(t *testing.T) {
 func TestUpcomingLoopLoadsAfterStartupThenDailyAndStops(t *testing.T) {
 	f := &upcomingFixture{total: 1, pages: []string{"[" + item("A", "a", zeroTime, "tv") + "]"}}
 	useUpcomingServer(t, f)
+	upcomingSleep = sleepCtx
 	oldDelay, oldEvery := upcomingStartDelay, upcomingRefreshEvery
 	defer func() { upcomingStartDelay, upcomingRefreshEvery = oldDelay, oldEvery }()
 	upcomingStartDelay, upcomingRefreshEvery = 10*time.Millisecond, 40*time.Millisecond

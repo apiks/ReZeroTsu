@@ -10,7 +10,7 @@ const (
 	MediaTV MediaType = iota
 	MediaTVShort
 	MediaONA
-	// MediaDonghua is AnimeSchedule's "ONA (Chinese)".
+	// MediaDonghua is AnimeSchedule's "ONA (Chinese)"; that label is the upstream value, not our term.
 	MediaDonghua
 	MediaOVA
 	MediaSpecial
