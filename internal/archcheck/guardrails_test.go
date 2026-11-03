@@ -139,7 +139,6 @@ var legacyResponseFiles = map[string]bool{
 	"commands/joke/joke.go":           true,
 	"commands/pick/pick.go":           true,
 	"commands/ping/ping.go":           true,
-	"commands/prune/prune.go":         true,
 	"commands/raffle/raffle.go":       true,
 	"commands/react/react.go":         true,
 	"commands/reminders/reminders.go": true,

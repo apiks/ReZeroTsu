@@ -101,6 +101,18 @@ func (p *DiscordgoPort) AddReaction(channelID, messageID, emoji string) error {
 	return p.s.MessageReactionAdd(channelID, messageID, emoji)
 }
 
+func (p *DiscordgoPort) ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error) {
+	return p.s.ChannelMessages(channelID, limit, beforeID, "", "")
+}
+
+func (p *DiscordgoPort) DeleteMessage(channelID, messageID string) error {
+	return p.s.ChannelMessageDelete(channelID, messageID)
+}
+
+func (p *DiscordgoPort) DeleteMessages(channelID string, messageIDs []string) error {
+	return p.s.ChannelMessagesBulkDelete(channelID, messageIDs)
+}
+
 // Guild reads the cached guild and falls back to REST when the cache has no entry.
 func (p *DiscordgoPort) Guild(guildID string) (*discordgo.Guild, error) {
 	if g, err := p.s.State.Guild(guildID); err == nil {
