@@ -103,6 +103,11 @@ type Command struct {
 	AutocompleteOption func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice
 }
 
+// BothInstalls is the Installs value of a command usable under a server install and a user install.
+func BothInstalls() []discordgo.ApplicationIntegrationType {
+	return []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}
+}
+
 // CommandKind says how a command is invoked.
 type CommandKind int
 
@@ -154,6 +159,21 @@ func AddMessageCommand(cmd *MessageCommand) {
 	}
 }
 
+// PrefixHint is the one reply a prefixed DM gets when it names no registered prefix command: the user prefix
+// commands were replaced by slash commands. REMOVE this hint and its branch in HandleMessageCommand on
+// 2027-02-03, about three months after the retirement.
+const PrefixHint = "Prefix commands were replaced by slash commands. Type / to see them."
+
+// MessageCommandNames returns the names and aliases of the registered prefix commands, sorted.
+func MessageCommandNames() []string {
+	out := make([]string, 0, len(messageRegistry))
+	for n := range messageRegistry {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // HandleMessageCommand parses a prefix command and dispatches.
 func HandleMessageCommand(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, ownerID string, prefixes []string, runtime BotRuntime) bool {
 	if m.Author == nil {
@@ -190,8 +210,13 @@ func HandleMessageCommand(ctx context.Context, db *database.Client, s *discordgo
 	}
 	cmd, ok := messageRegistry[name]
 	if !ok {
-		return false
+		if m.GuildID != "" {
+			return false
+		}
+		_, _ = s.ChannelMessageSend(m.ChannelID, PrefixHint)
+		return true
 	}
+	// Guards, unchanged: the owner-only permission and the allowed context both run here, before the handler.
 	if cmd.Permission == PermOwner && m.Author.ID != ownerID {
 		_, _ = s.ChannelMessageSend(m.ChannelID, "Only the bot owner can use this command.")
 		return true

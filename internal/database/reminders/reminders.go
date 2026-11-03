@@ -10,12 +10,32 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
+// Origin says where a reminder was set. Reminders stored before it existed have none.
+type Origin string
+
+const (
+	// OriginServer is a reminder set in a server channel, the one stored as CommandChannel.
+	OriginServer Origin = "server"
+	// OriginDM is a reminder set in a DM or group DM.
+	OriginDM Origin = "dm"
+)
+
+// OriginFor is the origin of a reminder set in the given guild: a server channel when guildID is set, DMs otherwise.
+func OriginFor(guildID string) Origin {
+	if guildID != "" {
+		return OriginServer
+	}
+	return OriginDM
+}
+
 type RemindMe struct {
 	Message        string    `bson:"message"`
 	Date           time.Time `bson:"date"`
 	CommandChannel string    `bson:"command_channel"`
-	RemindID       int       `bson:"remind_id"`
-	CreatedAt      time.Time `bson:"created_at,omitempty"`
+	// Origin is where the reminder was set; empty for reminders stored before it was recorded.
+	Origin    Origin    `bson:"origin,omitempty"`
+	RemindID  int       `bson:"remind_id"`
+	CreatedAt time.Time `bson:"created_at,omitempty"`
 	// FailingSince is when Discord first rejected delivering this reminder; zero while it has not failed.
 	FailingSince time.Time `bson:"failing_since,omitempty"`
 }

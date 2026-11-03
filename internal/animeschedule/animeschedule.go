@@ -24,6 +24,9 @@ const (
 // TimetableAnime is one entry from the AnimeSchedule API timetables.
 type TimetableAnime struct {
 	Title             string    `json:"title"`
+	Romaji            string    `json:"romaji"`
+	English           string    `json:"english"`
+	Native            string    `json:"native"`
 	Route             string    `json:"route"`
 	EpisodeDate       time.Time `json:"episodeDate"`
 	EpisodeNumber     int       `json:"episodeNumber"`
@@ -37,7 +40,12 @@ type TimetableAnime struct {
 }
 
 type ShowEntry struct {
-	Name              string
+	// Name is the display title; subscriptions are keyed by it.
+	Name string
+	// Romaji, English and Native are the show's other names; any may be empty.
+	Romaji            string
+	English           string
+	Native            string
 	Route             string
 	AirTimeUnix       int64
 	Episode           string
@@ -45,6 +53,23 @@ type ShowEntry struct {
 	Donghua           bool
 	AirType           string
 	ImageVersionRoute string
+}
+
+// AllNames returns the display title, romaji, English and native names in that order, leaving out empty names and
+// repeats (compared ignoring case and surrounding space).
+func (e ShowEntry) AllNames() []string {
+	var out []string
+	seen := make(map[string]bool, 4)
+	for _, n := range []string{e.Name, e.Romaji, e.English, e.Native} {
+		n = strings.TrimSpace(n)
+		k := strings.ToLower(n)
+		if n == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // ImageURL returns the full CDN URL for the show image, or "" if none.
@@ -115,6 +140,29 @@ func GetDayShows(weekday int, donghua bool) []ShowEntry {
 			continue
 		}
 		out = append(out, e)
+	}
+	return out
+}
+
+// AiringShows returns this week's airing shows, one entry per route (or per title when a route is missing), in
+// weekday then air-time order. Donghua is included.
+func AiringShows() []ShowEntry {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	var out []ShowEntry
+	seen := make(map[string]bool)
+	for weekday := 0; weekday <= 6; weekday++ {
+		for _, e := range cache[weekday] {
+			key := e.Route
+			if key == "" {
+				key = strings.ToLower(e.Name)
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, e)
+		}
 	}
 	return out
 }
@@ -272,6 +320,9 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 		}
 		byWeekday[weekday] = append(byWeekday[weekday], ShowEntry{
 			Name:              strings.TrimSpace(a.Title),
+			Romaji:            strings.TrimSpace(a.Romaji),
+			English:           strings.TrimSpace(a.English),
+			Native:            strings.TrimSpace(a.Native),
 			Route:             a.Route,
 			AirTimeUnix:       a.EpisodeDate.UTC().Unix(),
 			Episode:           episodeStr,

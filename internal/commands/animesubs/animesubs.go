@@ -11,7 +11,6 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -19,144 +18,7 @@ import (
 const (
 	embedTitleAnimeSubs  = "Anime subscriptions"
 	maxUserSubscriptions = 100
-	hintUnsub            = "Use /unsub <anime> to unsubscribe."
 )
-
-func init() {
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "sub",
-		Desc:       "Subscribe to DM notifications when a new episode of an anime is released (subbed if possible).",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextBoth,
-		Module:     "schedule",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "anime",
-				Description: "The romaji title of an ongoing anime from AnimeSchedule.net or /schedule",
-				Required:    true,
-			},
-		},
-		Handler: handleSub,
-	})
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "unsub",
-		Desc:       "Stop getting DM notifications for an anime's new episodes.",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextBoth,
-		Module:     "schedule",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "anime",
-				Description: "The anime to unsubscribe from.",
-				Required:    true,
-			},
-		},
-		Handler: handleUnsub,
-	})
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "clearsubs",
-		Desc:       "Clear all your anime episode notifications.",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextBoth,
-		Module:     "schedule",
-		Handler:    handleClearsubs,
-	})
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "subs",
-		Desc:       "List which anime you get new episode notifications for.",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextBoth,
-		Module:     "schedule",
-		Handler:    handleSubs,
-	})
-	commands.RegisterPaginationRenderer("subs", RenderSubsPage)
-
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "clearsubs",
-		Aliases:    []string{"clearanimesubs", "subsclear", "unsuball"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), m.Author.ID)
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "sub",
-		Aliases:    []string{"subscribe", "subs", "animesub", "subanime", "addsub"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := subCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "unsub",
-		Aliases:    []string{"unsubscribe", "unsubs", "unanimesub", "unsubanime", "removesub", "killsub", "stopsub"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := unsubCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "subs",
-		Aliases:    []string{"subscriptions", "animesubs", "showsubs", "showsubscriptions", "viewsubs", "viewsubscriptions"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			uid := m.Author.ID
-			doc, err := db.AnimeSubs().GetByID(ctx, uid)
-			if err != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] GetByID %s: %v", uid, err))
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "Could not load your subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			if doc == nil || len(doc.Shows) == 0 {
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			list := docToSubList(doc)
-			if len(list) == 0 {
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			desc, components := subsFirstPageContent(list, uid)
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc, hintUnsub)
-			_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
-				Embeds:     []*discordgo.MessageEmbed{emb},
-				Components: components,
-			})
-		},
-	})
-}
 
 func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
 	var b strings.Builder
@@ -189,42 +51,53 @@ func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
 	return list
 }
 
-func subsFirstPageContent(list []*anime_subs.ShowSub, uid string) (desc string, components []discordgo.MessageComponent) {
-	if len(list) == 0 {
-		return "", nil
-	}
-	n := len(list)
-	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
-	desc = subsDescriptionForPage(list, 0, 0, totalPages, n)
-	if n > discord.MaxEmbedFields {
-		components = commands.PaginationComponents("subs", 0, n, uid)
-	}
-	return desc, components
-}
-
-// findShowIn returns the first show whose name matches input under anime_subs.MatchKey (case-insensitive and
-// trimmed like the notifier matches names), or the zero value and false if none.
+// findShowIn returns the show whose display title matches input under anime_subs.MatchKey (case-insensitive and
+// trimmed like the notifier matches names). Failing that, the first show whose romaji, English or native name
+// matches; a title cut to Discord's choice limit also matches. It returns the zero value and false if none.
 func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
 	key := anime_subs.MatchKey(input)
 	if key == "" {
 		return animeschedule.ShowEntry{}, false
 	}
 	for _, show := range shows {
-		if anime_subs.MatchKey(show.Name) == key {
+		if anime_subs.MatchKey(show.Name) == key || anime_subs.MatchKey(clip(show.Name)) == key {
 			return show, true
+		}
+	}
+	for _, show := range shows {
+		for _, n := range show.AllNames() {
+			if anime_subs.MatchKey(n) == key {
+				return show, true
+			}
 		}
 	}
 	return animeschedule.ShowEntry{}, false
 }
 
-// findShowByName returns the first airing ShowEntry matching name, or zero value and false if none.
+// findShowByName returns the airing ShowEntry matching name by any of its four names, or zero value and false.
 func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	for day := 0; day <= 6; day++ {
-		if show, ok := findShowIn(animeschedule.GetDayShows(day, true), name); ok {
-			return show, true
-		}
+	return findShowIn(animeschedule.AiringShows(), name)
+}
+
+// choiceName is the autocomplete label: "Title (English)" when the English name differs from the title, else the
+// title, cut to Discord's limit.
+func choiceName(e animeschedule.ShowEntry) string {
+	name := e.Name
+	if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
+		name = fmt.Sprintf("%s (%s)", e.Name, en)
 	}
-	return animeschedule.ShowEntry{}, false
+	return clip(name)
+}
+
+// autocompleteAdd offers this week's airing shows matched anywhere in any of their four names. A choice's value is
+// the display title, which is what subscriptions are keyed by.
+func autocompleteAdd(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
+	matched := commands.MatchAnywhere(animeschedule.AiringShows(), typed, animeschedule.ShowEntry.AllNames)
+	out := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(matched))
+	for _, e := range matched {
+		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: choiceName(e), Value: clip(e.Name)})
+	}
+	return out
 }
 
 // subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
@@ -242,11 +115,11 @@ var showLookup = findShowByName
 func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
-		return "Please provide an anime name (exact romaji from /schedule or AnimeSchedule.net).", nil
+		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for this week's shows.", nil
 	}
 	show, ok := showLookup(animeInput)
 	if !ok {
-		return "That is not a valid airing show name. Use the exact romaji title from `/schedule` or AnimeSchedule.net.", nil
+		return "I could not find that airing show. Pick one of the suggestions or check the spelling, and see `/schedule` for this week's shows.", nil
 	}
 	showName := show.Name
 
@@ -286,20 +159,6 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string) (resp
 	return fmt.Sprintf("Success! You have subscribed to DM notifications for `%s`.", showName), nil
 }
 
-func handleSub(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	opt := commands.ParseOption(data.Options, "anime")
-	animeInput := ""
-	if opt != nil {
-		animeInput = opt.StringValue()
-	}
-	desc, logErr := subCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
-	if logErr != nil {
-		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-	}
-	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
-}
-
 func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
@@ -321,6 +180,17 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		}
 	}
 	if len(stored) == 0 {
+		// An autocomplete choice carries the title cut to Discord's limit, as the Remove picker does.
+		for _, sub := range doc.Shows {
+			if sub != nil && anime_subs.MatchKey(clip(sub.Show)) == anime_subs.MatchKey(animeInput) {
+				stored = append(stored, sub.Show)
+			}
+		}
+		if len(stored) > 1 {
+			return fmt.Sprintf("That name matches more than one of your subscriptions, so none were removed: `%s`. Use the Remove picker from `/subscription list` to choose one.", strings.Join(stored, "`, `")), nil
+		}
+	}
+	if len(stored) == 0 {
 		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
 	}
 
@@ -328,20 +198,6 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		return "Could not update subscriptions.", err
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
-}
-
-func handleUnsub(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	data := i.ApplicationCommandData()
-	opt := commands.ParseOption(data.Options, "anime")
-	animeInput := ""
-	if opt != nil {
-		animeInput = opt.StringValue()
-	}
-	desc, logErr := unsubCore(ctx, db.AnimeSubs(), commands.UserID(i), animeInput)
-	if logErr != nil {
-		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-	}
-	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
 }
 
 func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDesc string, logErr error) {
@@ -356,74 +212,6 @@ func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDe
 		return "Could not clear subscriptions.", err
 	}
 	return "Success! All your anime subscriptions have been cleared.", nil
-}
-
-func handleClearsubs(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), commands.UserID(i))
-	if logErr != nil {
-		commands.LogToBotLog(ctx, db, s, i.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-	}
-	commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc)
-}
-
-func handleSubs(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	uid := commands.UserID(i)
-	doc, err := db.AnimeSubs().GetByID(ctx, uid)
-	if err != nil {
-		commands.RespondEmbed(s, i, embedTitleAnimeSubs, "Could not load your subscriptions.")
-		return
-	}
-	if doc == nil || len(doc.Shows) == 0 {
-		commands.RespondEmbed(s, i, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-		return
-	}
-	list := docToSubList(doc)
-	if len(list) == 0 {
-		commands.RespondEmbed(s, i, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-		return
-	}
-	desc, components := subsFirstPageContent(list, uid)
-	if len(components) > 0 {
-		commands.RespondEmbedWithFieldsAndComponents(s, i, embedTitleAnimeSubs, desc, nil, components, hintUnsub)
-	} else {
-		commands.RespondEmbed(s, i, embedTitleAnimeSubs, desc, hintUnsub)
-	}
-}
-
-// RenderSubsPage renders one page of anime subscriptions for pagination.
-func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
-	if authorID == "" {
-		return commands.Page{Refusal: "Could not load subscriptions."}
-	}
-	doc, err := db.AnimeSubs().GetByID(ctx, authorID)
-	if err != nil {
-		return commands.Page{Refusal: "Could not load your subscriptions."}
-	}
-	if doc == nil || len(doc.Shows) == 0 {
-		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
-	}
-	var list []*anime_subs.ShowSub
-	for _, sub := range doc.Shows {
-		if sub != nil {
-			list = append(list, sub)
-		}
-	}
-	if len(list) == 0 {
-		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
-	}
-	n := len(list)
-	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
-	if page >= totalPages {
-		page = totalPages - 1
-	}
-	if page < 0 {
-		page = 0
-	}
-	start := page * discord.MaxEmbedFields
-	desc := subsDescriptionForPage(list, start, page, totalPages, n)
-	components := commands.PaginationComponents("subs", page, n, authorID)
-	emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc, hintUnsub)
-	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }
 
 // airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched

@@ -8,17 +8,12 @@ import (
 	"time"
 
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/httpclient"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 const jokeURL = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,religious,political,racist,sexist,explicit"
-
-const embedTitleJoke = "Joke"
 
 type jokeAPIResponse struct {
 	ID       int    `json:"id"`
@@ -36,27 +31,8 @@ func init() {
 		Desc:       "Display a random joke.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        func(ic *interaction.Context) error { return runJoke(ic, fetchJoke) },
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "joke",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			jokeStr, err := fetchJoke(ctx)
-			if err != nil {
-				logger.For("commands").Error("joke fetch failed", "channel_id", m.ChannelID, "err", err)
-				emb := commands.NewEmbed(s, embedTitleJoke, "Joke website is not working properly. Please notify apiks about it.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			if jokeStr == "" {
-				emb := commands.NewEmbed(s, embedTitleJoke, "Could not get a joke this time.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			_, _ = s.ChannelMessageSend(m.ChannelID, jokeStr)
-		},
 	})
 }
 

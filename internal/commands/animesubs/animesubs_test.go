@@ -100,7 +100,7 @@ func TestSubCore(t *testing.T) {
 		{"new subscription", newFakeStore(), "frieren", "Success!", []string{"Frieren"}},
 		{"already subscribed case-insensitive", newFakeStore().with("u", "Frieren"), "FRIEREN", "already subscribed", []string{"Frieren"}},
 		{"second show keeps first", newFakeStore().with("u", "Frieren"), "Dandadan", "Success!", []string{"Frieren", "Dandadan"}},
-		{"unknown show", newFakeStore(), "nope", "not a valid", nil},
+		{"unknown show", newFakeStore(), "nope", "could not find", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -225,6 +225,52 @@ func TestUnsubCoreRemovesLegacyTrimmedEntry(t *testing.T) {
 	}
 	if got := st.names("u"); strings.Join(got, ",") != "Dandadan" {
 		t.Errorf("names = %v, want [Dandadan]", got)
+	}
+}
+
+// An autocomplete choice carries the title cut to 100 characters, so remove must resolve a stored title by its
+// clipped form like the Remove picker does.
+func TestUnsubCoreResolvesClippedLongTitle(t *testing.T) {
+	long := strings.Repeat("A long title ", 10)
+	st := newFakeStore().with("u", long, "Dandadan")
+	msg, err := unsubCore(context.Background(), st, "u", clip(long))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "unsubscribed") {
+		t.Errorf("msg = %q, want unsubscribed", msg)
+	}
+	if got := st.names("u"); strings.Join(got, ",") != "Dandadan" {
+		t.Errorf("names = %v, want [Dandadan]", got)
+	}
+}
+
+func TestUnsubCoreAmbiguousClippedTitleRemovesNone(t *testing.T) {
+	prefix := strings.Repeat("A long title ", 10)
+	a, b := prefix+"Season 1", prefix+"Season 2"
+	st := newFakeStore().with("u", a, b)
+	msg, err := unsubCore(context.Background(), st, "u", clip(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "more than one") || !strings.Contains(msg, "Season 1") || !strings.Contains(msg, "Season 2") {
+		t.Errorf("msg = %q, want the matching titles named", msg)
+	}
+	if len(st.calls) != 0 || len(st.docs["u"]) != 2 {
+		t.Errorf("calls=%v names=%v, want nothing removed", st.calls, st.names("u"))
+	}
+}
+
+func TestFindShowInResolvesAnyOfTheFourNamesAndPrefersTheTitle(t *testing.T) {
+	shows := []animeschedule.ShowEntry{
+		{Name: "Other", English: "Frieren"},
+		{Name: "Frieren", Romaji: "Sousou no Frieren"},
+		{Name: "Third", Native: "ダンダダン"},
+	}
+	for input, want := range map[string]string{"frieren": "Frieren", "SOUSOU NO FRIEREN": "Frieren", "ダンダダン": "Third"} {
+		if got, ok := findShowIn(shows, input); !ok || got.Name != want {
+			t.Errorf("findShowIn(%q) = %q, %v; want %q", input, got.Name, ok, want)
+		}
 	}
 }
 

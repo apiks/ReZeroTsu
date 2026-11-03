@@ -24,9 +24,21 @@
 
 ### Commands overview
 
-The bot uses **slash commands** (`/`) as the main interface. Use `/help` in the bot to list commands by module. Optional prefix commands (e.g. `.` from config) are supported in DMs only and are less featured.
+The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands by category. The only prefix commands are the owner's: `servers`, `shards`, `uptime` and `messagelogs`, sent in a DM to the bot. A DM that starts with a configured prefix and names none of them gets a one-line hint that slash commands replaced prefix commands.
 
-**General:** `help`, `about`, `ping`, `invite`, `avatar`, `roll`, `pick`, `joke`. **Channel:** `prune`. **Server settings:** mod-only mode, moderator roles, bot log channel, donghua in schedule.
+**Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
+
+**Server settings:** `/bot-log`, `/new-episodes`, `/daily-schedule`, `/donghua`, `/ping-message`, `/mod-only`, `/react-module`, `/moderator-roles`, `/add-moderator-role`, `/remove-moderator-role`.
+
+**Voice roles:** `/add-voice`, `/remove-voice`, `/voice-roles`.
+
+**Reddit feeds:** `/add-reddit-feed`, `/remove-reddit-feed`, `/reddit-feeds`.
+
+**Reaction roles:** `/add-react-autorole`, `/remove-react-autorole`, `/reacts-autorole`.
+
+**Raffles:** `/create-raffle`, `/join-raffle`, `/leave-raffle`, `/my-raffles`, `/pick-raffle-winner`, `/remove-raffle`, `/show-raffles`.
+
+**Posting and channels:** `/say`, `/embed`, `/edit`, `/edit-embed`, `/prune`.
 
 ## Support
 
@@ -45,7 +57,7 @@ This application is the next version of [ZeroTsu](https://github.com/apiks/ZeroT
 * **Environment:** Set `ZeroTsuToken` to your Discord bot token.
 
 * **Config:** Copy `config.json.example` to `config.json`. The file must be in the **current working directory** when you run the bot.
-  - **Required:** `mongo_uri`, `owner_id`, `prefixes` (e.g. `["."]` for optional DM prefix commands), `user_agent` (for AnimeSchedule and Reddit requests).
+  - **Required:** `mongo_uri`, `owner_id`, `prefixes` (e.g. `["."]`; the prefixes apply to the owner's DM commands and the retirement hint), `user_agent` (for AnimeSchedule and Reddit requests).
   - **Optional:** `mongo_db_timeout`, `playing_msg`, `anime_schedule_api_key`, `top_gg_token`, `new_guild_log_channel_id`, `log_level`, `log_format`. See the example file for all keys.
   - Anime features (subs, schedule, autopost) need `anime_schedule_api_key` — get it from [AnimeSchedule.net](https://animeschedule.net) or leave empty to disable.
 

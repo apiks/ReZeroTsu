@@ -1,12 +1,10 @@
 package about
 
 import (
-	"context"
 	"fmt"
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 
@@ -26,15 +24,8 @@ func init() {
 		Desc:       "Display more information about me.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
+		Installs:   commands.BothInstalls(),
 		Run:        run,
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "about",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, aboutEmbed(s.State.User))
-		},
 	})
 }
 

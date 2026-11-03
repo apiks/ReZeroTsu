@@ -44,6 +44,31 @@ func TestPingRepliesOncePubliclyWithLatencyAndTheServersPingMessage(t *testing.T
 	}
 }
 
+// Under a user install the bot has no server state: a stored message must not be read, even if the store has one.
+func TestPingUnderAUserInstallShowsTheDefaultMessage(t *testing.T) {
+	for name, owners := range map[string]map[discordgo.ApplicationIntegrationType]string{
+		"server the bot has not joined": {discordgo.ApplicationIntegrationUserInstall: "user"},
+		"group DM or DM":                {discordgo.ApplicationIntegrationUserInstall: "user"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			guildID := "g"
+			if name == "group DM or DM" {
+				guildID = ""
+			}
+			fake := &interactiontest.Fake{HeartbeatLatency: time.Millisecond}
+			i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, GuildID: guildID, ChannelID: "c",
+				Data: discordgo.ApplicationCommandInteractionData{Name: "ping"}, User: &discordgo.User{ID: "user"}, AuthorizingIntegrationOwners: owners}
+			ic := interaction.NewContext(fake, i, nil, interaction.Public, interaction.Direct)
+			if err := runPing(ic, settings{ping: "Server's own message"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := fake.Calls()[0].Response.Embeds[0].Description; got != guilds.DefaultGuildSettings().PingMessage {
+				t.Errorf("description = %q, want the default ping message", got)
+			}
+		})
+	}
+}
+
 func TestPingFallsBackToTheDefaultMessage(t *testing.T) {
 	for name, s := range map[string]settings{"empty": {}, "store error": {ping: "x", err: errors.New("db")}} {
 		t.Run(name, func(t *testing.T) {
