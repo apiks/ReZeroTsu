@@ -32,7 +32,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Voice roles:** `/voicerole add`, `/voicerole remove`, `/voicerole list`.
 
-**Reddit feeds:** `/reddit add`, `/reddit remove`, `/reddit list`. `/reddit remove` takes one `feed` option: pick a feed from the suggestions (each shows its subreddit, sort, channel, author and title filter), or type a subreddit that has exactly one feed.
+**Reddit feeds:** `/reddit add`, `/reddit remove`, `/reddit list`. The `post-type` option of `/reddit add` is now `sort` (Hot, Rising or New). `/reddit remove` takes one `feed` option: pick a feed from the suggestions (each shows its subreddit, sort, channel, author and title filter), or type a subreddit that has exactly one feed.
 
 **Reaction roles:** right-click a message for **Add reaction role** or **Remove reaction roles**, and `/reactrole list` to see and remove them.
 

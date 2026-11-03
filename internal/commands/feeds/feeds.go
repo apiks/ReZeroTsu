@@ -24,6 +24,7 @@ const (
 	optChannel   = "channel"
 	optSubreddit = "subreddit"
 	optPostType  = "post-type"
+	optSort      = "sort"
 	optAuthor    = "author"
 	optTitle     = "title"
 	optPin       = "pin"
@@ -41,6 +42,8 @@ type store interface {
 	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
 	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
 	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
+	// SetFeedPin changes only the auto-pin setting of the one feed with that identity.
+	SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error
 	// DeleteChecks forgets what was delivered for a feed (the feed check records).
 	DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error
 }
@@ -57,6 +60,10 @@ func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEn
 
 func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
 	return s.db.Guilds().RemoveExactFeed(ctx, guildID, feed)
+}
+
+func (s dbStore) SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error {
+	return s.db.Guilds().SetFeedPin(ctx, guildID, feed, pin)
 }
 
 func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error {
@@ -155,25 +162,20 @@ func logStoreFailure(ic *interaction.Context, what string, err error) {
 	logger.For("commands").Error(what, "guild_id", ic.GuildID, "err", err)
 }
 
-// postTypeOption reads the post-type option. A missing or blank one gives def; an unknown one is not ok.
-func postTypeOption(ic *interaction.Context, def string) (postType string, ok bool) {
-	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optPostType)))
+// sameIdentity reports whether two feeds are the same Reddit feed: channel, subreddit, sort, author and title.
+// Auto-pin is a setting of the feed, not part of its identity.
+func sameIdentity(f, g guilds.FeedEntry) bool {
+	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
+		f.Author == g.Author && f.Title == g.Title
+}
+
+// sortOption reads the sort option of /reddit add. A missing or blank one is hot; an unknown one is not ok.
+func sortOption(ic *interaction.Context) (sort string, ok bool) {
+	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optSort)))
 	if raw == "" {
-		return def, true
+		return "hot", true
 	}
 	return raw, slices.Contains(postTypeChoices, raw)
 }
 
 const msgInvalidPostType = "Invalid post type. Use one of: hot, rising, new."
-
-func autocompletePostType(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	names := commands.MatchAnywhere(postTypeChoices, focusedValue, func(n string) []string { return []string{n} })
-	if len(names) == 0 {
-		names = postTypeChoices
-	}
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(names))
-	for _, name := range names {
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
-	}
-	return choices
-}

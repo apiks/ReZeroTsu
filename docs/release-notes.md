@@ -2,6 +2,12 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Reddit settings UX (spec #80, ticket #98)
+
+- `/reddit add`: the `post-type` option is renamed `sort`, with fixed choices Hot, Rising and New (default Hot). Existing feeds keep working.
+- Re-adding an identical feed saves nothing and says it is already set up; re-adding it with a different `pin` only updates the pin setting.
+- The reply describes the whole saved feed: subreddit, sort, channel, author, title and pin.
+
 ## Native moderator permissions (spec #37, ticket #65)
 
 Implements `docs/adr/0001-native-command-permissions-replace-moderator-roles.md`.

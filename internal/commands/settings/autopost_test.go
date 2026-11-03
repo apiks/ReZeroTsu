@@ -230,7 +230,7 @@ func TestMentionableWarningFollowsItsCondition(t *testing.T) {
 			useStore(t, st)
 			fake := &interactiontest.Fake{
 				Guilds:   map[string]*discordgo.Guild{"g": {ID: "g", Roles: []*discordgo.Role{tc.role}}},
-				BotPerms: map[string]int64{"300": tc.perms},
+				BotPerms: map[string]int64{"300": tc.perms | canPostPerms},
 			}
 			if err := click(t, fake, moderator, idDonghua); err != nil {
 				t.Fatal(err)
