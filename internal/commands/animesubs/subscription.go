@@ -53,11 +53,11 @@ func init() {
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "add",
-				Desc: "Subscribe to DMs for an airing anime; the reply says when it airs next. Filter with type.",
+				Desc: "Subscribe to DMs for an airing or upcoming anime; the reply says when it airs next. Filter with type.",
 				Options: []*discordgo.ApplicationCommandOption{{
 					Type:         discordgo.ApplicationCommandOptionString,
 					Name:         "anime",
-					Description:  "An airing anime: any part of its title, romaji, English or native name",
+					Description:  "An airing or upcoming anime: any part of its title, romaji, English or native name",
 					Required:     true,
 					Autocomplete: true,
 				}, {

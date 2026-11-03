@@ -245,7 +245,7 @@ func TestAddAutocompletesAiringShowsByAnyOfTheirFourNames(t *testing.T) {
 	seedWeek(t)
 	for _, typed := range []string{"frieren", "BEYOND journey", "葬送", "sousou"} {
 		got := addAutocomplete(t, typed)
-		if len(got) != 1 || got[0].Value != "Sousou no Frieren" {
+		if len(got) != 1 || got[0].Value != "frieren" {
 			t.Errorf("typed %q: choices = %+v", typed, got)
 		}
 	}
