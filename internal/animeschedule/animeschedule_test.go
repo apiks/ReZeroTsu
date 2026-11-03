@@ -161,8 +161,8 @@ func TestUpdateAnimeScheduleClosesBothBodiesOn429(t *testing.T) {
 
 	UpdateAnimeSchedule(context.Background(), "key")
 
-	if calls != 2 {
-		t.Fatalf("expected 2 requests, got %d", calls)
+	if calls != 4 {
+		t.Fatalf("expected 4 requests (three weeks, one retried), got %d", calls)
 	}
 	for i, c := range bodies {
 		if atomic.LoadInt32(c) == 0 {
