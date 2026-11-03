@@ -1,0 +1,193 @@
+package animesubs
+
+import (
+	"context"
+	"slices"
+	"strings"
+
+	"ReZeroTsu/internal/animeschedule"
+	"ReZeroTsu/internal/commands"
+	"ReZeroTsu/internal/database"
+	"ReZeroTsu/internal/database/anime_subs"
+	"ReZeroTsu/internal/logger"
+
+	"github.com/bwmarrin/discordgo"
+)
+
+const optType = "type"
+
+// typeChoices are the fixed values of the `type` option: a media-type route and its label. The Donghua route is
+// AnimeSchedule's upstream name, "ona-chinese".
+var typeChoices = []*discordgo.ApplicationCommandOptionChoice{
+	typeChoice(animeschedule.MediaTV, "tv"),
+	typeChoice(animeschedule.MediaTVShort, "tv-short"),
+	typeChoice(animeschedule.MediaONA, "ona"),
+	typeChoice(animeschedule.MediaDonghua, "ona-chinese"),
+	typeChoice(animeschedule.MediaOVA, "ova"),
+	typeChoice(animeschedule.MediaSpecial, "special"),
+	typeChoice(animeschedule.MediaMovie, "movie"),
+}
+
+// typeChoice is the choice for a media type: its label (TV carries none, so it is named here) and its route.
+func typeChoice(mt animeschedule.MediaType, route string) *discordgo.ApplicationCommandOptionChoice {
+	name := mt.Label()
+	if mt == animeschedule.MediaTV {
+		name = "TV"
+	}
+	return &discordgo.ApplicationCommandOptionChoice{Name: name, Value: route}
+}
+
+// candidate is a show that can be suggested and looked up. Premiere is the "premieres 10 Jan" label of a show not
+// yet airing and is empty for a timetable show.
+type candidate struct {
+	animeschedule.ShowEntry
+	Premiere string
+}
+
+// candidateSources list where suggestions come from, in the order they are offered: timetable shows, then
+// upcoming shows.
+var candidateSources = []func() []candidate{timetableCandidates, upcomingCandidates}
+
+// upcomingEntry is an upcoming show as a ShowEntry: its air time is the premiere, 0 while AnimeSchedule has no date.
+func upcomingEntry(u animeschedule.UpcomingShow) animeschedule.ShowEntry {
+	e := animeschedule.ShowEntry{Name: u.Name, Route: u.Route, Romaji: u.Romaji, English: u.English, Native: u.Native, MediaType: u.MediaType}
+	if !u.Premiere.IsZero() {
+		e.AirTimeUnix = u.Premiere.Unix()
+	}
+	return e
+}
+
+// premiereLabel is "premieres 10 Jan" (a UTC day, like the timetable) or "premiere date TBA".
+func premiereLabel(u animeschedule.UpcomingShow) string {
+	if u.Premiere.IsZero() {
+		return "premiere date TBA"
+	}
+	return "premieres " + u.Premiere.UTC().Format("2 Jan")
+}
+
+// upcomingCandidates are the upcoming shows that are not on the loaded timetable; a show on both is offered once, as
+// a timetable show, matched by route when both sides have one and by title otherwise.
+func upcomingCandidates() []candidate {
+	onTimetable := animeschedule.AllEntries()
+	var out []candidate
+	for _, u := range animeschedule.UpcomingShows() {
+		e := upcomingEntry(u)
+		if slices.ContainsFunc(onTimetable, func(t animeschedule.ShowEntry) bool { return sameListedShow(t, e) }) {
+			continue
+		}
+		out = append(out, candidate{ShowEntry: e, Premiere: premiereLabel(u)})
+	}
+	return out
+}
+
+// sameListedShow reports whether two list entries are one show, so a show on both lists is offered once: by route
+// when both have one, else by title under anime_subs.MatchKey. This is not the subscription rule (ShowSub.Matches),
+// which trusts a subscription's route alone.
+func sameListedShow(a, b animeschedule.ShowEntry) bool {
+	if a.Route != "" && b.Route != "" {
+		return a.Route == b.Route
+	}
+	return anime_subs.MatchKey(a.Name) == anime_subs.MatchKey(b.Name)
+}
+
+// choiceValue identifies a suggested show: its route, or its title when no route is known, within Discord's limit.
+func choiceValue(c candidate) string {
+	if c.Route != "" {
+		return clip(c.Route)
+	}
+	return clip(c.Name)
+}
+
+// timetableCandidates are the shows of the three loaded weeks that the daily cleanup keeps (animeschedule.LoadedShows).
+func timetableCandidates() []candidate {
+	var out []candidate
+	for _, e := range animeschedule.LoadedShows() {
+		out = append(out, candidate{ShowEntry: e})
+	}
+	return out
+}
+
+// candidates are all the sources' shows in offer order, narrowed to one media type when only is set.
+func candidates(only *animeschedule.MediaType) []candidate {
+	var out []candidate
+	for _, src := range candidateSources {
+		for _, c := range src() {
+			if only == nil || c.MediaType == *only {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// typeFilter reads the `type` option from the interaction's options, which is where autocomplete finds the
+// other options' current values; nil when it is unset or unknown.
+func typeFilter(opts []*discordgo.ApplicationCommandInteractionDataOption) *animeschedule.MediaType {
+	for _, o := range opts {
+		if o == nil {
+			continue
+		}
+		if o.Type == discordgo.ApplicationCommandOptionSubCommand {
+			return typeFilter(o.Options)
+		}
+		if o.Name == optType {
+			if mt, ok := animeschedule.MediaTypeFromRoute(o.StringValue()); ok {
+				return &mt
+			}
+		}
+	}
+	return nil
+}
+
+// labelledName is "Title (English)" then, in order, the premiere, the media type and "subscribed". The title is
+// cut so the labels survive within Discord's limit.
+func labelledName(c candidate, subscribed bool) string {
+	var labels []string
+	if c.Premiere != "" {
+		labels = append(labels, c.Premiere)
+	}
+	if l := c.MediaType.Label(); l != "" {
+		labels = append(labels, l)
+	}
+	if subscribed {
+		labels = append(labels, "subscribed")
+	}
+	suffix := ""
+	if len(labels) > 0 {
+		suffix = " · " + strings.Join(labels, " · ")
+	}
+	title := []rune(titleName(c.ShowEntry))
+	room := max(maxChoiceLength-len([]rune(suffix)), 0)
+	return string(title[:min(room, len(title))]) + suffix
+}
+
+// autocompleteAdd offers the candidate shows matched anywhere in any of their four names, narrowed by the `type`
+// option, with the invoker's subscribed shows labelled and last. Each source ranks its own matches (prefix before
+// substring), timetable shows come before upcoming shows, and the 25-choice cap applies to that final order. A
+// choice's value is the show's route, or its title when it has none. The invoker's subscriptions are read once.
+func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
+	only := typeFilter(i.ApplicationCommandData().Options)
+	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
+	if err != nil {
+		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
+	}
+	var rest, subscribed []*discordgo.ApplicationCommandOptionChoice
+	for _, src := range candidateSources {
+		var shows []candidate
+		for _, c := range src() {
+			if only == nil || c.MediaType == *only {
+				shows = append(shows, c)
+			}
+		}
+		for _, c := range commands.MatchAnywhereAll(shows, typed, func(c candidate) []string { return c.AllNames() }) {
+			isSubscribed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return s.Matches(c.Route, c.Name) })
+			choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isSubscribed), Value: choiceValue(c)}
+			if isSubscribed {
+				subscribed = append(subscribed, choice)
+			} else {
+				rest = append(rest, choice)
+			}
+		}
+	}
+	return commands.Cap(append(rest, subscribed...))
+}

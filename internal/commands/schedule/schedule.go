@@ -115,16 +115,6 @@ func parseDay(s string) int {
 	}
 }
 
-// mediaTypeLabels names the non-TV media types; TV carries no label.
-var mediaTypeLabels = map[animeschedule.MediaType]string{
-	animeschedule.MediaTVShort: "TV Short",
-	animeschedule.MediaONA:     "ONA",
-	animeschedule.MediaDonghua: "Donghua",
-	animeschedule.MediaOVA:     "OVA",
-	animeschedule.MediaSpecial: "Special",
-	animeschedule.MediaMovie:   "Movie",
-}
-
 // scheduleLine renders one entry; onToday adds the live relative time.
 func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
 	airLabel := "SUB"
@@ -139,7 +129,7 @@ func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
 	if onToday {
 		line += fmt.Sprintf(" · <t:%d:R>", e.AirTimeUnix)
 	}
-	if label := mediaTypeLabels[e.MediaType]; label != "" {
+	if label := e.MediaType.Label(); label != "" {
 		line += " · " + label
 	}
 	return line

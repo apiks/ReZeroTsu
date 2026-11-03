@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf16"
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 const (
@@ -19,25 +17,39 @@ const (
 	maxUserSubscriptions = 100
 )
 
+// maxListTitleUnits is how much of a title a list line keeps, in the UTF-16 units Discord counts. A page holds 25
+// lines, each with a status of up to about 70 units, so 25 clipped lines and the footer stay under the 4096 limit.
+const maxListTitleUnits = 80
+
+// clipListTitle cuts a title to maxListTitleUnits UTF-16 units at a character boundary and marks the cut.
+func clipListTitle(title string) string {
+	units := 0
+	for i, r := range title {
+		w := utf16.RuneLen(r)
+		if units+w > maxListTitleUnits {
+			return title[:i] + "…"
+		}
+		units += w
+	}
+	return title
+}
+
 func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
 	var b strings.Builder
 	end := min(start+discord.MaxEmbedFields, len(list))
+	entries, upcoming, now := animeschedule.AllEntries(), animeschedule.UpcomingShows(), animeschedule.Now()
 	for j := start; j < end; j++ {
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s\n", j+1, list[j].Show)
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(entries, upcoming, list[j].Route, list[j].Show, now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
 	if totalPages > 1 {
 		fmt.Fprintf(&b, "Page %d of %d. Showing %d–%d of %d.\n", page+1, totalPages, start+1, endShow, n)
 	}
-	s := b.String()
-	if len(s) > discord.MaxEmbedDescriptionLength {
-		return s[:discord.MaxEmbedDescriptionLength]
-	}
-	return s
+	return b.String()
 }
 
 func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
@@ -50,13 +62,18 @@ func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
 	return list
 }
 
-// findShowIn returns the show whose display title matches input under anime_subs.MatchKey (case-insensitive and
+// findShowIn returns the show whose route is input (a suggestion's value), else whose display title matches input under anime_subs.MatchKey (case-insensitive and
 // trimmed like the notifier matches names). Failing that, the first show whose romaji, English or native name
 // matches; a title cut to Discord's choice limit also matches. It returns the zero value and false if none.
 func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.ShowEntry, bool) {
 	key := anime_subs.MatchKey(input)
 	if key == "" {
 		return animeschedule.ShowEntry{}, false
+	}
+	for _, show := range shows {
+		if show.Route != "" && anime_subs.MatchKey(show.Route) == key {
+			return show, true
+		}
 	}
 	for _, show := range shows {
 		if anime_subs.MatchKey(show.Name) == key || anime_subs.MatchKey(clip(show.Name)) == key {
@@ -73,30 +90,22 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 	return animeschedule.ShowEntry{}, false
 }
 
-// findShowByName returns the airing ShowEntry matching name by any of its four names, or zero value and false.
-func findShowByName(name string) (animeschedule.ShowEntry, bool) {
-	return findShowIn(animeschedule.AiringShows(), name)
+// findShowByName returns the candidate show (loaded weeks or upcoming) matching name by any of its four names, or
+// the zero value and false.
+func findShowByName(name string, only *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
+	var shows []animeschedule.ShowEntry
+	for _, c := range candidates(only) {
+		shows = append(shows, c.ShowEntry)
+	}
+	return findShowIn(shows, name)
 }
 
-// choiceName is the autocomplete label: "Title (English)" when the English name differs from the title, else the
-// title, cut to Discord's limit.
-func choiceName(e animeschedule.ShowEntry) string {
-	name := e.Name
+// titleName is "Title (English)" when the English name differs from the title, else the title.
+func titleName(e animeschedule.ShowEntry) string {
 	if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
-		name = fmt.Sprintf("%s (%s)", e.Name, en)
+		return fmt.Sprintf("%s (%s)", e.Name, en)
 	}
-	return clip(name)
-}
-
-// autocompleteAdd offers this week's airing shows matched anywhere in any of their four names. A choice's value is
-// the display title, which is what subscriptions are keyed by.
-func autocompleteAdd(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	matched := commands.MatchAnywhere(animeschedule.AiringShows(), typed, animeschedule.ShowEntry.AllNames)
-	out := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(matched))
-	for _, e := range matched {
-		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: choiceName(e), Value: clip(e.Name)})
-	}
-	return out
+	return e.Name
 }
 
 // subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
@@ -108,37 +117,43 @@ type subsStore interface {
 	ClearShows(ctx context.Context, id string) error
 }
 
-// showLookup resolves user input to an airing show; replaced in tests.
+// showLookup resolves user input to a loaded-week or upcoming show; replaced in tests.
 var showLookup = findShowByName
 
-func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
+// subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
+// already held), which is when the DMs footer applies. only narrows the lookup to one media type.
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
-		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for this week's shows.", nil
+		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
 	}
-	show, ok := showLookup(animeInput)
+	show, ok := showLookup(animeInput, only)
 	if !ok {
-		return "I could not find that airing show. Pick one of the suggestions or check the spelling, and see `/schedule` for this week's shows.", nil
+		msg := "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
+		if only != nil {
+			msg += " The type filter may be hiding it; try again without it."
+		}
+		return msg, false, nil
 	}
 	showName := show.Name
 
 	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
-		return "Could not load your subscriptions.", err
+		return "Could not load your subscriptions.", false, err
 	}
 	if doc != nil {
 		for _, sub := range doc.Shows {
-			if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(showName) {
-				return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+			if sub != nil && sub.Matches(show.Route, showName) {
+				return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
 			}
 		}
 	}
 	if doc != nil && len(doc.Shows) >= maxUserSubscriptions {
-		return fmt.Sprintf("You've reached the maximum number of subscriptions (%d). Unsubscribe from some shows to add more.", maxUserSubscriptions), nil
+		return fmt.Sprintf("You've reached the maximum number of subscriptions (%d). Unsubscribe from some shows to add more.", maxUserSubscriptions), false, nil
 	}
 
 	now := animeschedule.Now()
-	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true), showName, now.Unix())
+	airedToday, hasAiredToday := airedTodayEntry(animeschedule.GetDayShows(now, true), show.Route, showName, now.Unix())
 
 	newSub := &anime_subs.ShowSub{Show: showName, Route: show.Route, Notified: hasAiredToday, Guild: false}
 	if hasAiredToday {
@@ -146,12 +161,21 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string) (resp
 	}
 	added, err := store.AddShowIfAbsent(ctx, uid, newSub)
 	if err != nil {
-		return "Could not save subscription.", err
+		return "Could not save subscription.", false, err
 	}
 	if !added {
-		return fmt.Sprintf("You are already subscribed to `%s`.", showName), nil
+		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
 	}
-	return fmt.Sprintf("Success! You have subscribed to DM notifications for `%s`.", showName), nil
+	desc := fmt.Sprintf("Subscribed to **%s**.", showName)
+	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, now).confirmationLine(); line != "" {
+		desc += "\n" + line
+	}
+	return desc, true, nil
+}
+
+// notSubscribed is the reply for removing a show the member is not subscribed to, pointing at the list.
+func notSubscribed(input string) string {
+	return fmt.Sprintf("You are not subscribed to `%s`. See %s for your subscriptions.", input, commands.CommandMention("subscription", "list"))
 }
 
 func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
@@ -164,7 +188,7 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		return "Could not load your subscriptions.", err
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
+		return notSubscribed(animeInput), nil
 	}
 
 	// Resolve the stored titles (exact case) the input names, then remove exactly those.
@@ -186,7 +210,7 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		}
 	}
 	if len(stored) == 0 {
-		return fmt.Sprintf("You are not subscribed to `%s`.", animeInput), nil
+		return notSubscribed(animeInput), nil
 	}
 
 	if err := store.RemoveShows(ctx, uid, stored); err != nil {
@@ -195,27 +219,14 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
 }
 
-func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDesc string, logErr error) {
-	doc, err := store.GetByID(ctx, uid)
-	if err != nil {
-		return "Could not load your subscriptions.", err
-	}
-	if doc == nil || len(doc.Shows) == 0 {
-		return "You have no active anime subscriptions.", nil
-	}
-	if err := store.ClearShows(ctx, uid); err != nil {
-		return "Could not clear subscriptions.", err
-	}
-	return "Success! All your anime subscriptions have been cleared.", nil
-}
-
-// airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched
-// with anime_subs.MatchKey like the notifier does, and the entry is today's own, so the seeded air time is today's
-// even for a show the schedule lists on several weekdays.
-func airedTodayEntry(todayShows []animeschedule.ShowEntry, showName string, nowUnix int64) (animeschedule.ShowEntry, bool) {
-	key := anime_subs.MatchKey(showName)
+// airedTodayEntry returns today's entry for the show with this route and title if it has already aired at nowUnix.
+// Entries are matched like the notifier does (ShowSub.Matches: by route when the show has one, else by title under
+// anime_subs.MatchKey), and the entry is today's own, so the seeded air time is today's even for a show the
+// schedule lists on several weekdays.
+func airedTodayEntry(todayShows []animeschedule.ShowEntry, route, showName string, nowUnix int64) (animeschedule.ShowEntry, bool) {
+	sub := &anime_subs.ShowSub{Show: showName, Route: route}
 	for _, e := range todayShows {
-		if anime_subs.MatchKey(e.Name) == key && e.AirTimeUnix <= nowUnix {
+		if sub.Matches(e.Route, e.Name) && e.AirTimeUnix <= nowUnix {
 			return e, true
 		}
 	}

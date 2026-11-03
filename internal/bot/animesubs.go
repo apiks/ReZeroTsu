@@ -144,20 +144,8 @@ func buildKeepRoster() (keepRoster, bool) {
 		r.add(e.Route, e.Name)
 	}
 	// Last week: a show whose latest entry there was not its final episode may be on a break.
-	latest := map[string]animeschedule.ShowEntry{}
-	for _, e := range weeks.Last {
-		id := e.Route
-		if id == "" {
-			id = anime_subs.MatchKey(e.Name)
-		}
-		if cur, ok := latest[id]; !ok || e.AirTimeUnix >= cur.AirTimeUnix {
-			latest[id] = e
-		}
-	}
-	for _, e := range latest {
-		if !e.Final {
-			r.add(e.Route, e.Name)
-		}
+	for _, e := range animeschedule.OnBreak(weeks.Last) {
+		r.add(e.Route, e.Name)
 	}
 	for _, u := range animeschedule.UpcomingShows() {
 		r.add(u.Route, u.Name)

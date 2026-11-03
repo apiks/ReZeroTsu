@@ -42,7 +42,7 @@ func (f *fakeStore) GetByID(_ context.Context, id string) (*anime_subs.AnimeSubs
 func (f *fakeStore) AddShowIfAbsent(_ context.Context, id string, sub *anime_subs.ShowSub) (bool, error) {
 	f.calls = append(f.calls, "add")
 	for _, s := range f.docs[id] {
-		if strings.EqualFold(s.Show, sub.Show) {
+		if s.Matches(sub.Route, sub.Show) {
 			return false, nil
 		}
 	}
@@ -77,7 +77,7 @@ func (f *fakeStore) ClearShows(_ context.Context, id string) error {
 func withLookup(t *testing.T, titles ...string) {
 	t.Helper()
 	old := showLookup
-	showLookup = func(name string) (animeschedule.ShowEntry, bool) {
+	showLookup = func(name string, _ *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
 		for _, ti := range titles {
 			if strings.EqualFold(ti, strings.TrimSpace(name)) {
 				return animeschedule.ShowEntry{Name: ti}, true
@@ -97,14 +97,14 @@ func TestSubCore(t *testing.T) {
 		wantMsg   string
 		wantNames []string
 	}{
-		{"new subscription", newFakeStore(), "frieren", "Success!", []string{"Frieren"}},
+		{"new subscription", newFakeStore(), "frieren", "Subscribed to", []string{"Frieren"}},
 		{"already subscribed case-insensitive", newFakeStore().with("u", "Frieren"), "FRIEREN", "already subscribed", []string{"Frieren"}},
-		{"second show keeps first", newFakeStore().with("u", "Frieren"), "Dandadan", "Success!", []string{"Frieren", "Dandadan"}},
+		{"second show keeps first", newFakeStore().with("u", "Frieren"), "Dandadan", "Subscribed to", []string{"Frieren", "Dandadan"}},
 		{"unknown show", newFakeStore(), "nope", "could not find", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := subCore(context.Background(), tt.store, "u", tt.input)
+			msg, _, err := subCore(context.Background(), tt.store, "u", tt.input, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +125,7 @@ func TestSubCoreMaxSubscriptions(t *testing.T) {
 	for i := 0; i < maxUserSubscriptions; i++ {
 		st.with("u", "show"+strings.Repeat("x", i))
 	}
-	msg, err := subCore(context.Background(), st, "u", "Frieren")
+	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil)
 	if err != nil || !strings.Contains(msg, "maximum") {
 		t.Fatalf("msg=%q err=%v", msg, err)
 	}
@@ -167,41 +167,12 @@ func TestUnsubCore(t *testing.T) {
 	}
 }
 
-func TestClearsubsCore(t *testing.T) {
-	tests := []struct {
-		name      string
-		store     *fakeStore
-		wantMsg   string
-		wantCalls []string
-	}{
-		{"clears all", newFakeStore().with("u", "A", "B"), "cleared", []string{"clear"}},
-		{"nothing to clear", newFakeStore(), "no active", nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg, err := clearsubsCore(context.Background(), tt.store, "u")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(msg, tt.wantMsg) {
-				t.Errorf("msg = %q, want %q", msg, tt.wantMsg)
-			}
-			if len(tt.store.docs["u"]) != 0 {
-				t.Errorf("shows remain: %v", tt.store.names("u"))
-			}
-			if strings.Join(tt.store.calls, ",") != strings.Join(tt.wantCalls, ",") {
-				t.Errorf("calls = %v, want %v", tt.store.calls, tt.wantCalls)
-			}
-		})
-	}
-}
-
 // A legacy stored entry with stray surrounding space is the same show to the notifier, so /sub must treat it as
 // already subscribed instead of adding a duplicate.
 func TestSubCoreLegacyTrimmedEntryIsAlreadySubscribed(t *testing.T) {
 	withLookup(t, "Frieren")
 	st := newFakeStore().with("u", "Frieren ")
-	msg, err := subCore(context.Background(), st, "u", "Frieren")
+	msg, _, err := subCore(context.Background(), st, "u", "Frieren", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +288,7 @@ func TestAiredTodayEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, ok := airedTodayEntry(today, tt.show, now)
+			e, ok := airedTodayEntry(today, "", tt.show, now)
 			if ok != tt.ok || (ok && e.AirTimeUnix != tt.wantUnix) {
 				t.Errorf("airedTodayEntry(%q) = %d, %v; want %d, %v", tt.show, e.AirTimeUnix, ok, tt.wantUnix, tt.ok)
 			}
@@ -327,12 +298,12 @@ func TestAiredTodayEntry(t *testing.T) {
 
 func TestSubCoreStoresTheResolvedShowRoute(t *testing.T) {
 	old := showLookup
-	showLookup = func(string) (animeschedule.ShowEntry, bool) {
+	showLookup = func(string, *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
 		return animeschedule.ShowEntry{Name: "Frieren", Route: "sousou-no-frieren"}, true
 	}
 	t.Cleanup(func() { showLookup = old })
 	st := newFakeStore()
-	if _, err := subCore(context.Background(), st, "u", "frieren"); err != nil {
+	if _, _, err := subCore(context.Background(), st, "u", "frieren", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.docs["u"]; len(got) != 1 || got[0].Route != "sousou-no-frieren" {
