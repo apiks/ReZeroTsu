@@ -110,7 +110,7 @@ func animeArg(ic *interaction.Context) string {
 // runAdd keeps today's rules through subCore: the show must be airing, one entry per show by match key, the
 // subscription limit, and seeding from today's aired entry.
 func runAdd(ic *interaction.Context) error {
-	desc, confirmed, logErr := subscribe(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic))
+	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic))
 	if !confirmed {
 		return finish(ic, desc, logErr)
 	}

@@ -112,14 +112,9 @@ type subsStore interface {
 // showLookup resolves user input to an airing show; replaced in tests.
 var showLookup = findShowByName
 
-func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
-	desc, _, err := subscribe(ctx, store, uid, animeInput)
-	return desc, err
-}
-
-// subscribe is subCore plus whether the reply is a confirmation (a new or an already-held subscription), which
-// is when the DMs footer applies.
-func subscribe(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, confirmed bool, logErr error) {
+// subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
+// already held), which is when the DMs footer applies.
+func subCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for this week's shows.", false, nil
