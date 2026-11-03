@@ -59,7 +59,7 @@ func init() {
 		Desc:       "Set, list and remove your reminders.",
 		Permission: commands.PermEveryone,
 		Module:     "general",
-		Installs:   []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall},
+		Installs:   commands.BothInstalls(),
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "set",

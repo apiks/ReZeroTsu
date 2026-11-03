@@ -19,8 +19,8 @@ import (
 const (
 	// pageKey names the subscription list's page renderer.
 	pageKey = "subscription"
-	// pickerPrefix starts the custom ID of the Remove picker: sub-rm:<authorID>:<page>.
-	pickerPrefix = "sub-rm:"
+	// pickerPrefix starts the custom ID of the Remove picker: subscription-rm:<authorID>:<page>.
+	pickerPrefix = "subscription-rm:"
 
 	msgNoSubscriptions  = "You have no active anime subscriptions."
 	msgOnlyOwnerRemoves = "Only the member whose list this is can remove from it."
