@@ -106,8 +106,18 @@ func dispatch(ctx context.Context, db *database.Client, settings settingsReader,
 		}
 	}
 
-	if cmd.Response == Deferred {
-		if err := ic.Defer(cmd.Visibility); err != nil {
+	l, found := cmd.resolve(ic.Command.Options)
+	if !found {
+		refuse(ic, "Unknown command: "+name)
+		return nil
+	}
+	if l.sub != nil {
+		ic.Visibility, ic.Mode = l.visibility, l.response
+		ic.Group, ic.Subcommand, ic.Command.Options = l.group, l.subcommand, l.options
+	}
+
+	if l.response == Deferred {
+		if err := ic.Defer(l.visibility); err != nil {
 			args := append(discord.RESTAttrs(err), "command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
 			logger.For("commands").Error("deferred ack failed", args...)
 			return err
@@ -122,8 +132,8 @@ func dispatch(ctx context.Context, db *database.Client, settings settingsReader,
 				refuse(ic, errMessage)
 			}
 		}()
-		if cmd.Run != nil {
-			if err := cmd.Run(ic); err != nil {
+		if l.run != nil {
+			if err := l.run(ic); err != nil {
 				args := append(discord.RESTAttrs(err), "command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
 				logger.For("commands").Error("handler failed", args...)
 				refuse(ic, errMessage)

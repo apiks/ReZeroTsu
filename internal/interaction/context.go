@@ -23,8 +23,12 @@ type Context struct {
 	Member    *discordgo.Member
 	GuildID   string
 	ChannelID string
-	// Command is the slash command data; zero for component and form interactions.
+	// Command is the slash command data; zero for component and form interactions. For a command with
+	// subcommands, dispatch narrows Command.Options to the chosen subcommand's options.
 	Command discordgo.ApplicationCommandInteractionData
+	// Group and Subcommand name the chosen subcommand group and subcommand; empty when the command has none.
+	Group      string
+	Subcommand string
 	// DB holds the stores.
 	DB *database.Client
 
