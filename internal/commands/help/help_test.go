@@ -1,6 +1,7 @@
 package help
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -120,6 +121,19 @@ func TestHelpOpensPubliclyOnAnOverviewWithACategoryPicker(t *testing.T) {
 		if !found {
 			t.Errorf("picker lacks category %q: %v", want, values)
 		}
+	}
+}
+
+func TestAnimeComesBeforeTheModeratorCategories(t *testing.T) {
+	useCommands(t, append(sampleCommands(), slash("say", "Post a message.", "misc", commands.PermMod, nil)))
+	m := findPicker(t, runHelpWith(t, guildInteraction(false)).Calls()[0].Response)
+	var labels []string
+	for _, o := range m.Options {
+		labels = append(labels, o.Label)
+	}
+	anime, misc := slices.Index(labels, "Anime"), slices.Index(labels, "Misc")
+	if anime < 0 || misc < 0 || anime > misc || slices.Contains(labels, "Schedule") {
+		t.Errorf("picker labels = %v, want Anime before Misc and no Schedule", labels)
 	}
 }
 
