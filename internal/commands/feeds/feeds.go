@@ -39,6 +39,8 @@ type store interface {
 	GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error)
 	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
 	RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error)
+	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
+	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
 	// DeleteChecks forgets what was delivered for a feed (the feed check records).
 	DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error
 }
@@ -55,6 +57,10 @@ func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEn
 
 func (s dbStore) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
 	return s.db.Guilds().RemoveFeed(ctx, guildID, channelID, subreddit, postType, author, title)
+}
+
+func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
+	return s.db.Guilds().RemoveExactFeed(ctx, guildID, feed)
 }
 
 func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error {
@@ -78,7 +84,7 @@ func init() {
 		Desc:       "Add, remove and list Reddit feeds.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
-		// Guard home: the bot-side moderator check, until spec 37 moves it to Discord's per-command permissions.
+		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "reddit",

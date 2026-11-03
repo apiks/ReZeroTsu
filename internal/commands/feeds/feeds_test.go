@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,6 +28,16 @@ type fakeStore struct {
 	failGet    error
 	failAdd    error
 	failRemove error
+	addCalls   int
+}
+
+func (f *fakeStore) RemoveExactFeed(_ context.Context, _ string, feed guilds.FeedEntry) (int64, error) {
+	if f.failRemove != nil {
+		return 0, f.failRemove
+	}
+	before := len(f.feeds)
+	f.feeds = slices.DeleteFunc(f.feeds, func(g guilds.FeedEntry) bool { return g == feed })
+	return int64(before - len(f.feeds)), nil
 }
 
 func (f *fakeStore) GetFeeds(context.Context, string) ([]guilds.FeedEntry, error) {
@@ -37,6 +48,7 @@ func (f *fakeStore) GetFeeds(context.Context, string) ([]guilds.FeedEntry, error
 }
 
 func (f *fakeStore) AddFeed(_ context.Context, _ string, feed guilds.FeedEntry) error {
+	f.addCalls++
 	if f.failAdd != nil {
 		return f.failAdd
 	}
@@ -535,9 +547,13 @@ func TestChoosingAnUnfilteredFeedKeepsItsFilteredSiblings(t *testing.T) {
 	plain := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}
 	sibling := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob"}
 	st := useStore(t, plain, sibling)
+	st.failAdd = errors.New("AddFeed must not be called")
 	picker := firstPicker(t, "user")
 	if err := handleRemovePicker(pick("user", picker.CustomID, pickValue(plain)), nil); err != nil {
 		t.Fatal(err)
+	}
+	if st.addCalls != 0 {
+		t.Errorf("AddFeed called %d times", st.addCalls)
 	}
 	if !slices.Equal(st.feeds, []guilds.FeedEntry{sibling}) {
 		t.Errorf("feeds = %+v, want only the filtered sibling", st.feeds)
@@ -655,5 +671,26 @@ func TestMissingPermissionsAreStillExplainedByTheHelper(t *testing.T) {
 	r := lastReply(t, invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime")))
 	if strings.Contains(r.Content, "403") {
 		t.Errorf("raw error shown: %q", r.Content)
+	}
+}
+
+func TestPickerOptionsAreNumberedLikeTheEmbedFields(t *testing.T) {
+	a := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}
+	b := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c2"}
+	useStore(t, a, b)
+	resp := renderPage([]guilds.FeedEntry{a, b}, 0, "user")
+	fields := resp.Embeds[0].Fields
+	picker := firstPicker(t, "user")
+	if len(picker.Options) != 2 {
+		t.Fatalf("options = %d", len(picker.Options))
+	}
+	for i, o := range picker.Options {
+		prefix := strconv.Itoa(i+1) + ". "
+		if !strings.HasPrefix(o.Label, prefix) || !strings.HasPrefix(fields[i].Name, prefix) {
+			t.Errorf("option %q / field %q lack prefix %q", o.Label, fields[i].Name, prefix)
+		}
+		if o.Description != "" {
+			t.Errorf("option shows a description %q", o.Description)
+		}
 	}
 }

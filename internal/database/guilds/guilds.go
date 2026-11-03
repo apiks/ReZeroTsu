@@ -378,6 +378,30 @@ func (r *Repo) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, po
 	return res.ModifiedCount, nil
 }
 
+// RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and post type match, and author and
+// title match their value, or a missing field when empty (nil matches an omitted omitempty field). Unlike
+// RemoveFeed, an empty author or title does not widen the match to its filtered siblings.
+func (r *Repo) RemoveExactFeed(ctx context.Context, guildID string, feed FeedEntry) (int64, error) {
+	pull := bson.M{
+		"subreddit":  feed.Subreddit,
+		"channel_id": feed.ChannelID,
+		"post_type":  feed.PostType,
+		"author":     nil,
+		"title":      nil,
+	}
+	if feed.Author != "" {
+		pull["author"] = feed.Author
+	}
+	if feed.Title != "" {
+		pull["title"] = feed.Title
+	}
+	res, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, bson.M{"$pull": bson.M{"feeds": pull}})
+	if err != nil {
+		return 0, fmt.Errorf("RemoveExactFeed: %w", err)
+	}
+	return res.ModifiedCount, nil
+}
+
 // RemoveFeedsByChannel removes all feeds for the channel.
 func (r *Repo) RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
 	filter := bson.M{"_id": guildID}
