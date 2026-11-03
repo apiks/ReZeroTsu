@@ -95,7 +95,7 @@ func init() {
 		},
 	})
 	// Restricted: the list and its picker belong to the moderator who ran it.
-	commands.RegisterPaginationRenderer(pageKey, RenderFeedsPage)
+	commands.RegisterServerPaginationRenderer(pageKey, RenderFeedsPage)
 	commands.AddComponent(pickerPrefix, handleRemovePicker)
 }
 

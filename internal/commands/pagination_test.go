@@ -30,7 +30,11 @@ func registerPagesAs(t *testing.T, cmd string, copySafe bool) {
 			Components: PaginationComponents(cmd, page, total, authorID),
 		}}
 	})
-	t.Cleanup(func() { delete(paginationRenderers, cmd); delete(copySafeRenderers, cmd) })
+	t.Cleanup(func() {
+		delete(paginationRenderers, cmd)
+		delete(copySafeRenderers, cmd)
+		delete(serverOnlyRenderers, cmd)
+	})
 }
 
 func pageButton(cmd string, page, total int, author string) string {
@@ -123,5 +127,27 @@ func TestRestrictedViewStillPagesInPlaceForItsAuthor(t *testing.T) {
 	dispatchPress(t, fake, componentInteraction(press(pageButton("t-private", 1, 60, "author")), "g", "author", publicMessage()))
 	if ops := fake.Ops(); len(ops) != 1 || ops[0] != "UpdateMessage" {
 		t.Errorf("the author pages in place, got %v", ops)
+	}
+}
+
+func TestServerOnlyViewIsRefusedWithoutAServerAndRendersInOne(t *testing.T) {
+	rendered := 0
+	RegisterServerPaginationRenderer("t-server", func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate, int, int, string) Page {
+		rendered++
+		return Page{Response: interaction.Response{Content: "page"}}
+	})
+	t.Cleanup(func() { delete(paginationRenderers, "t-server"); delete(serverOnlyRenderers, "t-server") })
+
+	fake := &interactiontest.Fake{}
+	dispatchPress(t, fake, componentInteraction(press(pageButton("t-server", 1, 60, "author")), "", "author", publicMessage()))
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private || calls[0].Response.Content != msgFailedLoad || rendered != 0 {
+		t.Errorf("no server: want one private refusal and no render, got %+v (rendered %d)", calls, rendered)
+	}
+
+	fake = &interactiontest.Fake{}
+	dispatchPress(t, fake, componentInteraction(press(pageButton("t-server", 1, 60, "author")), "g", "author", publicMessage()))
+	if ops := fake.Ops(); len(ops) != 1 || ops[0] != "UpdateMessage" || rendered != 1 {
+		t.Errorf("in a server: want one UpdateMessage and one render, got %v (rendered %d)", ops, rendered)
 	}
 }
