@@ -68,6 +68,19 @@ func (f *fakeStore) RemoveShows(_ context.Context, id string, names []string) er
 	return nil
 }
 
+func (f *fakeStore) SetShowTracks(_ context.Context, id, showName, tracks string, marks []anime_subs.Mark) error {
+	f.calls = append(f.calls, "settracks")
+	for _, s := range f.docs[id] {
+		if s.Show == showName {
+			s.Tracks = tracks
+			for _, m := range marks {
+				s.Remember(m)
+			}
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) ClearShows(_ context.Context, id string) error {
 	f.calls = append(f.calls, "clear")
 	f.docs[id] = nil

@@ -3,6 +3,7 @@ package animesubs
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -122,6 +123,7 @@ type subsStore interface {
 	GetByID(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
 	AddShowIfAbsent(ctx context.Context, id string, sub *anime_subs.ShowSub) (bool, error)
 	RemoveShows(ctx context.Context, id string, showNames []string) error
+	SetShowTracks(ctx context.Context, id, showName, tracks string, marks []anime_subs.Mark) error
 	ClearShows(ctx context.Context, id string) error
 }
 
@@ -152,7 +154,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	if doc != nil {
 		for _, sub := range doc.Shows {
 			if sub != nil && sub.Matches(show.Route, showName) {
-				return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
+				return replaceTracks(ctx, store, uid, sub, showName, set, animeschedule.Now())
 			}
 		}
 	}
@@ -181,6 +183,35 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 		desc += "\n" + line
 	}
 	return desc, true, nil
+}
+
+// replaceTracks answers a re-add of a show the member already follows. The same set is already subscribed; a
+// different set replaces the stored one in a single statement. Members kept from the old set keep their memory;
+// each member new to the set is seeded from its own row that aired today (or cleared, if none), so switching
+// never DMs something that aired earlier today. It never counts against the subscription limit.
+func replaceTracks(ctx context.Context, store subsStore, uid string, existing *anime_subs.ShowSub, showName string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
+	old, _ := animeschedule.ParseSubscriptionTracks(existing.Tracks)
+	if old == set {
+		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
+	}
+	seeded := &anime_subs.ShowSub{Show: existing.Show, Route: existing.Route}
+	seedMemory(seeded, set, now)
+	var marks []anime_subs.Mark
+	for _, m := range set.Members() {
+		if slices.Contains(old.Members(), m) {
+			continue
+		}
+		air, episode := seeded.Memory(string(m))
+		marks = append(marks, anime_subs.Mark{Track: string(m), AirUnix: air, Episode: episode})
+	}
+	stored := ""
+	if set != animeschedule.SubscribeSub {
+		stored = set.String()
+	}
+	if err := store.SetShowTracks(ctx, uid, existing.Show, stored, marks); err != nil {
+		return "Could not save subscription.", false, err
+	}
+	return fmt.Sprintf("**%s** now alerts for %s.", showName, set.Title()), true, nil
 }
 
 // notSubscribed is the reply for removing a show the member is not subscribed to, pointing at the list.
