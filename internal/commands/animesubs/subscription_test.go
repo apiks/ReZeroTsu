@@ -116,7 +116,7 @@ func TestAddSubscribesAndConfirmsPrivately(t *testing.T) {
 	st := newFakeStore()
 	useStore(t, st)
 	got := text(reply(t, invoke(t, "add", animeOption("frieren")...)))
-	if !strings.Contains(got, "Success") || strings.Join(st.names("user"), ",") != "Frieren" {
+	if !strings.Contains(got, "Subscribed to") || strings.Join(st.names("user"), ",") != "Frieren" {
 		t.Errorf("reply %q, subscriptions %v", got, st.names("user"))
 	}
 }
@@ -274,7 +274,7 @@ func TestAddResolvesATypedEnglishOrNativeName(t *testing.T) {
 		st := newFakeStore()
 		useStore(t, st)
 		got := text(reply(t, invoke(t, "add", animeOption(typed)...)))
-		if !strings.Contains(got, "Success") || strings.Join(st.names("user"), ",") != "Sousou no Frieren" {
+		if !strings.Contains(got, "Subscribed to") || strings.Join(st.names("user"), ",") != "Sousou no Frieren" {
 			t.Errorf("typed %q: reply %q, subscriptions %v", typed, got, st.names("user"))
 		}
 	}

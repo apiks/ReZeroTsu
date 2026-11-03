@@ -44,7 +44,7 @@ func init() {
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "add",
-				Desc: "Subscribe to DMs for an airing anime.",
+				Desc: "Subscribe to DMs for an airing anime; the reply says when it airs next.",
 				Options: []*discordgo.ApplicationCommandOption{{
 					Type:         discordgo.ApplicationCommandOptionString,
 					Name:         "anime",
@@ -68,7 +68,7 @@ func init() {
 				Run:                runRemove,
 				AutocompleteOption: autocompleteOwn,
 			},
-			{Name: "list", Desc: "Show your subscriptions.", Run: runList},
+			{Name: "list", Desc: "Show your subscriptions and when each airs next.", Run: runList},
 			{Name: "clear", Desc: "Remove all your subscriptions.", Run: runClear},
 		},
 	})
@@ -101,8 +101,11 @@ func animeArg(ic *interaction.Context) string {
 // runAdd keeps today's rules through subCore: the show must be airing, one entry per show by match key, the
 // subscription limit, and seeding from today's aired entry.
 func runAdd(ic *interaction.Context) error {
-	desc, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic))
-	return finish(ic, desc, logErr)
+	desc, confirmed, logErr := subscribe(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic))
+	if !confirmed {
+		return finish(ic, desc, logErr)
+	}
+	return ic.EditReply(interaction.Response{Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitleAnimeSubs, desc, msgDMsFooter)}})
 }
 
 func runRemove(ic *interaction.Context) error {

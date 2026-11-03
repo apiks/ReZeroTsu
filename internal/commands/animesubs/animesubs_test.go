@@ -97,9 +97,9 @@ func TestSubCore(t *testing.T) {
 		wantMsg   string
 		wantNames []string
 	}{
-		{"new subscription", newFakeStore(), "frieren", "Success!", []string{"Frieren"}},
+		{"new subscription", newFakeStore(), "frieren", "Subscribed to", []string{"Frieren"}},
 		{"already subscribed case-insensitive", newFakeStore().with("u", "Frieren"), "FRIEREN", "already subscribed", []string{"Frieren"}},
-		{"second show keeps first", newFakeStore().with("u", "Frieren"), "Dandadan", "Success!", []string{"Frieren", "Dandadan"}},
+		{"second show keeps first", newFakeStore().with("u", "Frieren"), "Dandadan", "Subscribed to", []string{"Frieren", "Dandadan"}},
 		{"unknown show", newFakeStore(), "nope", "could not find", nil},
 	}
 	for _, tt := range tests {
