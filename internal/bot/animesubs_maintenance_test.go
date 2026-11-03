@@ -5,9 +5,79 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/database/anime_subs"
 )
+
+// rosterFixture seeds three weeks and the upcoming list around Wednesday 2026-07-15 and returns the roster.
+func rosterFixture(t *testing.T, upcomingLoaded bool, lastWeek, thisWeek, nextWeek []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow) (keepRoster, bool) {
+	t.Helper()
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }))
+	monday := animeschedule.DateInWeek(time.Monday)
+	// An unrelated show keeps the loaded timetable from being empty, which the cleanup treats as a failed load.
+	thisWeek = append(thisWeek[:len(thisWeek):len(thisWeek)], animeschedule.ShowEntry{Name: "Filler", Route: "filler"})
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+		animeschedule.DateKey(monday.AddDate(0, 0, -7)): lastWeek,
+		animeschedule.DateKey(monday):                   thisWeek,
+		animeschedule.DateKey(monday.AddDate(0, 0, 7)):  nextWeek,
+	}))
+	t.Cleanup(animeschedule.SeedUpcoming(upcoming, upcomingLoaded))
+	return buildKeepRoster()
+}
+
+func TestKeepRosterCleanupRule(t *testing.T) {
+	show := func(name, route string, final bool) animeschedule.ShowEntry {
+		return animeschedule.ShowEntry{Name: name, Route: route, Final: final}
+	}
+	one := func(e animeschedule.ShowEntry) []animeschedule.ShowEntry { return []animeschedule.ShowEntry{e} }
+	tests := []struct {
+		name     string
+		sub      anime_subs.ShowSub
+		last     []animeschedule.ShowEntry
+		this     []animeschedule.ShowEntry
+		next     []animeschedule.ShowEntry
+		upcoming []animeschedule.UpcomingShow
+		want     bool
+	}{
+		{"on next week only", anime_subs.ShowSub{Show: "A"}, nil, nil, one(show("A", "a", false)), nil, true},
+		{"two-week break after a non-final episode", anime_subs.ShowSub{Show: "A"}, one(show("A", "a", false)), nil, nil, nil, true},
+		{"last week's final episode", anime_subs.ShowSub{Show: "A"}, one(show("A", "a", true)), nil, nil, nil, false},
+		{"on the upcoming list", anime_subs.ShowSub{Show: "A"}, nil, nil, nil, []animeschedule.UpcomingShow{{Name: "A", Route: "a"}}, true},
+		{"on none of them", anime_subs.ShowSub{Show: "A"}, nil, nil, nil, nil, false},
+		{"route match survives a rename", anime_subs.ShowSub{Show: "Old", Route: "a"}, nil, one(show("New", "a", false)), nil, nil, true},
+		{"title fallback without a route", anime_subs.ShowSub{Show: " a "}, nil, one(show("A", "x", false)), nil, nil, true},
+		{"a route that is absent is not rescued by the title", anime_subs.ShowSub{Show: "A", Route: "gone"}, nil, one(show("A", "a", false)), nil, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, ok := rosterFixture(t, true, tc.last, tc.this, tc.next, tc.upcoming)
+			if !ok {
+				t.Fatal("roster not ready")
+			}
+			if got := r.keeps(&tc.sub); got != tc.want {
+				t.Errorf("keeps = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestKeepRosterNotReadyUntilUpcomingLoads(t *testing.T) {
+	_, ok := rosterFixture(t, false, nil, []animeschedule.ShowEntry{{Name: "A", Route: "a"}}, nil, nil)
+	if ok {
+		t.Error("roster ready before the upcoming list loaded")
+	}
+}
+
+// namesRoster keeps the shows with these names (by match key), for the tests of the removal mechanics.
+func namesRoster(airing map[string]struct{}) keepRoster {
+	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+	for name := range airing {
+		r.keys[anime_subs.MatchKey(name)] = struct{}{}
+	}
+	return r
+}
 
 // fakeUserSubs is an in-memory userSubsStore (ticket #8). It has no whole-document rewrite.
 type fakeUserSubs struct {
@@ -57,7 +127,7 @@ func TestCleanupFinishedShows(t *testing.T) {
 		&anime_subs.AnimeSubs{ID: "a", Shows: []*anime_subs.ShowSub{{Show: "Frieren"}, {Show: "Old Show"}, {Show: "Gone"}}},
 		&anime_subs.AnimeSubs{ID: "b", Shows: []*anime_subs.ShowSub{{Show: "Frieren"}}},
 	)
-	updated, err := cleanupFinishedShows(context.Background(), st, airing)
+	updated, err := cleanupFinishedShows(context.Background(), st, namesRoster(airing))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +161,7 @@ func TestCleanupFinishedShowsMatchesLikeTheNotifier(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			airing := map[string]struct{}{strings.ToLower(tc.airingName): {}}
 			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: tc.subName}}})
-			if _, err := cleanupFinishedShows(context.Background(), st, airing); err != nil {
+			if _, err := cleanupFinishedShows(context.Background(), st, namesRoster(airing)); err != nil {
 				t.Fatal(err)
 			}
 			if fmt.Sprint(st.removed["u"]) != fmt.Sprint(tc.wantRemoved) {
@@ -140,7 +210,7 @@ func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: tc.shows})
 			st.collapseNoop = tc.collapseNoop
-			updated, err := cleanupFinishedShows(context.Background(), st, airing)
+			updated, err := cleanupFinishedShows(context.Background(), st, namesRoster(airing))
 			if err != nil {
 				t.Fatal(err)
 			}

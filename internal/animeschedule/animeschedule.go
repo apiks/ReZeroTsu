@@ -56,6 +56,8 @@ type ShowEntry struct {
 	MediaType         MediaType
 	AirType           string
 	ImageVersionRoute string
+	// Final marks the show's last episode.
+	Final bool
 }
 
 // AllNames returns the display title, romaji, English and native names in that order, leaving out empty names and
@@ -435,8 +437,10 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 
 		date := DateKey(a.EpisodeDate)
 		episodeStr := fmt.Sprintf("Ep %d", a.EpisodeNumber)
+		final := false
 		if a.Episodes > 0 && a.EpisodeNumber >= a.Episodes {
 			episodeStr = fmt.Sprintf("Ep %dF", a.EpisodeNumber)
+			final = true
 		}
 		delayed := ""
 		if !a.DelayedFrom.IsZero() || !a.DelayedUntil.IsZero() {
@@ -473,6 +477,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			MediaType:         decodeMediaType(a.MediaTypes),
 			AirType:           airType,
 			ImageVersionRoute: a.ImageVersionRoute,
+			Final:             final,
 		})
 	}
 
