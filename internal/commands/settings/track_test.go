@@ -16,8 +16,11 @@ func (f *fakeStore) SetPreferredTrack(_ context.Context, _ string, pref animesch
 	return f.write(func(gs *guilds.GuildSettings) { gs.PreferredTrack = pref.String() })
 }
 
+var wantFallback = map[string]string{"Sub": "(sub, else raw).", "Dub": "(dub, else sub, else raw).", "Raw": "(raw only)."}
+
 func TestPanelShowsThePreferredTrackOnItsButtonAndInItsText(t *testing.T) {
 	for have, name := range map[string]string{"": "Sub", "sub": "Sub", "dub": "Dub", "raw": "Raw"} {
+		line := "**Preferred track:** " + name + " " + wantFallback[name] + " Used by /schedule and both autoposts."
 		gs := stored()
 		gs.PreferredTrack = have
 		useStore(t, &fakeStore{gs: gs})
@@ -28,11 +31,11 @@ func TestPanelShowsThePreferredTrackOnItsButtonAndInItsText(t *testing.T) {
 			t.Fatal(err)
 		}
 		desc, _, buttons := panelOf(t, lastCall(t, fake).Response)
-		if !strings.Contains(desc, "**Preferred track:** "+name) {
-			t.Errorf("stored %q: panel %q lacks the preferred track line", have, desc)
+		if !strings.Contains(desc, line) {
+			t.Errorf("stored %q: panel %q lacks the line %q", have, desc, line)
 		}
-		if len(buttons) != 3 || buttons[0].Label == "" || !strings.HasPrefix(buttons[1].Label, "Track: ") || buttons[1].Label != "Track: "+name || buttons[2].Label != "Edit ping message" {
-			t.Errorf("stored %q: buttons = %+v, want Donghua, Track: %s, Edit ping message", have, buttons, name)
+		if len(buttons) != 3 || buttons[0].Label == "" || buttons[1].Label != "Preferred track: "+name || buttons[2].Label != "Edit ping message" {
+			t.Errorf("stored %q: buttons = %+v, want Donghua, Preferred track: %s, Edit ping message", have, buttons, name)
 		}
 	}
 }
@@ -59,7 +62,7 @@ func TestTrackButtonCyclesSubDubRawSubAndSavesOnlyThatField(t *testing.T) {
 		}
 		desc, _, buttons := panelOf(t, call.Response)
 		name := strings.ToUpper(want[:1]) + want[1:]
-		if !strings.Contains(desc, "**Preferred track:** "+name) || buttons[1].Label != "Track: "+name {
+		if !strings.Contains(desc, "**Preferred track:** "+name+" "+wantFallback[name]+" Used by /schedule and both autoposts.") || buttons[1].Label != "Preferred track: "+name {
 			t.Errorf("press %d: panel %q / %q does not show %s", i+1, desc, buttons[1].Label, name)
 		}
 	}
