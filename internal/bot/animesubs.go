@@ -30,9 +30,9 @@ const (
 var animeSubThrottlePerUser = 100 * time.Millisecond
 
 var (
-	lastGuildSeedWeekdayByShard = make(map[int]int)
-	lastGuildSeedWeekdayMu      sync.RWMutex
-	animeSubRoundRobin          ShardRoundRobin
+	lastGuildSeedDateByShard = make(map[int]string)
+	lastGuildSeedDateMu      sync.RWMutex
+	animeSubRoundRobin       ShardRoundRobin
 )
 
 // RunAnimeSubLoop runs the anime-sub check loop for this shard (round-robin). Exits when ctx is cancelled.
@@ -206,18 +206,16 @@ func backfillLastNotifiedAirUnix(ctx context.Context, db *database.Client, now t
 	}
 	shows := make(map[string]int64)
 	nowUnix := now.Unix()
-	for day := 0; day <= 6; day++ {
-		for _, show := range animeschedule.GetDayShows(day, true) {
-			if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
-				continue
-			}
-			key := anime_subs.MatchKey(show.Name)
-			if key == "" {
-				continue
-			}
-			if show.AirTimeUnix > shows[key] {
-				shows[key] = show.AirTimeUnix
-			}
+	for _, show := range animeschedule.AllEntries() {
+		if show.AirTimeUnix <= 0 || show.AirTimeUnix > nowUnix {
+			continue
+		}
+		key := anime_subs.MatchKey(show.Name)
+		if key == "" {
+			continue
+		}
+		if show.AirTimeUnix > shows[key] {
+			shows[key] = show.AirTimeUnix
 		}
 	}
 	updatedUsers, err := backfillUserSubs(ctx, db.AnimeSubs(), shows)
@@ -255,8 +253,8 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	return emb
 }
 
-// weekdayShows returns the shows for a weekday, optionally including donghua.
-type weekdayShows func(donghua bool) []animeschedule.ShowEntry
+// dayShowsFunc returns the shows of one UTC date, optionally including donghua.
+type dayShowsFunc func(donghua bool) []animeschedule.ShowEntry
 
 // rolePresence is what the gateway state says about a role: present, definitely absent, or unknown.
 type rolePresence int
@@ -298,20 +296,21 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 	if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 		return
 	}
-	now := time.Now().UTC()
-	weekday := int(now.Weekday())
-	todayShows := animeschedule.GetDayShows(weekday, true)
+	now := animeschedule.Now()
+	today := animeschedule.Today()
+	todayKey := animeschedule.DateKey(today)
+	todayShows := animeschedule.GetDayShows(today, true)
 	if len(todayShows) == 0 {
 		return
 	}
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
 
-	// Per-shard guild seed for current weekday (once per day); missing shard entry = not yet seeded.
-	lastGuildSeedWeekdayMu.RLock()
-	lastSeen, seeded := lastGuildSeedWeekdayByShard[s.ShardID]
-	needGuildSeed := !seeded || lastSeen != weekday
-	lastGuildSeedWeekdayMu.RUnlock()
+	// Per-shard guild seed for the current UTC date (once per day); missing shard entry = not yet seeded.
+	lastGuildSeedDateMu.RLock()
+	lastSeen, seeded := lastGuildSeedDateByShard[s.ShardID]
+	needGuildSeed := !seeded || lastSeen != todayKey
+	lastGuildSeedDateMu.RUnlock()
 	if needGuildSeed {
 		guildIDs := make([]string, 0, len(s.State.Guilds))
 		for _, g := range s.State.Guilds {
@@ -320,9 +319,9 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 			}
 		}
 		seedGuildNewEpisodesForShard(ctx, st, guildIDs, dayShows, now)
-		lastGuildSeedWeekdayMu.Lock()
-		lastGuildSeedWeekdayByShard[s.ShardID] = weekday
-		lastGuildSeedWeekdayMu.Unlock()
+		lastGuildSeedDateMu.Lock()
+		lastGuildSeedDateByShard[s.ShardID] = todayKey
+		lastGuildSeedDateMu.Unlock()
 	}
 
 	if s.ShardID == 0 {
@@ -560,7 +559,7 @@ func guildShowNamesMatch(dayShows []animeschedule.ShowEntry, subs []*anime_subs.
 }
 
 // seedGuildNewEpisodesForShard seeds this shard's guild new-episodes docs with today's shows.
-func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows weekdayShows, now time.Time) {
+func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []string, shows dayShowsFunc, now time.Time) {
 	today := now.UTC().Format("2006-01-02")
 
 	for _, guildID := range guildIDs {
@@ -648,7 +647,7 @@ func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*ani
 	return subs
 }
 
-func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows weekdayShows, now time.Time) {
+func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows dayShowsFunc, now time.Time) {
 	if guildID == "" {
 		return
 	}

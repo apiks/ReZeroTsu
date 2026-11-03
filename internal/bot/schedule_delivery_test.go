@@ -86,7 +86,7 @@ func TestDailyScheduleRetriesOnlyMissingPosts(t *testing.T) {
 		h := newScheduleHarness(succeed())
 		lim := &recordingLimiter{err: errors.New("send limiter stopped")}
 		senders, _, _ := newTestSendersWithLimiter(h.d, lim)
-		err := processDailyScheduleForGuild(context.Background(), h.d, senders, h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+		err := processDailyScheduleForGuild(context.Background(), h.d, senders, h.st, "g1", h.fn, h.now)
 		if err != nil {
 			t.Errorf("run = %v, want nil (context alive)", err)
 		}
@@ -161,7 +161,7 @@ func TestDailyScheduleShutdownDuringSendDoesNotRetry(t *testing.T) {
 }
 
 func scheduleEmbedFor(h *scheduleHarness) *discordgo.MessageEmbed {
-	return schedule.BuildScheduleEmbed(int(h.now.Weekday()), h.fn(true))
+	return schedule.BuildScheduleEmbed(h.now, h.fn(true))
 }
 
 func TestDailyScheduleWebhookGoneFallsBackOnce(t *testing.T) {

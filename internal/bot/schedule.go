@@ -41,9 +41,9 @@ func RunDailyScheduleLoop(ctx context.Context, db *database.Client, session *dis
 		return
 	}
 	// Sleep until next 00:00 UTC
-	now := time.Now().UTC()
+	now := animeschedule.Now()
 	next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-	d := time.Until(next)
+	d := next.Sub(now)
 	if d > 24*time.Hour {
 		d = 0
 	}
@@ -87,9 +87,9 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 	if !animeschedule.HasData() {
 		return
 	}
-	weekday := int(time.Now().UTC().Weekday())
+	today := animeschedule.Today()
 	st := newMongoSentState(db)
-	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(weekday, donghua) }
+	dayShows := func(donghua bool) []animeschedule.ShowEntry { return animeschedule.GetDayShows(today, donghua) }
 	guilds := make([]*discordgo.Guild, 0, len(s.State.Guilds))
 	for _, g := range s.State.Guilds {
 		if g == nil || g.ID == "" {
@@ -113,7 +113,7 @@ func runDailySchedulePost(ctx context.Context, db *database.Client, s *discordgo
 				if g == nil || g.ID == "" {
 					continue
 				}
-				if err := processDailyScheduleForGuild(ctx, d, senders, st, g.ID, weekday, dayShows, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+				if err := processDailyScheduleForGuild(ctx, d, senders, st, g.ID, dayShows, animeschedule.Now()); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("schedule").Error("processDailyScheduleForGuild failed", "shard_id", s.ShardID, "guild_id", g.ID, "err", err)
 				}
 			}
@@ -139,7 +139,7 @@ var scheduleRetryWait = 3 * time.Second
 // processDailyScheduleForGuild posts the daily schedule to one guild at most once per UTC day: one attempt
 // following the shared send rules, then at most one retry when the post is verifiably missing (or verification
 // itself failed, which is the opposite of the default policy). Rejected outcomes are never retried.
-func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, weekday int, dayShows weekdayShows, now time.Time) error {
+func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, dayShows dayShowsFunc, now time.Time) error {
 	if guildID == "" {
 		return nil
 	}
@@ -165,7 +165,7 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	emb := schedule.BuildScheduleEmbed(weekday, dayShows(donghua))
+	emb := schedule.BuildScheduleEmbed(now, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
 	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))

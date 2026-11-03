@@ -87,10 +87,57 @@ var (
 	apiKeyMu       sync.RWMutex
 	apiKey         string
 	cacheMu        sync.RWMutex
-	cache          = make(map[int][]ShowEntry) // weekday 0=Sunday .. 6=Saturday
+	cache          = make(map[string][]ShowEntry) // UTC calendar date (DateKey) -> entries sorted by air time
 	cachePopulated bool
 	lastFetchErr   error
 )
+
+// clock returns the current time; replaceable through SetClock.
+var (
+	clockMu sync.RWMutex
+	clock   = time.Now
+)
+
+// SetClock replaces the shared clock and returns a function that restores the previous one. Commands and
+// delivery runs read "now" and "today" from Now and Today, so tests set the clock here.
+func SetClock(now func() time.Time) (restore func()) {
+	clockMu.Lock()
+	prev := clock
+	clock = now
+	clockMu.Unlock()
+	return func() {
+		clockMu.Lock()
+		clock = prev
+		clockMu.Unlock()
+	}
+}
+
+// Now returns the current time in UTC from the shared clock.
+func Now() time.Time {
+	clockMu.RLock()
+	now := clock
+	clockMu.RUnlock()
+	return now().UTC()
+}
+
+// Today returns the current UTC date from the shared clock, as midnight UTC.
+func Today() time.Time {
+	n := Now()
+	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// DateKey is the timetable key of t's UTC calendar date ("2006-01-02").
+func DateKey(t time.Time) string {
+	return t.UTC().Format("2006-01-02")
+}
+
+// DateInWeek returns the date, as midnight UTC, of the given weekday in the current UTC ISO week (Monday to
+// Sunday) of the shared clock.
+func DateInWeek(weekday time.Weekday) time.Time {
+	today := Today()
+	monday := today.AddDate(0, 0, -((int(today.Weekday()) + 6) % 7))
+	return monday.AddDate(0, 0, (int(weekday)+6)%7)
+}
 
 func SetAPIKey(key string) {
 	apiKeyMu.Lock()
@@ -98,9 +145,9 @@ func SetAPIKey(key string) {
 	apiKey = key
 }
 
-// Seed replaces the cached timetable and marks it populated, keyed by weekday (0=Sunday .. 6=Saturday), and
-// returns a function that restores the previous state. It exists so command tests need no HTTP server.
-func Seed(days map[int][]ShowEntry) (restore func()) {
+// Seed replaces the cached timetable and marks it populated, keyed by UTC date (see DateKey), and returns a
+// function that restores the previous state. It exists so tests need no HTTP server.
+func Seed(days map[string][]ShowEntry) (restore func()) {
 	cacheMu.Lock()
 	prev, prevPopulated := cache, cachePopulated
 	cache, cachePopulated = days, true
@@ -126,10 +173,20 @@ func HasData() bool {
 	return cachePopulated
 }
 
-// GetDayShows returns shows for weekday (0=Sunday..6=Saturday), sorted by air time. Excludes donghua when false.
-func GetDayShows(weekday int, donghua bool) []ShowEntry {
+// loadedDates returns the cached dates in ascending order. The caller holds cacheMu.
+func loadedDates() []string {
+	dates := make([]string, 0, len(cache))
+	for d := range cache {
+		dates = append(dates, d)
+	}
+	sort.Strings(dates)
+	return dates
+}
+
+// GetDayShows returns the shows of the UTC date of day, sorted by air time. Excludes donghua when false.
+func GetDayShows(day time.Time, donghua bool) []ShowEntry {
 	cacheMu.RLock()
-	entries := cache[weekday]
+	entries := cache[DateKey(day)]
 	cacheMu.RUnlock()
 	if len(entries) == 0 {
 		return nil
@@ -144,15 +201,15 @@ func GetDayShows(weekday int, donghua bool) []ShowEntry {
 	return out
 }
 
-// AiringShows returns this week's airing shows, one entry per route (or per title when a route is missing), in
-// weekday then air-time order. Donghua is included.
+// AiringShows returns the airing shows of the loaded dates, one entry per route (or per title when a route is
+// missing), in date then air-time order. Donghua is included.
 func AiringShows() []ShowEntry {
 	cacheMu.RLock()
 	defer cacheMu.RUnlock()
 	var out []ShowEntry
 	seen := make(map[string]bool)
-	for weekday := 0; weekday <= 6; weekday++ {
-		for _, e := range cache[weekday] {
+	for _, date := range loadedDates() {
+		for _, e := range cache[date] {
 			key := e.Route
 			if key == "" {
 				key = strings.ToLower(e.Name)
@@ -172,10 +229,21 @@ func GetAiringShowNames() map[string]struct{} {
 	cacheMu.RLock()
 	defer cacheMu.RUnlock()
 	out := make(map[string]struct{})
-	for weekday := 0; weekday <= 6; weekday++ {
-		for _, e := range cache[weekday] {
+	for _, entries := range cache {
+		for _, e := range entries {
 			out[strings.ToLower(e.Name)] = struct{}{}
 		}
+	}
+	return out
+}
+
+// AllEntries returns every entry of the loaded dates in date then air-time order, donghua included.
+func AllEntries() []ShowEntry {
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	var out []ShowEntry
+	for _, date := range loadedDates() {
+		out = append(out, cache[date]...)
 	}
 	return out
 }
@@ -273,8 +341,8 @@ func setFetchErr(err error) {
 	cacheMu.Unlock()
 }
 
-// processTimetable builds weekday -> []ShowEntry from API; sub preferred, raw if no sub. Sorts each day by air time.
-func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
+// processTimetable builds UTC date -> []ShowEntry from API; sub preferred, raw if no sub. Sorts each day by air time.
+func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 	subRoutes := make(map[string]bool)
 	for _, a := range list {
 		if a.AirType == "sub" {
@@ -282,7 +350,7 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 		}
 	}
 
-	byWeekday := make(map[int][]ShowEntry)
+	byDate := make(map[string][]ShowEntry)
 	for _, a := range list {
 		if a.AirType == "dub" {
 			continue
@@ -291,7 +359,7 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 			continue
 		}
 
-		weekday := int(a.EpisodeDate.UTC().Weekday())
+		date := DateKey(a.EpisodeDate)
 		episodeStr := fmt.Sprintf("Ep %d", a.EpisodeNumber)
 		if a.Episodes > 0 && a.EpisodeNumber >= a.Episodes {
 			episodeStr = fmt.Sprintf("Ep %dF", a.EpisodeNumber)
@@ -318,7 +386,7 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 		if airType != "sub" && airType != "raw" {
 			airType = "raw"
 		}
-		byWeekday[weekday] = append(byWeekday[weekday], ShowEntry{
+		byDate[date] = append(byDate[date], ShowEntry{
 			Name:              strings.TrimSpace(a.Title),
 			Romaji:            strings.TrimSpace(a.Romaji),
 			English:           strings.TrimSpace(a.English),
@@ -333,10 +401,10 @@ func processTimetable(list []TimetableAnime) map[int][]ShowEntry {
 		})
 	}
 
-	for w := range byWeekday {
-		sort.Slice(byWeekday[w], func(i, j int) bool {
-			return byWeekday[w][i].AirTimeUnix < byWeekday[w][j].AirTimeUnix
+	for d := range byDate {
+		sort.Slice(byDate[d], func(i, j int) bool {
+			return byDate[d][i].AirTimeUnix < byDate[d][j].AirTimeUnix
 		})
 	}
-	return byWeekday
+	return byDate
 }

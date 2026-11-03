@@ -165,7 +165,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		backfillLastNotifiedOnce.Do(func() {
 			go func() {
-				if err := backfillLastNotifiedAirUnix(ctx, db, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+				if err := backfillLastNotifiedAirUnix(ctx, db, animeschedule.Now()); err != nil && !errors.Is(err, context.Canceled) {
 					logger.For("animesubs").Error("backfillLastNotifiedAirUnix failed", "err", err)
 				}
 			}()
