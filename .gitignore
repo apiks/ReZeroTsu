@@ -15,6 +15,9 @@ ZeroTsu.exe
 *.swo
 *~
 
+# Agent worktrees
+.claude/worktrees/
+
 # Local Go cache
 .cache/
 gomodcache/

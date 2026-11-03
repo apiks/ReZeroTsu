@@ -147,7 +147,10 @@ type channelSender struct {
 }
 
 // sendTokenAcquirer is the shared send budget as the channel sender uses it: one wait for one token at a priority.
-// The real *SendLimiter satisfies it.
+// The real *SendLimiter satisfies it. A wait can end with a nil error after shutdown has started (the limiter's fast
+// path never reads the context, and its Done branch can return a token already granted), so a nil error does not
+// mean the context is live; the sender checks again before it sends. Fakes honour shutdown by construction, so a
+// test that needs the real behaviour runs over the real limiter.
 type sendTokenAcquirer interface {
 	Acquire(ctx context.Context, priority int) error
 }

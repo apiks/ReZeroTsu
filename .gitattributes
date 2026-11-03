@@ -3,3 +3,6 @@
 
 # Go files are LF in the working tree so gofmt works on every checkout
 *.go text eol=lf
+
+# Hooks run under sh, which rejects CRLF
+.githooks/* text eol=lf
