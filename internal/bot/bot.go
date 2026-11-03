@@ -183,6 +183,7 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 				animeschedule.UpdateAnimeSchedule(ctx, cfg.AnimeScheduleAPIKey)
 				startScheduleLoopOnce.Do(func() {
 					go runScheduleLoop(ctx, cfg.AnimeScheduleAPIKey)
+					go animeschedule.RunUpcomingLoop(ctx, cfg.AnimeScheduleAPIKey)
 				})
 				go RunDailyScheduleLoop(ctx, db, s, ops, senders, cfg.AnimeScheduleAPIKey, getShardCount)
 				go RunAnimeSubLoop(ctx, db, s, ops, senders, 15*time.Second, getShardCount)
