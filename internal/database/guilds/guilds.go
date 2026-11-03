@@ -57,12 +57,48 @@ type RaffleMongo struct {
 	Name           string   `bson:"name"`
 	ParticipantIDs []string `bson:"participant_ids,omitempty"`
 	ReactMessageID string   `bson:"react_message_id,omitempty"`
+	// ChannelID and MessageID locate the raffle's button message; WinnerID is the latest draw's winner.
+	// All three are optional, so records stored before button raffles load unchanged.
+	ChannelID string `bson:"channel_id,omitempty"`
+	MessageID string `bson:"message_id,omitempty"`
+	WinnerID  string `bson:"winner_id,omitempty"`
 }
 
 type Raffle struct {
 	Name           string
 	ParticipantIDs []string
 	ReactMessageID string
+	// ChannelID and MessageID locate the button message; empty for a raffle that has none.
+	ChannelID string
+	MessageID string
+	// WinnerID is the user ID of the latest draw's winner; empty before the first draw.
+	WinnerID string
+}
+
+func raffleFromMongo(m *RaffleMongo) *Raffle {
+	return &Raffle{
+		Name:           m.Name,
+		ParticipantIDs: append([]string(nil), m.ParticipantIDs...),
+		ReactMessageID: m.ReactMessageID,
+		ChannelID:      m.ChannelID,
+		MessageID:      m.MessageID,
+		WinnerID:       m.WinnerID,
+	}
+}
+
+func raffleToMongo(r *Raffle) RaffleMongo {
+	m := RaffleMongo{
+		Name:           r.Name,
+		ParticipantIDs: r.ParticipantIDs,
+		ReactMessageID: r.ReactMessageID,
+		ChannelID:      r.ChannelID,
+		MessageID:      r.MessageID,
+		WinnerID:       r.WinnerID,
+	}
+	if m.ParticipantIDs == nil {
+		m.ParticipantIDs = []string{}
+	}
+	return m
 }
 
 // FeedEntry is one Reddit feed in a guild's feeds array.
@@ -243,12 +279,7 @@ func (r *Repo) GetRaffles(ctx context.Context, guildID string) ([]*Raffle, error
 	}
 	out := make([]*Raffle, len(g.Raffles))
 	for i := range g.Raffles {
-		m := &g.Raffles[i]
-		out[i] = &Raffle{
-			Name:           m.Name,
-			ParticipantIDs: append([]string(nil), m.ParticipantIDs...),
-			ReactMessageID: m.ReactMessageID,
-		}
+		out[i] = raffleFromMongo(&g.Raffles[i])
 	}
 	return out, nil
 }
@@ -258,14 +289,7 @@ func (r *Repo) SetRaffle(ctx context.Context, guildID string, raffle *Raffle) er
 	if raffle == nil {
 		return nil
 	}
-	mongoRaffle := RaffleMongo{
-		Name:           raffle.Name,
-		ParticipantIDs: raffle.ParticipantIDs,
-		ReactMessageID: raffle.ReactMessageID,
-	}
-	if mongoRaffle.ParticipantIDs == nil {
-		mongoRaffle.ParticipantIDs = []string{}
-	}
+	mongoRaffle := raffleToMongo(raffle)
 	filter := bson.M{"_id": guildID, "raffles.name": raffle.Name}
 	update := bson.M{"$set": bson.M{"raffles.$": mongoRaffle}}
 	res, err := r.coll.UpdateOne(ctx, filter, update)
