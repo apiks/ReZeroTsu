@@ -20,6 +20,9 @@ func trackOf(s string) Track {
 	return TrackRaw
 }
 
+// Known is the track with a missing or unknown value read as raw.
+func (t Track) Known() Track { return trackOf(string(t)) }
+
 // Label is the track's line label: RAW, SUB or DUB.
 func (t Track) Label() string {
 	return strings.ToUpper(string(trackOf(string(t))))
