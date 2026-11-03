@@ -26,6 +26,10 @@ When set to `yes`, PRs run through the same labels and states as issues, using t
 
 GitHub shares one number space across issues and PRs, so a bare `#42` may be either: resolve with `gh pr view 42` and fall back to `gh issue view 42`.
 
+## Closing issues from a PR
+
+Put each closing keyword on its own line in the PR body: `Closes #31`, then `Closes #32`. GitHub closes only the first reference of "Closes #31, #32".
+
 ## When a skill says "publish to the issue tracker"
 
 Create a GitHub issue.
