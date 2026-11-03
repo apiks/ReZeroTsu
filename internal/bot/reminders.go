@@ -205,7 +205,7 @@ func processReminderSlice(ctx context.Context, d RunOperations, senders *channel
 			setVal = fmt.Sprintf("<t:%d:R>", r.CreatedAt.UTC().Unix())
 		}
 		dueVal := fmt.Sprintf("<t:%d:R>", r.Date.UTC().Unix())
-		desc := fmt.Sprintf("**Set:** %s · **Due:** %s\n\n%s", setVal, dueVal, r.Message)
+		desc := fmt.Sprintf("**Set:** %s · **Due:** %s%s\n\n%s", setVal, dueVal, reminderOriginLine(r), r.Message)
 		if len(desc) > discord.MaxEmbedDescriptionLength {
 			desc = desc[:discord.MaxEmbedDescriptionLength]
 		}
@@ -270,6 +270,21 @@ func processReminderSlice(ctx context.Context, d RunOperations, senders *channel
 	case <-throttle.C:
 	}
 	return nil
+}
+
+// reminderOriginLine is the line under a reminder DM's header that says where it was set: "\nSet in <#channel>" for a
+// server channel, "\nSet in DMs" for a DM, and nothing for a reminder stored before the origin was recorded.
+func reminderOriginLine(r reminders.RemindMe) string {
+	switch r.Origin {
+	case reminders.OriginServer:
+		if r.CommandChannel == "" {
+			return ""
+		}
+		return "\nSet in <#" + r.CommandChannel + ">"
+	case reminders.OriginDM:
+		return "\nSet in DMs"
+	}
+	return ""
 }
 
 func splitDueReminders(list []reminders.RemindMe, asOf time.Time) (due, remaining []reminders.RemindMe) {
