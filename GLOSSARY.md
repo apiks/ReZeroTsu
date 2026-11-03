@@ -42,6 +42,10 @@ _Avoid_: track choice, track setting, air-type preference, "All"
 AnimeSchedule's week-by-week list of episode air times. The bot holds last week's, this week's and next week's, with days counted in UTC.
 _Avoid_: schedule data, cache
 
+**Episode span**:
+Several episodes of one show released together on one track at one time, named by their first and last episode, as in Ep 1-12. A release is a span only when its first episode is above zero and below its last.
+_Avoid_: batch, episode range, multi-episode
+
 **Upcoming show**:
 A show listed on AnimeSchedule whose first episode has not aired yet. It can be subscribed to before it reaches the timetable.
 _Avoid_: unaired show, announced anime
