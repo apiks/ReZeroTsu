@@ -29,6 +29,7 @@ type fakeStore struct {
 	failAdd    error
 	failRemove error
 	addCalls   int
+	pinCalls   int
 }
 
 func (f *fakeStore) RemoveExactFeed(_ context.Context, _ string, feed guilds.FeedEntry) (int64, error) {
@@ -54,6 +55,16 @@ func (f *fakeStore) AddFeed(_ context.Context, _ string, feed guilds.FeedEntry) 
 	}
 	if !slices.Contains(f.feeds, feed) {
 		f.feeds = append(f.feeds, feed)
+	}
+	return nil
+}
+
+func (f *fakeStore) SetFeedPin(_ context.Context, _ string, feed guilds.FeedEntry, pin bool) error {
+	f.pinCalls++
+	for i, g := range f.feeds {
+		if sameIdentity(g, feed) {
+			f.feeds[i].Pin = pin
+		}
 	}
 	return nil
 }
@@ -210,7 +221,7 @@ func TestAddKeepsEveryOption(t *testing.T) {
 	for _, o := range subcommand(t, "add").Options {
 		names = append(names, o.Name)
 	}
-	if !slices.Equal(names, []string{"channel", "subreddit", "post-type", "author", "title", "pin"}) {
+	if !slices.Equal(names, []string{"channel", "subreddit", "sort", "author", "title", "pin"}) {
 		t.Errorf("add options = %v", names)
 	}
 	names = nil
@@ -226,7 +237,7 @@ func TestAddSavesTheFeedWithNormalizedFiltersAndPin(t *testing.T) {
 	st := useStore(t)
 	var checked []string
 	checkFeed = func(_ context.Context, sub, pt string) error { checked = append(checked, sub+"/"+pt); return nil }
-	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", " /r/Anime "), strOpt("post-type", "New"),
+	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", " /r/Anime "), strOpt("sort", "New"),
 		strOpt("author", "u/SomeOne"), strOpt("title", " Episode "), boolOpt("pin", true))
 	want := guilds.FeedEntry{Subreddit: "anime", PostType: "new", Author: "someone", Title: "episode", Pin: true, ChannelID: "c1"}
 	if !slices.Equal(st.feeds, []guilds.FeedEntry{want}) {
@@ -258,7 +269,7 @@ func TestAddRefusesBadInputBeforeAskingRedditOrSaving(t *testing.T) {
 		{"no subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1")}, "Pick a channel"},
 		{"blank subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "r/")}, "valid subreddit"},
 		{"bad characters", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "a b!")}, "letters, numbers"},
-		{"bad post type", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("post-type", "top")}, "hot, rising, new"},
+		{"bad post type", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}, "hot, rising, new"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

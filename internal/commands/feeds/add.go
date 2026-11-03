@@ -1,6 +1,8 @@
 package feeds
 
 import (
+	"strings"
+
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/interaction"
@@ -12,17 +14,18 @@ import (
 func addSubcommand() *commands.Subcommand {
 	return &commands.Subcommand{
 		Name: "add",
-		Desc: "Add a Reddit feed to a channel.",
+		Desc: "Add a Reddit feed to a channel, with a sort (formerly post-type), optional filters and pin.",
 		Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionChannel, Name: optChannel, Description: "The channel to add the feed to.", Required: true, ChannelTypes: feedChannelTypes},
 			{Type: discordgo.ApplicationCommandOptionString, Name: optSubreddit, Description: "The subreddit (e.g. r/anime or anime).", Required: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: optPostType, Description: "Feed sort: hot, rising, or new. Default: hot.", Autocomplete: true},
+			{Type: discordgo.ApplicationCommandOptionString, Name: optSort, Description: "Which listing to follow. Default: Hot.", Choices: []*discordgo.ApplicationCommandOptionChoice{
+				{Name: "Hot", Value: "hot"}, {Name: "Rising", Value: "rising"}, {Name: "New", Value: "new"},
+			}},
 			{Type: discordgo.ApplicationCommandOptionString, Name: optAuthor, Description: "Filter to posts from this user (optional)."},
 			{Type: discordgo.ApplicationCommandOptionString, Name: optTitle, Description: "Filter to posts starting with this title (optional)."},
 			{Type: discordgo.ApplicationCommandOptionBoolean, Name: optPin, Description: "Auto-pin the latest post. Default: false."},
 		},
-		Run:                runAdd,
-		AutocompleteOption: autocompletePostType,
+		Run: runAdd,
 	}
 }
 
@@ -62,16 +65,13 @@ func runAdd(ic *interaction.Context) error {
 	if err := reddit.ValidateSubreddit(subreddit); err != nil {
 		return ic.Refuse(err.Error())
 	}
-	postType, ok := postTypeOption(ic, "hot")
+	postType, ok := sortOption(ic)
 	if !ok {
 		return ic.Refuse(msgInvalidPostType)
 	}
 	pin := false
 	if o := commands.ParseOption(ic.Command.Options, optPin); o != nil {
 		pin = o.BoolValue()
-	}
-	if err := checkFeed(ic.Context(), subreddit, postType); err != nil {
-		return ic.Refuse(feedUnavailableText(err, subreddit))
 	}
 	feed := guilds.FeedEntry{
 		Subreddit: subreddit,
@@ -81,8 +81,53 @@ func runAdd(ic *interaction.Context) error {
 		PostType:  postType,
 		ChannelID: channelID,
 	}
-	if err := storeOf(ic.DB).AddFeed(ic.Context(), ic.GuildID, feed); err != nil {
+	st := storeOf(ic.DB)
+	existing, err := st.GetFeeds(ic.Context(), ic.GuildID)
+	if err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	return answer(ic, "Added r/"+subreddit+" ("+postType+") to "+commands.ChannelMention(channelID)+". If there are valid posts they will start appearing shortly.")
+	mention := commands.ChannelMention(channelID)
+	for _, g := range existing {
+		if !sameIdentity(g, feed) {
+			continue
+		}
+		if g.Pin == feed.Pin {
+			return answer(ic, "That feed is already set up in "+mention+".")
+		}
+		if err := st.SetFeedPin(ic.Context(), ic.GuildID, feed, feed.Pin); err != nil {
+			return ic.Fail(err, interaction.ErrorContext{})
+		}
+		if feed.Pin {
+			return answer(ic, "Updated r/"+subreddit+" in "+mention+": now pinning the latest post.")
+		}
+		return answer(ic, "Updated r/"+subreddit+" in "+mention+": no longer pinning the latest post.")
+	}
+	if err := checkFeed(ic.Context(), subreddit, postType); err != nil {
+		return ic.Refuse(feedUnavailableText(err, subreddit))
+	}
+	if err := st.AddFeed(ic.Context(), ic.GuildID, feed); err != nil {
+		return ic.Fail(err, interaction.ErrorContext{})
+	}
+	return answer(ic, addedText(feed))
+}
+
+// addedText describes the whole saved feed, leaving out the clauses of absent filters and pin.
+func addedText(f guilds.FeedEntry) string {
+	var clauses []string
+	switch {
+	case f.Author != "" && f.Title != "":
+		clauses = append(clauses, "only posts by u/"+f.Author+` whose title starts with "`+f.Title+`"`)
+	case f.Author != "":
+		clauses = append(clauses, "only posts by u/"+f.Author)
+	case f.Title != "":
+		clauses = append(clauses, `only posts whose title starts with "`+f.Title+`"`)
+	}
+	if f.Pin {
+		clauses = append(clauses, "pinning the latest")
+	}
+	s := "Added r/" + f.Subreddit + " (" + f.PostType + ") to " + commands.ChannelMention(f.ChannelID)
+	if len(clauses) > 0 {
+		s += ": " + strings.Join(clauses, ", ")
+	}
+	return s + ". New posts start appearing within a few minutes."
 }

@@ -410,6 +410,31 @@ func (r *Repo) AddFeed(ctx context.Context, guildID string, feed FeedEntry) erro
 	return nil
 }
 
+// SetFeedPin sets the auto-pin setting of exactly one feed, identified by channel, subreddit, post type, author and
+// title (an empty author or title matches a missing field), in one update.
+func (r *Repo) SetFeedPin(ctx context.Context, guildID string, feed FeedEntry, pin bool) error {
+	match := bson.M{
+		"subreddit":  feed.Subreddit,
+		"channel_id": feed.ChannelID,
+		"post_type":  feed.PostType,
+		"author":     nil,
+		"title":      nil,
+	}
+	if feed.Author != "" {
+		match["author"] = feed.Author
+	}
+	if feed.Title != "" {
+		match["title"] = feed.Title
+	}
+	_, err := r.coll.UpdateOne(ctx,
+		bson.M{"_id": guildID, "feeds": bson.M{"$elemMatch": match}},
+		bson.M{"$set": bson.M{"feeds.$.pin": pin}})
+	if err != nil {
+		return fmt.Errorf("SetFeedPin: %w", err)
+	}
+	return nil
+}
+
 // RemoveFeed removes one feed matching channel, subreddit, post_type; optional author/title narrow match. Call three times for hot/rising/new when user omits post-type.
 func (r *Repo) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
 	filter := bson.M{"_id": guildID}

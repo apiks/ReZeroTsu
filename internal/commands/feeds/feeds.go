@@ -23,6 +23,7 @@ const (
 	optChannel   = "channel"
 	optSubreddit = "subreddit"
 	optPostType  = "post-type"
+	optSort      = "sort"
 	optAuthor    = "author"
 	optTitle     = "title"
 	optPin       = "pin"
@@ -41,6 +42,8 @@ type store interface {
 	RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error)
 	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
 	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
+	// SetFeedPin changes only the auto-pin setting of the one feed with that identity.
+	SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error
 	// DeleteChecks forgets what was delivered for a feed (the feed check records).
 	DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error
 }
@@ -61,6 +64,10 @@ func (s dbStore) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, 
 
 func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
 	return s.db.Guilds().RemoveExactFeed(ctx, guildID, feed)
+}
+
+func (s dbStore) SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error {
+	return s.db.Guilds().SetFeedPin(ctx, guildID, feed, pin)
 }
 
 func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error {
@@ -164,6 +171,22 @@ func postTypeOption(ic *interaction.Context, def string) (postType string, ok bo
 	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optPostType)))
 	if raw == "" {
 		return def, true
+	}
+	return raw, slices.Contains(postTypeChoices, raw)
+}
+
+// sameIdentity reports whether two feeds are the same Reddit feed: channel, subreddit, sort, author and title.
+// Auto-pin is a setting of the feed, not part of its identity.
+func sameIdentity(f, g guilds.FeedEntry) bool {
+	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
+		f.Author == g.Author && f.Title == g.Title
+}
+
+// sortOption reads the sort option of /reddit add. A missing or blank one is hot; an unknown one is not ok.
+func sortOption(ic *interaction.Context) (sort string, ok bool) {
+	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optSort)))
+	if raw == "" {
+		return "hot", true
 	}
 	return raw, slices.Contains(postTypeChoices, raw)
 }
