@@ -23,18 +23,24 @@ func SendBatchToChannel(ctx context.Context, s *discordgo.Session, w *discordgo.
 		}
 		params := &discordgo.WebhookParams{Content: content, Embeds: embeds}
 		if threadID != "" {
-			_, err := s.WebhookThreadExecute(w.ID, w.Token, false, threadID, params)
+			_, err := s.WebhookThreadExecute(w.ID, w.Token, false, threadID, params, noLibraryRetry)
 			return err
 		}
-		_, err := s.WebhookExecute(w.ID, w.Token, false, params)
+		_, err := s.WebhookExecute(w.ID, w.Token, false, params, noLibraryRetry)
 		return err
 	}
 	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: content,
 		Embeds:  embeds,
-	})
+	}, noLibraryRetry)
 	return err
 }
+
+// noLibraryRetry is the per-request option every delivery send carries. The pinned discordgo retries a 500, 503
+// or 504 up to MaxRestRetries times inside one call, so a 504 on a message Discord already stored would post a
+// duplicate that the send rules never see. With the retry off a send reaches Discord once and the send rules decide
+// whether to resend. The option is per request, so command replies and other REST calls keep the library retry.
+var noLibraryRetry = discordgo.WithRestRetries(0)
 
 // webhookChannelFromState does the state-only checks behind webhook delivery: the channel is known, a thread
 // resolves to its parent channel, and the bot has the permissions webhook delivery needs (View Channel, Send

@@ -2,6 +2,7 @@
 package interactiontest
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -39,6 +40,8 @@ type Fake struct {
 	HeartbeatLatency time.Duration
 	// Fail makes the named operation return the error instead of recording success.
 	Fail map[string]error
+	// StallGuild makes Guild block until its context ends, as a REST fetch that never answers would.
+	StallGuild bool
 }
 
 var _ interaction.Port = (*Fake)(nil)
@@ -168,7 +171,11 @@ func (f *Fake) remove(channelID, messageID string) {
 	f.History[channelID] = kept
 }
 
-func (f *Fake) Guild(guildID string) (*discordgo.Guild, error) {
+func (f *Fake) Guild(ctx context.Context, guildID string) (*discordgo.Guild, error) {
+	if f.StallGuild {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if err := f.record(Call{Op: "Guild"}); err != nil {
 		return nil, err
 	}

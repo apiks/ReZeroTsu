@@ -31,6 +31,22 @@ func TestJokeRepliesOncePubliclyWithoutDeferring(t *testing.T) {
 	}
 }
 
+// The fetch runs under the interaction's context, so shutdown ends it.
+func TestJokeFetchRunsUnderTheInteractionContext(t *testing.T) {
+	fake := &interactiontest.Fake{}
+	ic := interactiontest.NewCommandContext(fake, interaction.Public, interaction.Direct, discordgo.ApplicationCommandInteractionData{Name: "joke"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ic.Ctx = ctx
+	var fetchErr error
+	if err := runJoke(ic, func(c context.Context) (string, error) { fetchErr = c.Err(); return "", c.Err() }); err != nil {
+		t.Fatal(err)
+	}
+	if fetchErr == nil {
+		t.Error("the fetch context did not derive from the interaction context")
+	}
+}
+
 func TestJokeFailuresAreRefusedPrivately(t *testing.T) {
 	tests := map[string]func(context.Context) (string, error){
 		"fetch error": func(context.Context) (string, error) { return "", errors.New("down") },

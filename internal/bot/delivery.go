@@ -144,7 +144,7 @@ func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *Web
 		w := &discordgo.Webhook{ID: webhook.ID, Token: webhook.Token}
 		return "", SendBatchToChannel(ctx, p.s, w, webhook.ThreadID, channelID, msg.Content, msg.Embeds, true)
 	}
-	m, err := p.s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Content: msg.Content, Embeds: msg.Embeds})
+	m, err := p.s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Content: msg.Content, Embeds: msg.Embeds}, noLibraryRetry)
 	if err != nil {
 		return "", err
 	}

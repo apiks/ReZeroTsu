@@ -46,7 +46,7 @@ func init() {
 		Run:                handleSchedule,
 		AutocompleteOption: autocompleteScheduleDay,
 	})
-	commands.RegisterPaginationRenderer("schedule", RenderSchedulePage)
+	commands.RegisterCopySafePaginationRenderer("schedule", RenderSchedulePage)
 
 	commands.AddMessageCommand(&commands.MessageCommand{
 		Name:       "schedule",

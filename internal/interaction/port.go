@@ -4,6 +4,7 @@
 package interaction
 
 import (
+	"context"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -78,8 +79,8 @@ type Port interface {
 	// DeleteMessages bulk-deletes between 2 and 100 messages that are less than 14 days old.
 	DeleteMessages(channelID string, messageIDs []string) error
 
-	// Guild reads a guild's state.
-	Guild(guildID string) (*discordgo.Guild, error)
+	// Guild reads a guild's state; ctx bounds the REST fallback.
+	Guild(ctx context.Context, guildID string) (*discordgo.Guild, error)
 	// Roles reads a guild's roles.
 	Roles(guildID string) ([]*discordgo.Role, error)
 	// Channel reads a channel's state.
