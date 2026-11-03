@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
@@ -13,6 +14,38 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 )
+
+// setClock fixes the shared clock to a Wednesday (2026-11-04 12:00 UTC) for the test.
+func setClock(t *testing.T) {
+	t.Helper()
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC) }))
+}
+
+// Just after UTC midnight the host may still be on the previous day; /schedule without a day opens the UTC day.
+func TestScheduleWithoutDayOpensTheUTCDayNotTheHostsLocalDay(t *testing.T) {
+	// 2026-11-04 00:30 UTC is still Tuesday 2026-11-03 at UTC-10.
+	far := time.FixedZone("far", -10*3600)
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return time.Date(2026, 11, 3, 14, 30, 0, 0, far) }))
+	prev := time.Local
+	time.Local = far
+	t.Cleanup(func() { time.Local = prev })
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+		"2026-11-03": {{Name: "Tuesday Show", AirType: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-04": {{Name: "Wednesday Show", AirType: "sub", AirTimeUnix: 1700000000}},
+	}))
+	animeschedule.SetAPIKey("key")
+	t.Cleanup(func() { animeschedule.SetAPIKey("") })
+
+	fake := runSchedule(t, "")
+	calls := fake.Calls()
+	emb := calls[len(calls)-1].Response.Embeds[0]
+	if !strings.Contains(emb.Description, "Wednesday Show") || strings.Contains(emb.Description, "Tuesday Show") {
+		t.Errorf("description = %q, want the UTC Wednesday", emb.Description)
+	}
+	if !strings.HasPrefix(emb.Title, "Wednesday, 4 Nov 2026") {
+		t.Errorf("title = %q, want the UTC date", emb.Title)
+	}
+}
 
 func runSchedule(t *testing.T, day string) *interactiontest.Fake {
 	t.Helper()
@@ -52,8 +85,9 @@ func findCommand(t *testing.T) *commands.Command {
 }
 
 func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
-	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{
-		1: {{Name: "Frieren", Episode: "Episode 5", AirType: "sub", AirTimeUnix: 1700000000}},
+	setClock(t)
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+		"2026-11-02": {{Name: "Frieren", Episode: "Episode 5", AirType: "sub", AirTimeUnix: 1700000000}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -77,8 +111,9 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 // Without server state (a user install in a server the bot has not joined, or a DM) there are no settings to
 // read, so /schedule includes donghua. The nil database proves no settings read is attempted.
 func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
-	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{
-		1: {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
+	setClock(t)
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+		"2026-11-02": {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -110,7 +145,7 @@ func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
 func TestScheduleRefusalsArePrivate(t *testing.T) {
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
-	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{}))
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{}))
 
 	tests := []struct {
 		name string

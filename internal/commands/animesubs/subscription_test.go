@@ -146,9 +146,10 @@ func TestAddStopsAtTheSubscriptionLimit(t *testing.T) {
 
 func TestAddSeedsFromTodaysAiredEntry(t *testing.T) {
 	withLookup(t, "Frieren")
-	now := time.Now().UTC()
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return now }))
 	aired := now.Add(-time.Minute).Unix()
-	restore := animeschedule.Seed(map[int][]animeschedule.ShowEntry{int(now.Weekday()): {{Name: "Frieren", AirTimeUnix: aired}}})
+	restore := animeschedule.Seed(map[string][]animeschedule.ShowEntry{animeschedule.DateKey(now): {{Name: "Frieren", AirTimeUnix: aired}}})
 	t.Cleanup(restore)
 	st := newFakeStore()
 	useStore(t, st)
@@ -221,12 +222,12 @@ func TestRemoveAutocompleteOffersOnlyTheInvokersSubscriptions(t *testing.T) {
 
 func seedWeek(t *testing.T) {
 	t.Helper()
-	t.Cleanup(animeschedule.Seed(map[int][]animeschedule.ShowEntry{
-		1: {
+	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
+		"2026-11-02": {
 			{Name: "Sousou no Frieren", Route: "frieren", Romaji: "Sousou no Frieren", English: "Frieren: Beyond Journey's End", Native: "葬送のフリーレン"},
 			{Name: "Dandadan", Route: "dandadan", English: "Dandadan", Native: "ダンダダン"},
 		},
-		3: {{Name: "Sousou no Frieren", Route: "frieren", English: "Frieren: Beyond Journey's End"}},
+		"2026-11-04": {{Name: "Sousou no Frieren", Route: "frieren", English: "Frieren: Beyond Journey's End"}},
 	}))
 }
 

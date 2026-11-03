@@ -44,7 +44,7 @@ type scheduleHarness struct {
 	fd  *fakeDiscord
 	st  *fakeSentState
 	now time.Time
-	fn  weekdayShows
+	fn  dayShowsFunc
 }
 
 func newScheduleHarness(script ...step) *scheduleHarness {
@@ -60,7 +60,7 @@ func newScheduleHarness(script ...step) *scheduleHarness {
 }
 
 func (h *scheduleHarness) run(ctx context.Context) error {
-	return processDailyScheduleForGuild(ctx, h.d, newTestSenders(h.d), h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+	return processDailyScheduleForGuild(ctx, h.d, newTestSenders(h.d), h.st, "g1", h.fn, h.now)
 }
 
 func (h *scheduleHarness) lastPosted() string {
