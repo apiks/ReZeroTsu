@@ -145,6 +145,11 @@ func DateKey(t time.Time) string {
 	return t.UTC().Format(dateKeyLayout)
 }
 
+// ParseDateKey reads a timetable key ("2006-01-02") as that UTC date, at midnight UTC.
+func ParseDateKey(key string) (time.Time, error) {
+	return time.Parse(dateKeyLayout, key)
+}
+
 // mondayOf returns the Monday, as midnight UTC, of the UTC ISO week that holds t.
 func mondayOf(t time.Time) time.Time {
 	d := DayOf(t)
@@ -315,7 +320,12 @@ func weekLayout(now time.Time) []timetableWeek {
 // LoadedRange returns the first and last loaded UTC dates, as midnight UTC: last week's Monday and next week's
 // Sunday by the shared clock.
 func LoadedRange() (first, last time.Time) {
-	weeks := weekLayout(Now())
+	return LoadedRangeAt(Now())
+}
+
+// LoadedRangeAt is LoadedRange for the instant now, for a caller that already holds one.
+func LoadedRangeAt(now time.Time) (first, last time.Time) {
+	weeks := weekLayout(now)
 	return weeks[0].monday, weeks[len(weeks)-1].monday.AddDate(0, 0, 6)
 }
 

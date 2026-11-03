@@ -166,7 +166,7 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 	if settings != nil {
 		donghua = settings.Donghua
 	}
-	emb := schedule.BuildScheduleEmbed(now, dayShows(donghua))
+	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua))
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
 	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))
