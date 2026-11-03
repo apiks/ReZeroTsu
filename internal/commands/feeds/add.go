@@ -70,6 +70,10 @@ func runAdd(ic *interaction.Context) error {
 	if o := commands.ParseOption(ic.Command.Options, optPin); o != nil {
 		pin = o.BoolValue()
 	}
+	refusal, pinWarning := checkFeedPermissions(ic, channelID, pin)
+	if refusal != "" {
+		return ic.Refuse(refusal)
+	}
 	if err := checkFeed(ic.Context(), subreddit, postType); err != nil {
 		return ic.Refuse(feedUnavailableText(err, subreddit))
 	}
@@ -84,5 +88,5 @@ func runAdd(ic *interaction.Context) error {
 	if err := storeOf(ic.DB).AddFeed(ic.Context(), ic.GuildID, feed); err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	return answer(ic, "Added r/"+subreddit+" ("+postType+") to "+commands.ChannelMention(channelID)+". If there are valid posts they will start appearing shortly.")
+	return answer(ic, "Added r/"+subreddit+" ("+postType+") to "+commands.ChannelMention(channelID)+". If there are valid posts they will start appearing shortly."+pinWarningLine(pinWarning))
 }
