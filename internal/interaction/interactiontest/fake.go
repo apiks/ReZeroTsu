@@ -18,6 +18,7 @@ type Call struct {
 	Visibility interaction.Visibility // Reply, FollowUp and Defer: who sees it
 	ChannelID  string
 	MessageID  string
+	MessageIDs []string // DeleteMessages
 	Emoji      string
 }
 
@@ -30,6 +31,8 @@ type Fake struct {
 	RoleSets map[string][]*discordgo.Role
 	Channels map[string]*discordgo.Channel
 	Messages map[string]*discordgo.Message // keyed "<channelID>/<messageID>"
+	// History is each channel's messages, newest first. ListMessages and the delete operations read and change it.
+	History map[string][]*discordgo.Message
 	// Fail makes the named operation return the error instead of recording success.
 	Fail map[string]error
 }
@@ -102,6 +105,63 @@ func (f *Fake) ReadMessage(channelID, messageID string) (*discordgo.Message, err
 
 func (f *Fake) AddReaction(channelID, messageID, emoji string) error {
 	return f.record(Call{Op: "AddReaction", ChannelID: channelID, MessageID: messageID, Emoji: emoji})
+}
+
+// ListMessages answers from History[channelID], which is ordered newest first.
+func (f *Fake) ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error) {
+	if err := f.record(Call{Op: "ListMessages", ChannelID: channelID, MessageID: beforeID}); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := f.History[channelID]
+	start := 0
+	if beforeID != "" {
+		start = len(all)
+		for i, m := range all {
+			if m.ID == beforeID {
+				start = i + 1
+				break
+			}
+		}
+	}
+	end := min(start+limit, len(all))
+	return append([]*discordgo.Message(nil), all[start:end]...), nil
+}
+
+// DeleteMessage removes the message from History, so a test can assert what is left.
+func (f *Fake) DeleteMessage(channelID, messageID string) error {
+	if err := f.record(Call{Op: "DeleteMessage", ChannelID: channelID, MessageID: messageID}); err != nil {
+		return err
+	}
+	f.remove(channelID, messageID)
+	return nil
+}
+
+// DeleteMessages removes the messages from History. Like Discord, it rejects fewer than 2 or more than 100.
+func (f *Fake) DeleteMessages(channelID string, messageIDs []string) error {
+	if err := f.record(Call{Op: "DeleteMessages", ChannelID: channelID, MessageIDs: messageIDs}); err != nil {
+		return err
+	}
+	if len(messageIDs) < 2 || len(messageIDs) > 100 {
+		return fmt.Errorf("bulk delete takes 2 to 100 messages, got %d", len(messageIDs))
+	}
+	for _, id := range messageIDs {
+		f.remove(channelID, id)
+	}
+	return nil
+}
+
+func (f *Fake) remove(channelID, messageID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kept := f.History[channelID][:0:0]
+	for _, m := range f.History[channelID] {
+		if m.ID != messageID {
+			kept = append(kept, m)
+		}
+	}
+	f.History[channelID] = kept
 }
 
 func (f *Fake) Guild(guildID string) (*discordgo.Guild, error) {
