@@ -148,7 +148,7 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 		"\n**New episodes ping role:** " + off(autopostRoleID(data.newEpisodes), "None", commands.RoleMention) +
 		"\n**Daily schedule channel:** " + off(autopostChannelID(data.dailySchedule), "Off", commands.ChannelMention) +
 		"\n**Donghua in the schedule:** " + donghua +
-		"\n**Preferred track:** " + gs.Preferred().Title()
+		"\n**Preferred track:** " + gs.Preferred().Title() + " " + trackFallback(gs.Preferred()) + " Used by /schedule and both autoposts."
 	if w := mentionWarning(ic, data.newEpisodes); w != "" {
 		desc += "\n\n" + w
 	}
@@ -166,6 +166,17 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 			toggleRow(gs),
 		},
 	}
+}
+
+// trackFallback says what a preferred track shows, in the order it falls back.
+func trackFallback(p animeschedule.PreferredTrack) string {
+	switch p.Title() {
+	case "Dub":
+		return "(dub, else sub, else raw)."
+	case "Raw":
+		return "(raw only)."
+	}
+	return "(sub, else raw)."
 }
 
 // botLogRow is row 1: the bot-log channel picker, carrying the stored channel as its default value.
@@ -194,7 +205,7 @@ func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	}
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{
 		donghua,
-		discordgo.Button{Label: "Track: " + gs.Preferred().Title(), Style: discordgo.SecondaryButton, CustomID: idTrack},
+		discordgo.Button{Label: "Preferred track: " + gs.Preferred().Title(), Style: discordgo.SecondaryButton, CustomID: idTrack},
 		discordgo.Button{Label: "Edit ping message", Style: discordgo.SecondaryButton, CustomID: idPingEdit},
 	}}
 }

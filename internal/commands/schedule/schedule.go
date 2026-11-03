@@ -47,12 +47,12 @@ func init() {
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "track",
-				Description: "Track to show: Sub (sub, else raw), Dub (dub, else sub, else raw) or Raw. Omit for the server's.",
+				Description: "Which track to show. Defaults to the server's preferred track, else Sub.",
 				Required:    false,
 				Choices: []*discordgo.ApplicationCommandOptionChoice{
-					{Name: "Sub", Value: "sub"},
-					{Name: "Dub", Value: "dub"},
-					{Name: "Raw", Value: "raw"},
+					{Name: "Sub: sub, else raw", Value: "sub"},
+					{Name: "Dub: dub, else sub, else raw", Value: "dub"},
+					{Name: "Raw: raw only", Value: "raw"},
 				},
 			},
 		},

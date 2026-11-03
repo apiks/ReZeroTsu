@@ -83,10 +83,20 @@ func TestScheduleTrackOptionIsOptionalWithSubDubAndRawChoices(t *testing.T) {
 	if opt == nil || opt.Required || len(opt.Choices) != 3 {
 		t.Fatalf("track option = %+v, want optional with three choices", opt)
 	}
-	for i, want := range []string{"Sub", "Dub", "Raw"} {
+	for i, want := range []string{"Sub: sub, else raw", "Dub: dub, else sub, else raw", "Raw: raw only"} {
 		if opt.Choices[i].Name != want {
 			t.Errorf("choice %d = %q, want %q", i, opt.Choices[i].Name, want)
 		}
+		if got := []string{"sub", "dub", "raw"}[i]; opt.Choices[i].Value != got {
+			t.Errorf("choice %d value = %v, want %q", i, opt.Choices[i].Value, got)
+		}
+		if n := len([]rune(opt.Choices[i].Name)); n > 100 {
+			t.Errorf("choice %d name is %d characters", i, n)
+		}
+	}
+	const wantDesc = "Which track to show. Defaults to the server's preferred track, else Sub."
+	if opt.Description != wantDesc {
+		t.Errorf("description = %q, want %q", opt.Description, wantDesc)
 	}
 }
 
