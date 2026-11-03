@@ -106,23 +106,32 @@ func rightClick(t *testing.T, fake *interactiontest.Fake, name string, msg *disc
 const formID = "reactrole:add:c1:m1"
 
 // worldFake is a server where role "1000000000000000001" sits below the bot's highest role and "1000000000000000002" sits at it.
+// The default submitter holds topModRole, above every other role, so the moderator's own hierarchy never gets in the way.
 func worldFake() *interactiontest.Fake {
 	return &interactiontest.Fake{
 		Bot: &discordgo.User{ID: "bot"},
-		Guilds: map[string]*discordgo.Guild{"g": {ID: "g", Members: []*discordgo.Member{
+		Guilds: map[string]*discordgo.Guild{"g": {ID: "g", OwnerID: "owner", Members: []*discordgo.Member{
 			{User: &discordgo.User{ID: "bot"}, Roles: []string{"1000000000000000005", "1000000000000000004"}},
 		}}},
 		RoleSets: map[string][]*discordgo.Role{"g": {
 			{ID: "1000000000000000005", Position: 5}, {ID: "1000000000000000004", Position: 1},
 			{ID: "1000000000000000001", Position: 2}, {ID: "1000000000000000002", Position: 5}, {ID: "1000000000000000003", Position: 9},
+			{ID: topModRole, Position: 20},
 		}},
 	}
 }
 
+const topModRole = "1000000000000000020"
+
 func submit(t *testing.T, fake *interactiontest.Fake, customID, emoji string, roles ...string) error {
 	t.Helper()
+	return submitAs(t, fake, &discordgo.Member{User: &discordgo.User{ID: "user"}, Roles: []string{topModRole}}, customID, emoji, roles...)
+}
+
+func submitAs(t *testing.T, fake *interactiontest.Fake, member *discordgo.Member, customID, emoji string, roles ...string) error {
+	t.Helper()
 	i := &discordgo.Interaction{Type: discordgo.InteractionModalSubmit, GuildID: "g", ChannelID: "c",
-		Member: &discordgo.Member{User: &discordgo.User{ID: "user"}},
+		Member: member,
 		Data: discordgo.ModalSubmitInteractionData{CustomID: customID, Components: []discordgo.MessageComponent{
 			&discordgo.Label{Component: discordgo.TextInput{CustomID: emojiField, Value: emoji}},
 			&discordgo.Label{Component: discordgo.SelectMenu{CustomID: roleField, MenuType: discordgo.RoleSelectMenu, Values: roles}},
@@ -367,6 +376,62 @@ func TestWithoutTheBotsMemberTheHierarchyIsUnknownAndTheBindingIsStillSaved(t *t
 	}
 	if strings.Contains(replyText(t, fake), "highest role") || st.saves != 1 {
 		t.Errorf("saves %d", st.saves)
+	}
+}
+
+func TestAModeratorCannotBindARoleAtOrAboveTheirOwnHighestRole(t *testing.T) {
+	// The moderator's highest role is "1000000000000000002" (position 5).
+	mod := &discordgo.Member{User: &discordgo.User{ID: "mod"}, Roles: []string{"1000000000000000004", "1000000000000000002"}}
+	for _, role := range []string{"1000000000000000005", "1000000000000000003"} { // equal to theirs, and above it
+		st := useStore(t, nil)
+		fake := worldFake()
+		if err := submitAs(t, fake, mod, formID, "🎉", role); err != nil {
+			t.Fatal(err)
+		}
+		got := replyText(t, fake)
+		if !strings.Contains(got, "<@&"+role+">") || !strings.Contains(got, "your highest role") {
+			t.Errorf("%s: reply %q", role, got)
+		}
+		if st.saves != 0 || slices.Contains(fake.Ops(), "AddReaction") {
+			t.Errorf("%s: saves %d, ops %v; want nothing stored or reacted", role, st.saves, fake.Ops())
+		}
+	}
+}
+
+func TestAModeratorCanBindARoleBelowTheirOwnHighestRole(t *testing.T) {
+	mod := &discordgo.Member{User: &discordgo.User{ID: "mod"}, Roles: []string{"1000000000000000002"}}
+	st := useStore(t, nil)
+	fake := worldFake()
+	if err := submitAs(t, fake, mod, formID, "🎉", "1000000000000000001"); err != nil {
+		t.Fatal(err)
+	}
+	if st.saves != 1 {
+		t.Errorf("saves %d, reply %q", st.saves, replyText(t, fake))
+	}
+}
+
+func TestTheServerOwnerCanBindAnyRole(t *testing.T) {
+	owner := &discordgo.Member{User: &discordgo.User{ID: "owner"}}
+	st := useStore(t, nil)
+	fake := worldFake()
+	if err := submitAs(t, fake, owner, formID, "🎉", "1000000000000000003"); err != nil {
+		t.Fatal(err)
+	}
+	if st.saves != 1 {
+		t.Errorf("saves %d, reply %q", st.saves, replyText(t, fake))
+	}
+}
+
+func TestWhenTheOwnerCannotBeReadARoleAboveTheModeratorIsRefused(t *testing.T) {
+	mod := &discordgo.Member{User: &discordgo.User{ID: "mod"}, Roles: []string{"1000000000000000004"}}
+	st := useStore(t, nil)
+	fake := worldFake()
+	delete(fake.Guilds, "g")
+	if err := submitAs(t, fake, mod, formID, "🎉", "1000000000000000003"); err != nil {
+		t.Fatal(err)
+	}
+	if got := replyText(t, fake); !strings.Contains(got, "your highest role") || st.saves != 0 {
+		t.Errorf("reply %q, saves %d", got, st.saves)
 	}
 }
 
