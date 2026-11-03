@@ -64,7 +64,7 @@ func buttons(t *testing.T, r interaction.Response) (prev, next discordgo.Button)
 	return row.Components[0].(discordgo.Button), row.Components[1].(discordgo.Button)
 }
 
-func openDay(t *testing.T, day string) interaction.Response {
+func openNavDay(t *testing.T, day string) interaction.Response {
 	t.Helper()
 	calls := runSchedule(t, day).Calls()
 	return calls[len(calls)-1].Response
@@ -72,7 +72,7 @@ func openDay(t *testing.T, day string) interaction.Response {
 
 func TestNavigationCustomIDsCarryTheDateAndAuthorWithinDiscordsLimit(t *testing.T) {
 	seedWeeks(t)
-	prev, next := buttons(t, openDay(t, "sunday"))
+	prev, next := buttons(t, openNavDay(t, "sunday"))
 	for _, b := range []discordgo.Button{prev, next} {
 		if !strings.Contains(b.CustomID, "user") || len(b.CustomID) >= 100 {
 			t.Errorf("custom ID %q must carry the author and stay under 100 characters", b.CustomID)
@@ -85,7 +85,7 @@ func TestNavigationCustomIDsCarryTheDateAndAuthorWithinDiscordsLimit(t *testing.
 
 func TestNextOnASundayOpensTheFollowingMonday(t *testing.T) {
 	seedWeeks(t)
-	_, next := buttons(t, openDay(t, "sunday"))
+	_, next := buttons(t, openNavDay(t, "sunday"))
 	calls := pressNav(t, next.CustomID, "user", publicMsg())
 	if len(calls) != 1 || calls[0].Op != "UpdateMessage" {
 		t.Fatalf("want one UpdateMessage, got %+v", calls)
@@ -97,7 +97,7 @@ func TestNextOnASundayOpensTheFollowingMonday(t *testing.T) {
 
 func TestPreviousOnAMondayOpensTheSundayBefore(t *testing.T) {
 	seedWeeks(t)
-	prev, _ := buttons(t, openDay(t, "monday"))
+	prev, _ := buttons(t, openNavDay(t, "monday"))
 	calls := pressNav(t, prev.CustomID, "user", publicMsg())
 	if title := calls[0].Response.Embeds[0].Title; !strings.HasPrefix(title, "Sunday, 1 Nov 2026") {
 		t.Errorf("title = %q, want Sunday 1 Nov", title)
