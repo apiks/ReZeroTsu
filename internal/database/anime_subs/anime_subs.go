@@ -200,6 +200,26 @@ func (r *Repo) MarkShowNotified(ctx context.Context, id, showName string, marks 
 	return nil
 }
 
+// SetShowTracks replaces the track set of the named show, in the stored form of animeschedule.SubscriptionTracks,
+// and writes each given member's memory (the seed of a member newly in the set; a zero Mark clears stale memory),
+// in a single update statement. The show is matched by exact name. Members not named keep their memory.
+func (r *Repo) SetShowTracks(ctx context.Context, id, showName, tracks string, marks []Mark) error {
+	set := bson.M{"shows.$[s].tracks": tracks}
+	for _, m := range marks {
+		air, episode := memoryFields(m.Track)
+		set["shows.$[s]."+air] = m.AirUnix
+		set["shows.$[s]."+episode] = m.Episode
+		if m.AirUnix != 0 {
+			set["shows.$[s].notified"] = true
+		}
+	}
+	opts := options.UpdateOne().SetArrayFilters([]any{bson.M{"s.show": showName}})
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": set}, opts); err != nil {
+		return fmt.Errorf("SetShowTracks: %w", err)
+	}
+	return nil
+}
+
 // SetShowRoute records route on the named show, only where it has none yet, in a single update statement.
 func (r *Repo) SetShowRoute(ctx context.Context, id, showName, route string) error {
 	update := bson.M{"$set": bson.M{"shows.$[s].route": route}}
