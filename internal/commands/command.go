@@ -85,9 +85,6 @@ type Command struct {
 	Groups      []*SubcommandGroup
 	Permission  PermissionLevel // default PermEveryone
 	Context     AllowedContext  // default ContextBoth
-	// DefaultMemberPermissions, when set, is registered as the command's default member permissions and wins
-	// over the one implied by Permission. Discord applies it to the whole top-level command.
-	DefaultMemberPermissions *int64
 	// Installs lists where the command can be installed. Nil registers it as server install only, whatever the
 	// application's own default install setting is. A command that lists user install also runs in private channels.
 	Installs []discordgo.ApplicationIntegrationType
@@ -258,6 +255,13 @@ func Add(cmd *Command) {
 	}
 	if cmd.Installs != nil && len(cmd.Installs) == 0 {
 		panic("commands: " + cmd.Name + " declares Installs but lists no install type")
+	}
+	// Discord's default member permission is the only gate on a mod command, and Discord does not apply it in bot
+	// DMs or under a user install. This is the home of the old bot-side refusal of interactions without a server.
+	if cmd.Permission == PermMod && (cmd.Context != ContextGuildOnly || slices.ContainsFunc(cmd.Installs, func(t discordgo.ApplicationIntegrationType) bool {
+		return t != discordgo.ApplicationIntegrationGuildInstall
+	})) {
+		panic("commands: " + cmd.Name + " is a mod command: it needs ContextGuildOnly and server install only")
 	}
 	if cmd.isGroup() {
 		validateGroup(cmd)
@@ -438,9 +442,6 @@ func Definitions() []*discordgo.ApplicationCommand {
 		}
 		if defPerms := defaultMemberPermissionsForLevel(cmd.Permission); defPerms != nil {
 			c.DefaultMemberPermissions = defPerms
-		}
-		if cmd.DefaultMemberPermissions != nil {
-			c.DefaultMemberPermissions = cmd.DefaultMemberPermissions
 		}
 		defs = append(defs, c)
 	}

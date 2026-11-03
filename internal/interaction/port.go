@@ -62,7 +62,7 @@ type Port interface {
 	OpenForm(f Form) error
 	// UpdateMessage answers a component press by replacing the message the component belongs to.
 	UpdateMessage(r Response) error
-	// Suggest answers an autocomplete interaction with the choices to offer. It takes at most 25.
+	// Suggest answers an autocomplete interaction with the choices to offer. The caller caps the list at 25.
 	Suggest(choices []*discordgo.ApplicationCommandOptionChoice) error
 
 	// PostMessage posts a message to a channel.

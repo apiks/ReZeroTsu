@@ -208,7 +208,7 @@ func TestAddRejectsUndeclaredOrInconsistentCommands(t *testing.T) {
 // reaches the bot, so dispatch runs it for any member it receives, with no bot-side check or lookup.
 func TestDispatchDoesNotRefuseAModCommandForAMemberWithoutManageServer(t *testing.T) {
 	var ran int
-	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
+	register(t, &Command{Name: "t-mod", Permission: PermMod, Context: ContextGuildOnly, Visibility: Public, Response: Deferred,
 		Run: func(*interaction.Context) error { ran++; return nil }})
 	fake := &interactiontest.Fake{StallGuild: true}
 	if err := run(t, "t-mod", fake, slashInteraction("t-mod", "g", 0, "some-role")); err != nil {

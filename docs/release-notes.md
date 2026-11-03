@@ -6,7 +6,7 @@ Newest first. Each release lists the steps the bot owner does around the deploy,
 
 Implements `docs/adr/0001-native-command-permissions-replace-moderator-roles.md`.
 
-> **Danger:** servers that relied on moderator roles lose mod access for those roles at this release, until an admin adds overrides. The bot owner must send the broadcast below before deploying.
+> **Danger:** servers that used roles added with `/add-moderator-role` lose mod access for those roles at this release, until an admin adds overrides. The bot owner must send the broadcast below before deploying.
 
 ### Release steps
 
@@ -18,11 +18,7 @@ Implements `docs/adr/0001-native-command-permissions-replace-moderator-roles.md`
 ### Broadcast text
 
 ```text
-Moderator roles are going away. After the next update, the bot's mod commands (/settings, /voicerole, /raffle, /reddit, /reactrole, /say, /prune and the message right-click commands Add reaction role, Remove reaction roles and Edit message) can be used by members with the Manage Server permission, and by nobody else until you say so.
-
-If you gave other roles access with /add-moderator-role, that access ends with the update. To give it back: Server Settings > Integrations > this bot, pick a command, and add the roles, members or channels you want. Discord also hides these commands from members who cannot use them.
-
-The commands /add-moderator-role, /remove-moderator-role, /moderator-roles, /mod-only and /react-module are removed.
+**ZeroTsu update: moderator access is changing.** In the next update, roles added with `/add-moderator-role` stop granting access to ZeroTsu's mod commands. Mod commands will require **Manage Server** by default. To let another role use them, open **Server Settings → Integrations → ZeroTsu**, choose a command (or the app), and add the role. Members with Manage Server or Administrator are not affected.
 ```
 
 ### What changed
