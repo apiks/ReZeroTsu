@@ -93,13 +93,13 @@ func TestRefreshUpcomingReadsEveryPageIntoShows(t *testing.T) {
 	}
 	a := got[0]
 	want := time.Date(2027, 1, 10, 15, 0, 0, 0, time.UTC)
-	if a.Name != "A" || a.Route != "a" || a.Romaji != "R-A" || a.English != "E-A" || a.Native != "N-A" || !a.Premiere.Equal(want) || a.MediaType != MediaTypeTV {
+	if a.Name != "A" || a.Route != "a" || a.Romaji != "R-A" || a.English != "E-A" || a.Native != "N-A" || !a.Premiere.Equal(want) || a.MediaType != MediaTV {
 		t.Errorf("first show = %+v", a)
 	}
-	wantTypes := []MediaType{MediaTypeTV, MediaTypeDonghua, MediaTypeMovie, MediaTypeTVShort, MediaTypeTV}
+	wantTypes := []MediaType{MediaTV, MediaDonghua, MediaMovie, MediaTVShort, MediaTV}
 	for i, w := range wantTypes {
 		if got[i].MediaType != w {
-			t.Errorf("show %d media type = %q, want %q", i, got[i].MediaType, w)
+			t.Errorf("show %d media type = %v, want %v", i, got[i].MediaType, w)
 		}
 	}
 	if !got[1].Premiere.IsZero() {

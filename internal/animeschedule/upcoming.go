@@ -15,39 +15,6 @@ import (
 	"ReZeroTsu/internal/logger"
 )
 
-// MediaType is the kind of release a show is. The set is closed; an unknown AnimeSchedule type is TV.
-type MediaType string
-
-const (
-	MediaTypeTV      MediaType = "TV"
-	MediaTypeTVShort MediaType = "TV Short"
-	MediaTypeONA     MediaType = "ONA"
-	MediaTypeDonghua MediaType = "Donghua" // AnimeSchedule's "ONA (Chinese)"
-	MediaTypeOVA     MediaType = "OVA"
-	MediaTypeSpecial MediaType = "Special"
-	MediaTypeMovie   MediaType = "Movie"
-)
-
-// mediaTypeFromRoute maps an AnimeSchedule media-type route to a MediaType.
-func mediaTypeFromRoute(route string) MediaType {
-	switch strings.ToLower(strings.TrimSpace(route)) {
-	case "tv-short":
-		return MediaTypeTVShort
-	case "ona":
-		return MediaTypeONA
-	case "ona-chinese":
-		return MediaTypeDonghua
-	case "ova":
-		return MediaTypeOVA
-	case "special":
-		return MediaTypeSpecial
-	case "movie":
-		return MediaTypeMovie
-	default:
-		return MediaTypeTV
-	}
-}
-
 // UpcomingShow is a show on AnimeSchedule whose first episode has not aired yet.
 type UpcomingShow struct {
 	Name    string
@@ -68,10 +35,8 @@ type upcomingItem struct {
 		English string `json:"english"`
 		Native  string `json:"native"`
 	} `json:"names"`
-	Premier    time.Time `json:"premier"`
-	MediaTypes []struct {
-		Route string `json:"route"`
-	} `json:"mediaTypes"`
+	Premier    time.Time      `json:"premier"`
+	MediaTypes []MediaTypeRef `json:"mediaTypes"`
 }
 
 type upcomingPage struct {
@@ -80,10 +45,6 @@ type upcomingPage struct {
 }
 
 func (i upcomingItem) show() UpcomingShow {
-	mt := MediaTypeTV
-	if len(i.MediaTypes) > 0 {
-		mt = mediaTypeFromRoute(i.MediaTypes[0].Route)
-	}
 	return UpcomingShow{
 		Name:      strings.TrimSpace(i.Title),
 		Route:     i.Route,
@@ -91,7 +52,7 @@ func (i upcomingItem) show() UpcomingShow {
 		English:   strings.TrimSpace(i.Names.English),
 		Native:    strings.TrimSpace(i.Names.Native),
 		Premiere:  i.Premier,
-		MediaType: mt,
+		MediaType: decodeMediaType(i.MediaTypes),
 	}
 }
 
