@@ -48,21 +48,6 @@ func runList(ic *interaction.Context) error {
 	return ic.EditReply(renderPage(feeds, 0, ic.Invoker.ID))
 }
 
-// describe is a feed on one line: "r/anime (hot), from u/name, title starts "x", pinned".
-func describe(f guilds.FeedEntry) string {
-	s := "r/" + f.Subreddit + " (" + f.PostType + ") in " + commands.ChannelMention(f.ChannelID)
-	if f.Author != "" {
-		s += ", from u/" + f.Author
-	}
-	if f.Title != "" {
-		s += ", title starts with " + f.Title
-	}
-	if f.Pin {
-		s += ", pinned"
-	}
-	return s
-}
-
 // feedFields numbers each field from first (1-based), so the Remove picker option with the same number is the same feed.
 func feedFields(feeds []guilds.FeedEntry, first int) []*discordgo.MessageEmbedField {
 	fields := make([]*discordgo.MessageEmbedField, 0, len(feeds))
