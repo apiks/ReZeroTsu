@@ -20,6 +20,7 @@ import (
 const (
 	embedTitle = "Reddit feeds"
 
+	optFeed      = "feed"
 	optChannel   = "channel"
 	optSubreddit = "subreddit"
 	optPostType  = "post-type"
@@ -38,7 +39,6 @@ var feedChannelTypes = []discordgo.ChannelType{discordgo.ChannelTypeGuildText, d
 type store interface {
 	GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error)
 	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
-	RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error)
 	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
 	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
 	// DeleteChecks forgets what was delivered for a feed (the feed check records).
@@ -53,10 +53,6 @@ func (s dbStore) GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEnt
 
 func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error {
 	return s.db.Guilds().AddFeed(ctx, guildID, feed)
-}
-
-func (s dbStore) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
-	return s.db.Guilds().RemoveFeed(ctx, guildID, channelID, subreddit, postType, author, title)
 }
 
 func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
