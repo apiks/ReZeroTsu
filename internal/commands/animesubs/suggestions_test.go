@@ -159,7 +159,7 @@ func TestAddResolvesTypedTextOnlyWithinTheChosenType(t *testing.T) {
 	st = newFakeStore()
 	useStore(t, st)
 	got = text(reply(t, invoke(t, "add", append(animeOption("Film One"), typeOpt("movie"))...)))
-	if !strings.Contains(got, "Success") || strings.Join(st.names("user"), ",") != "Film One" {
+	if !strings.Contains(got, "Subscribed to **Film One**") || strings.Join(st.names("user"), ",") != "Film One" {
 		t.Errorf("a movie under the movie filter: reply %q, subscriptions %v", got, st.names("user"))
 	}
 }
