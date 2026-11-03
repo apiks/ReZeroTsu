@@ -29,6 +29,8 @@ type jokeAPIResponse struct {
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "joke",
 		Desc:       "Display a random joke.",
 		Permission: commands.PermEveryone,

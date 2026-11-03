@@ -31,6 +31,10 @@ func init() {
 	}
 
 	commands.Add(&commands.Command{
+
+		Visibility: commands.Public,
+
+		Response:   commands.Deferred,
 		Name:       "say",
 		Desc:       "Sends a message from the bot in the target channel.",
 		Permission: commands.PermMod,
@@ -49,6 +53,10 @@ func init() {
 	})
 
 	commands.Add(&commands.Command{
+
+		Visibility: commands.Public,
+
+		Response:   commands.Deferred,
 		Name:       "embed",
 		Desc:       "Sends an embed message from the bot in the target channel.",
 		Permission: commands.PermMod,
@@ -67,6 +75,10 @@ func init() {
 	})
 
 	commands.Add(&commands.Command{
+
+		Visibility: commands.Public,
+
+		Response:   commands.Deferred,
 		Name:       "edit",
 		Desc:       "Edits a message sent by the bot.",
 		Permission: commands.PermMod,
@@ -97,6 +109,10 @@ func init() {
 	})
 
 	commands.Add(&commands.Command{
+
+		Visibility: commands.Public,
+
+		Response:   commands.Deferred,
 		Name:       "edit-embed",
 		Desc:       "Edits an embed message sent by the bot.",
 		Permission: commands.PermMod,

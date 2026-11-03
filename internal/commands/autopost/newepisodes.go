@@ -22,6 +22,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "new-episodes",
 		Desc:       "Set or disable the channel for automatic new anime episode notifications.",
 		Permission: commands.PermMod,

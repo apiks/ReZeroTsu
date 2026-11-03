@@ -14,6 +14,8 @@ import (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "invite",
 		Desc:       "Display my invite link.",
 		Permission: commands.PermEveryone,

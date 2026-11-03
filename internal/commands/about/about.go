@@ -20,6 +20,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "about",
 		Desc:       "Display more information about me.",
 		Permission: commands.PermEveryone,

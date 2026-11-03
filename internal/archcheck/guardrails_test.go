@@ -109,7 +109,145 @@ func mentionsShowName(args []ast.Expr) bool {
 	return found
 }
 
+// interactionResponseCalls are the discordgo session methods that answer an interaction. Handlers in the new form
+// answer through interaction.Port; only its discordgo adapter calls these.
+var interactionResponseCalls = map[string]bool{
+	"InteractionRespond":        true,
+	"InteractionResponseEdit":   true,
+	"InteractionResponseDelete": true,
+	"FollowupMessageCreate":     true,
+	"FollowupMessageEdit":       true,
+	"FollowupMessageDelete":     true,
+}
+
+// portAdapterFile is the one file allowed to call them for good.
+const portAdapterFile = "interaction/discordgo.go"
+
+// legacyResponseFiles may still call them: the command files that have not moved onto the port, relative to
+// internal/. Each area spec (#33 to #36) removes the entries it migrates, and ticket 7.2 deletes the allowlist.
+// A stale entry (a file that no longer makes such a call) fails the test, so the list only shrinks.
+var legacyResponseFiles = map[string]bool{
+	"commands/command.go":             true, // autocomplete answers and RespondEphemeral
+	"commands/helpers.go":             true, // RespondEmbed helpers
+	"commands/pagination.go":          true, // pagination buttons
+	"commands/about/about.go":         true,
+	"commands/animesubs/animesubs.go": true,
+	"commands/avatar/avatar.go":       true,
+	"commands/feeds/feeds.go":         true,
+	"commands/help/help.go":           true,
+	"commands/invite/invite.go":       true,
+	"commands/joke/joke.go":           true,
+	"commands/pick/pick.go":           true,
+	"commands/ping/ping.go":           true,
+	"commands/prune/prune.go":         true,
+	"commands/raffle/raffle.go":       true,
+	"commands/react/react.go":         true,
+	"commands/reminders/reminders.go": true,
+	"commands/roll/roll.go":           true,
+	"commands/say/say.go":             true,
+	"commands/schedule/schedule.go":   true,
+}
+
+// responseCalls lists every interaction-response call in a file, ignoring the allowlists.
+func responseCalls(fset *token.FileSet, file *ast.File) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && interactionResponseCalls[sel.Sel.Name] {
+			out = append(out, fmt.Sprintf("%s: .%s called on the session; answer through interaction.Port",
+				fset.Position(call.Pos()), sel.Sel.Name))
+		}
+		return true
+	})
+	return out
+}
+
+// checkInteractionResponses reports session interaction-response calls outside the port adapter and the
+// allowlist. name is the path relative to internal/.
+func checkInteractionResponses(fset *token.FileSet, file *ast.File, name string) []string {
+	if name == portAdapterFile || legacyResponseFiles[name] {
+		return nil
+	}
+	return responseCalls(fset, file)
+}
+
+// checkCommandsDeclareVisibility reports commands.Add(&commands.Command{...}) literals with no Visibility field.
+// A missing declaration would silently default; the rule is that every command states who sees its replies.
+func checkCommandsDeclareVisibility(fset *token.FileSet, file *ast.File, _ string) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 || !isCommandsAdd(call.Fun) {
+			return true
+		}
+		unary, ok := call.Args[0].(*ast.UnaryExpr)
+		if !ok {
+			return true
+		}
+		lit, ok := unary.X.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		for _, el := range lit.Elts {
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Visibility" {
+					return true
+				}
+			}
+		}
+		out = append(out, fmt.Sprintf("%s: command registered without a Visibility", fset.Position(call.Pos())))
+		return true
+	})
+	return out
+}
+
+// isCommandsAdd matches commands.Add and, inside package commands, Add.
+func isCommandsAdd(fun ast.Expr) bool {
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		pkg, ok := f.X.(*ast.Ident)
+		return ok && pkg.Name == "commands" && f.Sel.Name == "Add"
+	case *ast.Ident:
+		return f.Name == "Add"
+	}
+	return false
+}
+
 type check func(*token.FileSet, *ast.File, string) []string
+
+// scanTree runs check over the non-test Go files under root (recursively). The name handed to check is the path
+// relative to root, with forward slashes.
+func scanTree(t *testing.T, root string, c check) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		out = append(out, c(fset, file, filepath.ToSlash(rel))...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan %s: %v", root, err)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // scanDir runs check over the non-test Go files of dir (not recursive) and returns the sorted violations.
 func scanDir(t *testing.T, dir string, c check) []string {
@@ -138,6 +276,35 @@ func scanDir(t *testing.T, dir string, c check) []string {
 
 func TestNotificationSendsGoThroughTheChannelSender(t *testing.T) {
 	for _, v := range scanDir(t, "../bot", checkDirectSends) {
+		t.Error(v)
+	}
+}
+
+func TestInteractionResponsesGoThroughThePort(t *testing.T) {
+	for _, v := range scanTree(t, "..", checkInteractionResponses) {
+		t.Error(v)
+	}
+}
+
+// The allowlist must shrink as commands migrate: an entry whose file no longer makes a session response call
+// (or no longer exists) has to go.
+func TestInteractionResponseAllowlistHasNoStaleEntries(t *testing.T) {
+	for name := range legacyResponseFiles {
+		path := filepath.Join("..", filepath.FromSlash(name))
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Errorf("%s: allowlisted but unreadable: %v", name, err)
+			continue
+		}
+		if len(responseCalls(fset, file)) == 0 {
+			t.Errorf("%s: allowlisted but makes no session response call; remove it from legacyResponseFiles", name)
+		}
+	}
+}
+
+func TestEveryRegisteredCommandDeclaresAVisibility(t *testing.T) {
+	for _, v := range scanTree(t, "../commands", checkCommandsDeclareVisibility) {
 		t.Error(v)
 	}
 }
@@ -174,6 +341,24 @@ func f(role role) {
 	sender.post(ctx, msg)
 }
 `
+	const responding = `package roll
+
+func f(s session, i interaction) {
+	_ = s.InteractionRespond(i, nil)
+	_, _ = s.InteractionResponseEdit(i, nil)
+	_, _ = s.FollowupMessageCreate(i, false, nil)
+	_ = ic.Reply(resp)
+}
+`
+	const registering = `package ping
+
+func init() {
+	commands.Add(&commands.Command{Name: "a", Visibility: commands.Public})
+	commands.Add(&commands.Command{Name: "b"})
+	commands.Add(&commands.Command{Name: "c", Handler: h})
+	wg.Add(1)
+}
+`
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "sample.go", src, 0)
@@ -194,6 +379,11 @@ func f(role role) {
 		{"EqualFold and show-name ToLower are flagged", violating, checkShowNameMatching, "feeds.go", 3},
 		{"unrelated lowercasing and channel sender posts are fine", clean, checkShowNameMatching, "feeds.go", 0},
 		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
+		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
+		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
+		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/ping/ping.go", 0},
+		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
+		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

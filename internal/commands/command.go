@@ -2,8 +2,6 @@ package commands
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -11,15 +9,21 @@ import (
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
+	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// ErrUnknownCommand is returned by Handle when the command isn't registered.
-var ErrUnknownCommand = errors.New("unknown command")
-
 const errMessage = "Something went wrong."
+
+// Visibility and response-mode declarations, re-exported so command files declare them without a second import.
+const (
+	Public   = interaction.Public
+	Private  = interaction.Private
+	Direct   = interaction.Direct
+	Deferred = interaction.Deferred
+)
 
 // PermissionLevel controls who can run a command.
 type PermissionLevel int
@@ -60,7 +64,13 @@ func contextRefusal(ctx AllowedContext, guildID string) string {
 	return ""
 }
 
-// Command defines a slash command. Handlers must not ack; the framework defers first.
+// Command defines a slash command. Every command declares its Visibility and Response mode, and has exactly one
+// handler form:
+//   - Run, the new form: it receives the interaction context and reaches Discord only through its port. With
+//     Response Deferred the framework acknowledges first with the declared visibility; with Direct, Run's first
+//     reply is the acknowledgement.
+//   - Handler, the legacy form: it edits the deferred reply on the raw session, so it must be Deferred. Legacy
+//     commands are declared Public and Deferred until their area spec migrates them to Run.
 type Command struct {
 	Name               string
 	Desc               string
@@ -68,6 +78,9 @@ type Command struct {
 	Permission         PermissionLevel                       // default PermEveryone
 	Context            AllowedContext                        // default ContextBoth
 	Module             string                                // e.g. "settings", "general"; metadata only
+	Visibility         interaction.Visibility                // required: Public or Private
+	Response           interaction.ResponseMode              // required: Direct or Deferred
+	Run                func(ic *interaction.Context) error
 	Handler            func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate)
 	AutocompleteOption func(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice
 }
@@ -172,10 +185,23 @@ func AllCommands() []*Command {
 	return out
 }
 
-// Add registers a command. Safe from init(). Panics if Name empty or Handler nil.
+// Add registers a command. Safe from init(). Panics if the command has no name, no visibility or response mode,
+// not exactly one handler form, or a legacy Handler that is not Deferred.
 func Add(cmd *Command) {
-	if cmd == nil || cmd.Name == "" || cmd.Handler == nil {
-		panic("commands: Add requires non-nil Command with Name and Handler")
+	if cmd == nil || cmd.Name == "" {
+		panic("commands: Add requires non-nil Command with Name")
+	}
+	if cmd.Visibility != Public && cmd.Visibility != Private {
+		panic("commands: " + cmd.Name + " must declare Visibility")
+	}
+	if cmd.Response != Direct && cmd.Response != Deferred {
+		panic("commands: " + cmd.Name + " must declare Response")
+	}
+	if (cmd.Handler == nil) == (cmd.Run == nil) {
+		panic("commands: " + cmd.Name + " needs exactly one of Handler and Run")
+	}
+	if cmd.Handler != nil && cmd.Response != Deferred {
+		panic("commands: " + cmd.Name + " uses the legacy Handler, which edits the deferred reply, so it must be Deferred")
 	}
 	registry[cmd.Name] = cmd
 }
@@ -222,143 +248,6 @@ func Definitions() []*discordgo.ApplicationCommand {
 	return defs
 }
 
-// Handle looks up the command, defers the response, then runs the handler.
-func Handle(ctx context.Context, db *database.Client, name string, s *discordgo.Session, i *discordgo.InteractionCreate) error {
-	cmd, ok := registry[name]
-	if !ok {
-		return ErrUnknownCommand
-	}
-
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{},
-	})
-	if err != nil {
-		args := append(discord.RESTAttrs(err), "command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("deferred ack failed", args...)
-		return err
-	}
-
-	if msg := contextRefusal(cmd.Context, i.GuildID); msg != "" {
-		_ = editResponse(s, i, msg)
-		return nil
-	}
-
-	// Permission check (after ack, before handler)
-	switch cmd.Permission {
-	case PermMod:
-		if !RequireGuildAdminOrMod(ctx, db, s, i) {
-			return nil
-		}
-	case PermAdmin:
-		if !RequireGuildAdmin(s, i) {
-			return nil
-		}
-	}
-
-	var handlerErr error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				l := logger.For("commands").With("command", name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "panic", r, "stack", string(debug.Stack()))
-				l.Error("panic in handler")
-				handlerErr = editResponse(s, i, errMessage)
-			}
-		}()
-		cmd.Handler(ctx, db, s, i)
-	}()
-
-	return handlerErr
-}
-
-func editResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content string) error {
-	emb := NewEmbed(s, "Notice", content)
-	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Embeds: &[]*discordgo.MessageEmbed{emb}})
-	return err
-}
-
-const needAdminMessage = "You need Administrator or Manage Server to use this command."
-
-const needSettingsAdminMessage = "You need Administrator, Manage Server, or a moderator role to use this command."
-
-// IsGuildAdmin reports whether the member is bot owner, guild owner, or has Administrator/Manage Guild.
-func IsGuildAdmin(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	if i.GuildID == "" || i.Member == nil {
-		return false
-	}
-	userID := i.Member.User.ID
-	if OwnerID != "" && userID == OwnerID {
-		return true
-	}
-	guild, err := s.State.Guild(i.GuildID)
-	if err != nil {
-		guild, err = s.Guild(i.GuildID)
-		if err == nil && guild != nil && userID == guild.OwnerID {
-			return true
-		}
-	} else if guild != nil && userID == guild.OwnerID {
-		return true
-	}
-	perm := i.Member.Permissions
-	return perm&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0
-}
-
-// IsGuildAdminOrMod reports whether the member is admin/mod (owner, Administrator/Manage Guild, or command role).
-func IsGuildAdminOrMod(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	if i.GuildID == "" || i.Member == nil {
-		return false
-	}
-	userID := i.Member.User.ID
-	if OwnerID != "" && userID == OwnerID {
-		return true
-	}
-	guild, err := s.State.Guild(i.GuildID)
-	if err != nil {
-		guild, err = s.Guild(i.GuildID)
-		if err == nil && guild != nil && userID == guild.OwnerID {
-			return true
-		}
-	} else if guild != nil && userID == guild.OwnerID {
-		return true
-	}
-	perm := i.Member.Permissions
-	if perm&(discordgo.PermissionAdministrator|discordgo.PermissionManageGuild) != 0 {
-		return true
-	}
-	settings, err := db.Guilds().GetGuildSettings(ctx, i.GuildID)
-	if err != nil || settings == nil || len(settings.CommandRoles) == 0 {
-		return false
-	}
-	memberRoleIDs := make(map[string]struct{})
-	for _, id := range i.Member.Roles {
-		memberRoleIDs[id] = struct{}{}
-	}
-	for _, r := range settings.CommandRoles {
-		if _, ok := memberRoleIDs[r.ID]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-// RequireGuildAdmin checks admin; if not, edits response.
-func RequireGuildAdmin(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	if IsGuildAdmin(s, i) {
-		return true
-	}
-	_ = editResponse(s, i, needAdminMessage)
-	return false
-}
-
-// RequireGuildAdminOrMod checks admin or mod role; if not, edits response.
-func RequireGuildAdminOrMod(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	if IsGuildAdminOrMod(ctx, db, s, i) {
-		return true
-	}
-	_ = editResponse(s, i, needSettingsAdminMessage)
-	return false
-}
-
 func RespondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) error {
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -387,31 +276,6 @@ func optionAllowsAutocomplete(cmd *Command, optionName string) bool {
 		}
 	}
 	return false
-}
-
-// OnInteraction dispatches slash commands, pagination, and autocomplete; reports errors ephemerally.
-func OnInteraction(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type == discordgo.InteractionMessageComponent && HasPaginationPrefix(i.MessageComponentData().CustomID) {
-		HandlePagination(ctx, db, s, i)
-		return
-	}
-	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
-		handleAutocomplete(ctx, db, s, i)
-		return
-	}
-	if i.Type != discordgo.InteractionApplicationCommand {
-		return
-	}
-	data := i.ApplicationCommandData()
-	if err := Handle(ctx, db, data.Name, s, i); err != nil {
-		if errors.Is(err, ErrUnknownCommand) {
-			_ = RespondEphemeral(s, i, fmt.Sprintf("Unknown command: %s", data.Name))
-		} else {
-			args := append(discord.RESTAttrs(err), "command", data.Name, "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-			logger.For("commands").Error("Handle failed", args...)
-			_ = RespondEphemeral(s, i, "Something went wrong.")
-		}
-	}
 }
 
 func handleAutocomplete(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {

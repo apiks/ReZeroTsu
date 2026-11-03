@@ -23,6 +23,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "sub",
 		Desc:       "Subscribe to DM notifications when a new episode of an anime is released (subbed if possible).",
 		Permission: commands.PermEveryone,
@@ -39,6 +41,8 @@ func init() {
 		Handler: handleSub,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "unsub",
 		Desc:       "Stop getting DM notifications for an anime's new episodes.",
 		Permission: commands.PermEveryone,
@@ -55,6 +59,8 @@ func init() {
 		Handler: handleUnsub,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "clearsubs",
 		Desc:       "Clear all your anime episode notifications.",
 		Permission: commands.PermEveryone,
@@ -63,6 +69,8 @@ func init() {
 		Handler:    handleClearsubs,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "subs",
 		Desc:       "List which anime you get new episode notifications for.",
 		Permission: commands.PermEveryone,

@@ -28,10 +28,12 @@ var dayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", 
 
 func init() {
 	commands.Add(&commands.Command{
-		Name:    "schedule",
-		Desc:    "Shows today's (or a given day's) anime release times (subbed where possible).",
-		Context: commands.ContextBoth,
-		Module:  "schedule",
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
+		Name:       "schedule",
+		Desc:       "Shows today's (or a given day's) anime release times (subbed where possible).",
+		Context:    commands.ContextBoth,
+		Module:     "schedule",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:         discordgo.ApplicationCommandOptionString,

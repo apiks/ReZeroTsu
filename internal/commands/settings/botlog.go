@@ -13,6 +13,8 @@ import (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "bot-log",
 		Desc:       "View or set the bot log channel. Use 'disable' or enabled=false to turn off.",
 		Permission: commands.PermMod,

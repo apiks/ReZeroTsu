@@ -19,6 +19,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "daily-schedule",
 		Desc:       "Set or disable the channel for automatic daily anime schedule posts.",
 		Permission: commands.PermMod,

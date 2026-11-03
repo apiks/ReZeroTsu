@@ -21,6 +21,8 @@ var rollChoices = []int{2, 4, 6, 8, 10, 12, 20, 100}
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "roll",
 		Desc:       "Rolls a number from 1 to 100. Specify a positive number to change the range.",
 		Permission: commands.PermEveryone,

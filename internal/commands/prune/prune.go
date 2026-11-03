@@ -24,6 +24,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "prune",
 		Desc:       "Prunes the previous x amount of messages. Messages must not be older than 14 days. Max is 5000.",
 		Permission: commands.PermMod,

@@ -32,6 +32,8 @@ var (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "help",
 		Desc:       "List commands by module or show one category.",
 		Permission: commands.PermEveryone,

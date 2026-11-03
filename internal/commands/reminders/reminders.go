@@ -30,6 +30,8 @@ var timeHintChoices = []string{
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remind",
 		Desc:       "Set a reminder; you'll get a DM at the given time.",
 		Permission: commands.PermEveryone,
@@ -53,6 +55,8 @@ func init() {
 		AutocompleteOption: autocompleteRemindTime,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-remind",
 		Desc:       "Remove a reminder by ID.",
 		Permission: commands.PermEveryone,
@@ -70,6 +74,8 @@ func init() {
 		AutocompleteOption: autocompleteRemindID,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "reminders",
 		Desc:       "List your reminders.",
 		Permission: commands.PermEveryone,

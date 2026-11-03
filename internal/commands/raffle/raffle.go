@@ -24,6 +24,8 @@ const (
 
 func init() {
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "join-raffle",
 		Desc:       "Enters you in a raffle.",
 		Permission: commands.PermEveryone,
@@ -36,6 +38,8 @@ func init() {
 		AutocompleteOption: autocompleteRaffleName,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "leave-raffle",
 		Desc:       "Removes you from a raffle.",
 		Permission: commands.PermEveryone,
@@ -48,6 +52,8 @@ func init() {
 		AutocompleteOption: autocompleteRaffleName,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "create-raffle",
 		Desc:       "Creates a raffle.",
 		Permission: commands.PermMod,
@@ -60,6 +66,8 @@ func init() {
 		Handler: handleCreateRaffle,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "remove-raffle",
 		Desc:       "Removes a raffle.",
 		Permission: commands.PermMod,
@@ -72,6 +80,8 @@ func init() {
 		AutocompleteOption: autocompleteRaffleName,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "pick-raffle-winner",
 		Desc:       "Picks a random winner from those in a raffle.",
 		Permission: commands.PermMod,
@@ -84,6 +94,8 @@ func init() {
 		AutocompleteOption: autocompleteRaffleName,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "show-raffles",
 		Desc:       "Lists existing raffles.",
 		Permission: commands.PermEveryone,
@@ -93,6 +105,8 @@ func init() {
 		Handler:    handleRaffles,
 	})
 	commands.Add(&commands.Command{
+		Visibility: commands.Public,
+		Response:   commands.Deferred,
 		Name:       "my-raffles",
 		Desc:       "Lists raffles you have joined.",
 		Permission: commands.PermEveryone,
