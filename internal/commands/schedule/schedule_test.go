@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -47,14 +48,17 @@ func TestScheduleWithoutDayOpensTheUTCDayNotTheHostsLocalDay(t *testing.T) {
 	}
 }
 
-func runSchedule(t *testing.T, day string) *interactiontest.Fake {
+func runSchedule(t *testing.T, day string) *interactiontest.Fake { return runScheduleIn(t, day, "") }
+
+// runScheduleIn runs /schedule from the server guildID ("" for a DM).
+func runScheduleIn(t *testing.T, day, guildID string) *interactiontest.Fake {
 	t.Helper()
 	fake := &interactiontest.Fake{}
 	data := discordgo.ApplicationCommandInteractionData{Name: "schedule"}
 	if day != "" {
 		data.Options = []*discordgo.ApplicationCommandInteractionDataOption{{Name: "day", Type: discordgo.ApplicationCommandOptionString, Value: day}}
 	}
-	i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, ChannelID: "chan", Data: data, User: &discordgo.User{ID: "user"}}
+	i := &discordgo.Interaction{Type: discordgo.InteractionApplicationCommand, GuildID: guildID, ChannelID: "chan", Data: data, User: &discordgo.User{ID: "user"}}
 	ic := interaction.NewContext(fake, i, (*database.Client)(nil), interaction.Public, interaction.Deferred)
 	ic.Ctx = context.Background()
 	if err := ic.Defer(interaction.Public); err != nil {
@@ -87,7 +91,7 @@ func findCommand(t *testing.T) *commands.Command {
 func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	setClock(t)
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
-		"2026-11-02": {{Name: "Frieren", Episode: "Episode 5", AirType: "sub", AirTimeUnix: 1700000000}},
+		"2026-11-09": {{Name: "Frieren", Episode: "Episode 5", AirType: "sub", AirTimeUnix: 1700000000}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -101,10 +105,10 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 	if len(r.Embeds) != 1 || !strings.Contains(r.Embeds[0].Description, "Frieren") {
 		t.Errorf("embed should list Monday's show: %+v", r.Embeds)
 	}
-	row := r.Components[0].(discordgo.ActionsRow)
+	row := r.Components[len(r.Components)-1].(discordgo.ActionsRow)
 	next := row.Components[1].(discordgo.Button)
-	if next.CustomID != commands.BuildPaginationCustomID("schedule", 2, 7, "user") {
-		t.Errorf("Next button = %q, want it to carry the author and page 2 of 7", next.CustomID)
+	if next.CustomID != "sched:2026-11-10:user" {
+		t.Errorf("Next button = %q, want it to carry Tuesday's date and the author", next.CustomID)
 	}
 }
 
@@ -113,7 +117,7 @@ func TestScheduleShowsTheRequestedDayWithPagingButtons(t *testing.T) {
 func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
 	setClock(t)
 	t.Cleanup(animeschedule.Seed(map[string][]animeschedule.ShowEntry{
-		"2026-11-02": {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
+		"2026-11-09": {{Name: "Soul Land", Episode: "Episode 9", AirType: "sub", AirTimeUnix: 1700000000, Donghua: true}},
 	}))
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -142,6 +146,113 @@ func TestScheduleWithoutServerStateIncludesDonghua(t *testing.T) {
 	}
 }
 
+// scheduleDateFor runs /schedule with a day typed and returns the date key of the seeded show the page lists.
+// Every date from 2026-10-31 to 2026-11-15 holds one show named after its date.
+func scheduleDateFor(t *testing.T, now time.Time, day string) string {
+	t.Helper()
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return now }))
+	days := map[string][]animeschedule.ShowEntry{}
+	for d := time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC); d.Before(time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)); d = d.AddDate(0, 0, 1) {
+		days[animeschedule.DateKey(d)] = []animeschedule.ShowEntry{{Name: "show-" + animeschedule.DateKey(d), AirType: "sub", AirTimeUnix: 1700000000}}
+	}
+	t.Cleanup(animeschedule.Seed(days))
+	animeschedule.SetAPIKey("key")
+	t.Cleanup(func() { animeschedule.SetAPIKey("") })
+
+	fake := runSchedule(t, day)
+	calls := fake.Calls()
+	last := calls[len(calls)-1]
+	if len(last.Response.Embeds) == 0 {
+		t.Fatalf("day %q: no page, got %+v", day, last)
+	}
+	desc := last.Response.Embeds[0].Description
+	_, after, ok := strings.Cut(desc, "show-")
+	if !ok || len(after) < 10 {
+		t.Fatalf("day %q: description %q lists no seeded show", day, desc)
+	}
+	return after[:10]
+}
+
+func TestScheduleDayGrammarResolvesToUTCDates(t *testing.T) {
+	sat := time.Date(2026, 11, 7, 23, 30, 0, 0, time.UTC)
+	sun := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		now  time.Time
+		day  string
+		want string
+	}{
+		{"today", sat, "today", "2026-11-07"},
+		{"tomorrow", sat, "Tomorrow", "2026-11-08"},
+		{"tomorrow on Sunday crosses into next Monday", sun, "tomorrow", "2026-11-09"},
+		{"monday on a Saturday is the coming Monday", sat, "monday", "2026-11-09"},
+		{"today's weekday name opens today", sat, "saturday", "2026-11-07"},
+		{"short name", sat, "tue", "2026-11-10"},
+		{"plural", sat, "Fridays", "2026-11-13"},
+		{"sunday on a Sunday opens today", sun, "sun", "2026-11-08"},
+		{"picked autocomplete date", sat, "2026-11-12", "2026-11-12"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := scheduleDateFor(t, tt.now, tt.day); got != tt.want {
+				t.Errorf("day %q opened %s, want %s", tt.day, got, tt.want)
+			}
+		})
+	}
+}
+
+func autocompleteDay(t *testing.T, typed string) []*discordgo.ApplicationCommandOptionChoice {
+	t.Helper()
+	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{}}
+	return findCommand(t).AutocompleteOption(t.Context(), nil, nil, i, "day", typed)
+}
+
+func TestScheduleDayAutocompleteOffersTodayTomorrowThenFiveDatedDays(t *testing.T) {
+	setClock(t) // Wednesday 2026-11-04
+	var got []string
+	for _, c := range autocompleteDay(t, "") {
+		got = append(got, fmt.Sprintf("%s=%v", c.Name, c.Value))
+	}
+	want := []string{"Today (Wednesday 4 Nov)=today", "Tomorrow (Thursday 5 Nov)=tomorrow", "Friday 6 Nov=2026-11-06", "Saturday 7 Nov=2026-11-07",
+		"Sunday 8 Nov=2026-11-08", "Monday 9 Nov=2026-11-09", "Tuesday 10 Nov=2026-11-10"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("choices = %v, want %v", got, want)
+	}
+}
+
+func TestScheduleDayAutocompleteFindsTodayByItsWeekdayAndDate(t *testing.T) {
+	setClock(t)
+	for _, typed := range []string{"wednesday", "4 nov"} {
+		got := autocompleteDay(t, typed)
+		if len(got) != 1 || got[0].Value != "today" {
+			t.Errorf("typing %q = %+v, want only Today", typed, got)
+		}
+	}
+}
+
+func TestScheduleDayAutocompleteFiltersAnywhereIgnoringCaseAndPickedValueResolves(t *testing.T) {
+	setClock(t)
+	if got := autocompleteDay(t, "NOV"); len(got) != 7 {
+		t.Fatalf("matching the month should keep all seven choices, got %d", len(got))
+	}
+	got := autocompleteDay(t, "ues")
+	if len(got) != 1 || got[0].Name != "Tuesday 10 Nov" {
+		t.Fatalf("matching inside a name = %+v, want only Tuesday 10 Nov", got)
+	}
+	if v := scheduleDateFor(t, time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC), got[0].Value.(string)); v != "2026-11-10" {
+		t.Errorf("picked value opened %s, want 2026-11-10", v)
+	}
+}
+
+func TestScheduleDayOptionDescriptionMentionsTodayAndTomorrow(t *testing.T) {
+	cmd := findCommand(t)
+	for name, d := range map[string]string{"option description": cmd.Options[0].Description, "command description (shown in /help)": cmd.Desc} {
+		if !strings.Contains(d, "today") || !strings.Contains(d, "tomorrow") {
+			t.Errorf("%s = %q, want it to mention today and tomorrow", name, d)
+		}
+	}
+}
+
 func TestScheduleRefusalsArePrivate(t *testing.T) {
 	animeschedule.SetAPIKey("key")
 	t.Cleanup(func() { animeschedule.SetAPIKey("") })
@@ -154,7 +265,8 @@ func TestScheduleRefusalsArePrivate(t *testing.T) {
 		want string
 	}{
 		{"no API key", "", "", msgNotConfigured},
-		{"unparsable day", "key", "someday", msgCannotParseDay},
+		{"unknown day", "key", "someday", "I don't know that day. Pick a suggestion, or type a day like monday, tue or tomorrow."},
+		{"impossible date", "key", "2026-13-45", "I don't know that day. Pick a suggestion, or type a day like monday, tue or tomorrow."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

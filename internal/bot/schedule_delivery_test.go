@@ -3,9 +3,11 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands/schedule"
 
 	"github.com/bwmarrin/discordgo"
@@ -160,8 +162,53 @@ func TestDailyScheduleShutdownDuringSendDoesNotRetry(t *testing.T) {
 	}
 }
 
+// The autopost posts the same page body as /schedule for today: relative times, media labels and the new footer.
+func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
+	h := newScheduleHarness()
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return h.now }))
+	h.fn = func(bool) []animeschedule.ShowEntry {
+		return []animeschedule.ShowEntry{{Name: "Movie A", Episode: "Movie", AirTimeUnix: h.now.Unix() + 3600, AirType: "sub", MediaType: animeschedule.MediaMovie}}
+	}
+	if err := h.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := h.fd.deliveredTo("sch")
+	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
+		t.Fatalf("delivered = %+v, want one embed", got)
+	}
+	emb := got[0].Msg.Embeds[0]
+	want := schedule.BuildScheduleEmbed(animeschedule.Today(), animeschedule.Now(), h.fn(true))
+	if emb.Description != want.Description || emb.Footer.Text != want.Footer.Text || emb.Title != want.Title {
+		t.Errorf("posted %q / %q, want the /schedule body %q / %q", emb.Description, emb.Footer.Text, want.Description, want.Footer.Text)
+	}
+	for _, frag := range []string{":R>", " · Movie", "Tuesday, 5 Mar 2024", "days run on UTC"} {
+		if !strings.Contains(emb.Description+emb.Title+emb.Footer.Text, frag) {
+			t.Errorf("posted body %q %q lacks %q", emb.Title, emb.Description, frag)
+		}
+	}
+}
+
+// A run that captured its instant just before UTC midnight posts that day's page with relative times, even if the
+// clock has crossed midnight by the time the page is built.
+func TestDailySchedulePageIsTodayForTheRunsCapturedInstant(t *testing.T) {
+	h := newScheduleHarness()
+	h.now = time.Date(2024, 3, 5, 23, 59, 59, 0, time.UTC)
+	t.Cleanup(animeschedule.SetClock(func() time.Time { return h.now.Add(2 * time.Second) }))
+	if err := h.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := h.fd.deliveredTo("sch")
+	if len(got) != 1 || len(got[0].Msg.Embeds) != 1 {
+		t.Fatalf("delivered = %+v, want one embed", got)
+	}
+	emb := got[0].Msg.Embeds[0]
+	if !strings.Contains(emb.Description, ":R>") {
+		t.Errorf("description %q lacks the relative time of the day being posted", emb.Description)
+	}
+}
+
 func scheduleEmbedFor(h *scheduleHarness) *discordgo.MessageEmbed {
-	return schedule.BuildScheduleEmbed(h.now, h.fn(true))
+	return schedule.BuildScheduleEmbed(h.now, h.now, h.fn(true))
 }
 
 func TestDailyScheduleWebhookGoneFallsBackOnce(t *testing.T) {

@@ -56,35 +56,6 @@ func ParsePaginationCustomID(customID string) (cmd string, page, total int, auth
 	return cmd, page, total, authorID, true
 }
 
-// BuildSchedulePaginationComponents builds Previous/Next for schedule; dayIndex 0=Sunday .. 6=Saturday.
-func BuildSchedulePaginationComponents(dayIndex int, authorID string) []discordgo.MessageComponent {
-	if dayIndex < 0 {
-		dayIndex = 0
-	}
-	if dayIndex > 6 {
-		dayIndex = 6
-	}
-	prevID := BuildPaginationCustomID("schedule", dayIndex-1, 7, authorID)
-	nextID := BuildPaginationCustomID("schedule", dayIndex+1, 7, authorID)
-	row := discordgo.ActionsRow{
-		Components: []discordgo.MessageComponent{
-			discordgo.Button{
-				CustomID: prevID,
-				Label:    "Previous",
-				Style:    discordgo.SecondaryButton,
-				Disabled: dayIndex <= 0,
-			},
-			discordgo.Button{
-				CustomID: nextID,
-				Label:    "Next",
-				Style:    discordgo.SecondaryButton,
-				Disabled: dayIndex >= 6,
-			},
-		},
-	}
-	return []discordgo.MessageComponent{row}
-}
-
 // PaginationComponents builds Previous/Next buttons; page is 0-indexed, authorID optional.
 func PaginationComponents(cmd string, page, totalCount int, authorID string) []discordgo.MessageComponent {
 	pageSize := discord.MaxEmbedFields
@@ -176,12 +147,7 @@ func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 	if !ok {
 		return ic.Refuse(msgInvalidButton)
 	}
-	var totalPages int
-	if cmd == "schedule" {
-		totalPages = total
-	} else {
-		totalPages = max((total+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
-	}
+	totalPages := max((total+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
 	if page < 0 {
 		page = 0
 	}
@@ -201,6 +167,14 @@ func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 		return ic.Refuse(msgFailedLoad)
 	}
 	p := render(ic.Context(), ic.DB, s, &discordgo.InteractionCreate{Interaction: ic.Interaction}, page, total, authorID)
+	return RespondToPress(ic, authorID, p)
+}
+
+// RespondToPress is the press rule for navigation: a refusal is shown privately; the author's press (or any
+// press on a private copy) replaces the message the component is on; anyone else's press gets a private copy
+// whose controls page the copy. An empty authorID means anyone may replace the message. Page buttons and
+// pickers both answer through it.
+func RespondToPress(ic *interaction.Context, authorID string, p Page) error {
 	if p.Refusal != "" {
 		return ic.Refuse(p.Refusal)
 	}
