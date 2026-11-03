@@ -156,6 +156,14 @@ func TestFetchKeepsEveryTrackAndTheOtherReadersSeeTheSubView(t *testing.T) {
 	}
 }
 
+func TestPreferredTrackFallbackNamesTheOrderEachTrackFallsBack(t *testing.T) {
+	for pref, want := range map[PreferredTrack]string{PreferSub: "sub, else raw", PreferDub: "dub, else sub, else raw", PreferRaw: "raw only"} {
+		if got := pref.Fallback(); got != want {
+			t.Errorf("%v fallback = %q, want %q", pref, got, want)
+		}
+	}
+}
+
 func TestEpisodeSpansReadFirstDashLastAndTheFinaleGetsF(t *testing.T) {
 	resetTimetable(t)
 	defer at(time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC))()

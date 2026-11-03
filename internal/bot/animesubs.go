@@ -682,7 +682,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			if _, ok := idx.find(show); ok {
 				continue
 			}
-			sub := airingOf(show).entry(show.Name)
+			sub := newRowEntry(show, now)
 			idx.exact[airingOf(show)] = sub
 			added = append(added, sub)
 		}
@@ -710,6 +710,14 @@ func subChainOf(shows dayShowsFunc, dayShows []animeschedule.ShowEntry, donghua 
 	return shows(donghua, animeschedule.PreferSub)
 }
 
+// newRowEntry is the entry for a row first met on a day whose document exists: one that aired before now and is
+// not delayed starts as posted, so it is never posted late; any other starts unnotified.
+func newRowEntry(show animeschedule.ShowEntry, now time.Time) *anime_subs.ShowSub {
+	entry := airingOf(show).entry(show.Name)
+	entry.Notified = show.Delayed == "" && show.AirTimeUnix <= now.Unix()
+	return entry
+}
+
 // recordMissingRows adds to the channel's document, and to idx, an entry for each of today's rows idx does not
 // find: one that aired before it was added starts as posted, so a switch of track never reposts the day's earlier
 // airings, and one still to air starts unnotified. It reports false when the entries could not be stored; the
@@ -720,8 +728,7 @@ func recordMissingRows(ctx context.Context, st SentState, channelID string, idx 
 		if _, ok := idx.find(show); ok {
 			continue
 		}
-		entry := airingOf(show).entry(show.Name)
-		entry.Notified = show.Delayed == "" && show.AirTimeUnix <= now.Unix()
+		entry := newRowEntry(show, now)
 		idx.exact[airingOf(show)] = entry
 		added = append(added, entry)
 	}
