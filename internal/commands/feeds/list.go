@@ -109,7 +109,7 @@ func removePicker(entries []guilds.FeedEntry, start, page int, authorID string) 
 	options := make([]discordgo.SelectMenuOption, 0, len(entries))
 	seen := make(map[string]bool, len(entries))
 	for j, f := range entries {
-		v := pickValue(f)
+		v := shortCode(f)
 		if seen[v] {
 			continue
 		}
@@ -150,7 +150,7 @@ func RenderFeedsPage(ctx context.Context, db *database.Client, _ *discordgo.Sess
 
 // handleRemovePicker removes the feed chosen in the Remove picker and re-renders the page. Guard home: only the
 // moderator whose list it is may remove from it, checked before the store is touched. A feed already gone just
-// re-renders; a choice that more than one feed clips to removes nothing.
+// re-renders.
 func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 	authorID, pageText, ok := strings.Cut(strings.TrimPrefix(ic.CustomID, pickerPrefix), ":")
 	page, err := strconv.Atoi(pageText)
@@ -165,22 +165,17 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 	if err != nil {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	var matches []guilds.FeedEntry
 	for _, f := range feeds {
-		if pickValue(f) == ic.Values[0] {
-			matches = append(matches, f)
+		if shortCode(f) != ic.Values[0] {
+			continue
 		}
-	}
-	if len(matches) > 1 {
-		return ic.Refuse(ambiguousChoice(matches))
-	}
-	if len(matches) == 1 {
-		if err := removeChosen(ic, st, feeds, matches[0]); err != nil {
+		if err := removeChosen(ic, st, feeds, f); err != nil {
 			return ic.Fail(err, interaction.ErrorContext{})
 		}
 		if feeds, err = st.GetFeeds(ic.Context(), ic.GuildID); err != nil {
 			return ic.Fail(err, interaction.ErrorContext{})
 		}
+		break
 	}
 	if len(feeds) == 0 {
 		// Explicit empty components: an omitted list would leave the old picker on the message.

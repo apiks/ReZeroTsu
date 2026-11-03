@@ -453,7 +453,7 @@ func TestListPagesCarryTheirOwnPickerOfAtMost25(t *testing.T) {
 	}
 	second := RenderFeedsPage(t.Context(), nil, nil, &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{GuildID: "g"}}, 1, 30, "user")
 	got, _ := pickerOf(second.Response)
-	if second.Refusal != "" || len(got.Options) != 5 || !strings.Contains(got.Options[0].Value, "sub25") {
+	if second.Refusal != "" || len(got.Options) != 5 || got.Options[0].Value != shortCode(manyFeeds(30)[25]) {
 		t.Errorf("second page = %+v", second)
 	}
 }
@@ -549,7 +549,7 @@ func TestChoosingAnUnfilteredFeedKeepsItsFilteredSiblings(t *testing.T) {
 	st := useStore(t, plain, sibling)
 	st.failAdd = errors.New("AddFeed must not be called")
 	picker := firstPicker(t, "user")
-	if err := handleRemovePicker(pick("user", picker.CustomID, pickValue(plain)), nil); err != nil {
+	if err := handleRemovePicker(pick("user", picker.CustomID, shortCode(plain)), nil); err != nil {
 		t.Fatal(err)
 	}
 	if st.addCalls != 0 {
@@ -632,22 +632,32 @@ func TestPickerIgnoresAFeedThatIsAlreadyGone(t *testing.T) {
 	}
 }
 
-func TestPickerRemovesNothingWhenTwoFeedsClipToTheSameChoice(t *testing.T) {
+func TestPickerRemovesTheChosenFeedWhenIdentitiesShareTheirFirst100Characters(t *testing.T) {
 	prefix := strings.Repeat("t", 120)
 	a := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Title: prefix + "a"}
 	b := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Title: prefix + "b"}
-	st := useStore(t, a, b)
-	if pickValue(a) != pickValue(b) || len([]rune(pickValue(a))) > 100 {
-		t.Fatal("the test needs two feeds that clip alike")
+	if shortCode(a) == shortCode(b) {
+		t.Fatal("two different feeds need different short codes")
 	}
-	ic := pick("user", pickerPrefix+"user:0", pickValue(a))
-	if err := handleRemovePicker(ic, nil); err != nil {
-		t.Fatal(err)
+	for _, chosen := range []guilds.FeedEntry{a, b} {
+		st := useStore(t, a, b)
+		ic := pick("user", pickerPrefix+"user:0", shortCode(chosen))
+		if err := handleRemovePicker(ic, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.feeds) != 1 || st.feeds[0] == chosen {
+			t.Errorf("feeds %+v: want only the other feed left", st.feeds)
+		}
 	}
-	calls := ic.Port.(*interactiontest.Fake).Calls()
-	if len(st.feeds) != 2 || len(st.checksGone) != 0 || len(calls) != 1 || calls[0].Op != "Reply" || calls[0].Visibility != interaction.Private ||
-		!strings.Contains(calls[0].Response.Content, "removed nothing") {
-		t.Errorf("feeds %+v, calls %+v", st.feeds, calls)
+}
+
+func TestShortCodeFitsDiscordLimits(t *testing.T) {
+	f := guilds.FeedEntry{Subreddit: strings.Repeat("s", 300), PostType: "hot", ChannelID: "c1", Author: strings.Repeat("a", 300), Title: strings.Repeat("t", 300)}
+	if n := len([]rune(shortCode(f))); n == 0 || n > 100 {
+		t.Errorf("short code length %d", n)
+	}
+	if len(pickerPrefix+strings.Repeat("9", 20)+":99") > 100 {
+		t.Error("picker custom ID too long")
 	}
 }
 
