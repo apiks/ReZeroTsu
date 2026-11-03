@@ -1,43 +1,17 @@
 package interaction
 
 import (
-	"encoding/json"
-
 	"github.com/bwmarrin/discordgo"
 )
 
-// LabelComponent is Discord's component type for a Label, the wrapper every field of a form sits in.
-// discordgo v0.29.0 has no Label, so it is defined here.
-const LabelComponent discordgo.ComponentType = 18
-
-// Label wraps one form field (a text box or a picker) with a title and an optional description.
-type Label struct {
-	Label       string
-	Description string
-	Component   discordgo.MessageComponent
-}
-
-// Type returns the Label component type.
-func (Label) Type() discordgo.ComponentType { return LabelComponent }
-
-// MarshalJSON writes the Label in Discord's payload form.
-func (l Label) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type        discordgo.ComponentType    `json:"type"`
-		Label       string                     `json:"label"`
-		Description string                     `json:"description,omitempty"`
-		Component   discordgo.MessageComponent `json:"component"`
-	}{LabelComponent, l.Label, l.Description, l.Component})
-}
-
 // TextBox is a Label-wrapped text box. A paragraph style gives a multi-line box.
-func TextBox(customID, label string, style discordgo.TextInputStyle, required bool) *Label {
-	return &Label{Label: label, Component: discordgo.TextInput{CustomID: customID, Style: style, Required: required}}
+func TextBox(customID, label string, style discordgo.TextInputStyle, required bool) *discordgo.Label {
+	return &discordgo.Label{Label: label, Component: discordgo.TextInput{CustomID: customID, Style: style, Required: &required}}
 }
 
 // Picker is a Label-wrapped picker: pass a discordgo.SelectMenu of any menu type.
-func Picker(label, description string, menu discordgo.SelectMenu) *Label {
-	return &Label{Label: label, Description: description, Component: menu}
+func Picker(label, description string, menu discordgo.SelectMenu) *discordgo.Label {
+	return &discordgo.Label{Label: label, Description: description, Component: menu}
 }
 
 // FormValue is the text typed into the submitted form's text box with the given custom ID, or "" when there
@@ -46,31 +20,60 @@ func (c *Context) FormValue(customID string) string {
 	if c.Submitted == nil {
 		return ""
 	}
-	return findText(c.Submitted.Components, customID)
+	if t, ok := findField(c.Submitted.Components, customID).(discordgo.TextInput); ok {
+		return t.Value
+	}
+	return ""
 }
 
-func findText(components []discordgo.MessageComponent, customID string) string {
+// FormValues is the options chosen in the submitted form's picker with the given custom ID, or nil when there
+// is none.
+func (c *Context) FormValues(customID string) []string {
+	if c.Submitted == nil {
+		return nil
+	}
+	if m, ok := findField(c.Submitted.Components, customID).(discordgo.SelectMenu); ok {
+		return m.Values
+	}
+	return nil
+}
+
+// findField returns the text box (as a discordgo.TextInput) or picker (as a discordgo.SelectMenu) with the
+// given custom ID, looking inside action rows and labels, or nil.
+func findField(components []discordgo.MessageComponent, customID string) discordgo.MessageComponent {
 	for _, comp := range components {
+		var found discordgo.MessageComponent
 		switch v := comp.(type) {
 		case *discordgo.ActionsRow:
-			if s := findText(v.Components, customID); s != "" {
-				return s
-			}
-		case *Label:
-			if s := findText([]discordgo.MessageComponent{v.Component}, customID); s != "" {
-				return s
-			}
+			found = findField(v.Components, customID)
+		case discordgo.ActionsRow:
+			found = findField(v.Components, customID)
+		case *discordgo.Label:
+			found = findField([]discordgo.MessageComponent{v.Component}, customID)
+		case discordgo.Label:
+			found = findField([]discordgo.MessageComponent{v.Component}, customID)
 		case *discordgo.TextInput:
 			if v.CustomID == customID {
-				return v.Value
+				found = *v
 			}
 		case discordgo.TextInput:
 			if v.CustomID == customID {
-				return v.Value
+				found = v
+			}
+		case *discordgo.SelectMenu:
+			if v.CustomID == customID {
+				found = *v
+			}
+		case discordgo.SelectMenu:
+			if v.CustomID == customID {
+				found = v
 			}
 		}
+		if found != nil {
+			return found
+		}
 	}
-	return ""
+	return nil
 }
 
 // TargetUser is the user a user right-click command was run on, or nil.

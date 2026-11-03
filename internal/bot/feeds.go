@@ -642,13 +642,17 @@ func handleFeedPinning(s *discordgo.Session, channelID, messageID, subreddit str
 	if err != nil || perms&discordgo.PermissionManageMessages != discordgo.PermissionManageMessages {
 		return
 	}
-	pins, err := s.ChannelMessagesPinned(channelID)
+	pins, err := s.ChannelMessagesPinned(channelID, nil, 0)
 	if err != nil {
 		return
 	}
 	time.Sleep(feedPinThrottle)
 	prefix := fmt.Sprintf("https://www.reddit.com/r/%s/", subreddit)
-	for _, pin := range pins {
+	for _, entry := range pins.Items {
+		if entry == nil {
+			continue
+		}
+		pin := entry.Message
 		if pin == nil {
 			continue
 		}
