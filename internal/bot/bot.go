@@ -94,8 +94,7 @@ func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
 		}
 	})
 
-	// Enable Server Members Intent in Discord Developer Portal (Bot → Privileged Gateway Intents).
-	mgr.RegisterIntent(discordgo.MakeIntent(discordgo.IntentsAllWithoutPrivileged + discordgo.IntentGuildMembers))
+	mgr.RegisterIntent(discordgo.MakeIntent(discordgo.IntentsAllWithoutPrivileged))
 
 	if err := mgr.Start(); err != nil {
 		sendLimiter.Stop()
