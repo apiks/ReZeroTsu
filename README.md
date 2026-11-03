@@ -36,7 +36,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Reaction roles:** `/add-react-autorole`, `/remove-react-autorole`, `/reacts-autorole`.
 
-**Raffles:** `/create-raffle`, `/join-raffle`, `/leave-raffle`, `/my-raffles`, `/show-raffles`.
+**Raffles:** `/raffle create`, `/raffle draw`, `/raffle remove`, `/raffle list`, `/raffle post`.
 
 **Posting and channels:** `/say`, `/embed`, `/edit`, `/edit-embed`, `/prune`.
 
