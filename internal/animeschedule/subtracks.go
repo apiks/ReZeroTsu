@@ -114,6 +114,31 @@ func SelectRows(day time.Time, set SubscriptionTracks) []SelectedRow {
 	return out
 }
 
+// SelectLoaded returns every loaded row the set selects, in date then air-time order, donghua included, by the
+// same rule as SelectRows. A row more than one member selects is returned once, with each of them.
+func SelectLoaded(set SubscriptionTracks) []SelectedRow {
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	weeks := tracksByWeek(timetable)
+	var out []SelectedRow
+	for _, date := range loadedDates() {
+		out = append(out, selectFrom(date, timetable[date], weeks, set)...)
+	}
+	return out
+}
+
+// LoadedTrackRows returns every loaded row of every track, in date then air-time order, donghua included. A
+// subscription reads it to see which tracks a show has in the loaded weeks.
+func LoadedTrackRows() []ShowEntry {
+	timetableMu.RLock()
+	defer timetableMu.RUnlock()
+	var out []ShowEntry
+	for _, date := range loadedDates() {
+		out = append(out, timetable[date]...)
+	}
+	return out
+}
+
 // selectFrom keeps the rows of one date that some member of the set selects. Sub's pick is the chain's: the Sub
 // preference's track for the show that week.
 func selectFrom(date string, rows []ShowEntry, weeks map[showWeek]weekTracks, set SubscriptionTracks) []SelectedRow {

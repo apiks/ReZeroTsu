@@ -2,6 +2,7 @@ package animesubs
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"ReZeroTsu/internal/animeschedule"
@@ -21,9 +22,59 @@ type nextEpisode struct {
 	Upcoming bool
 	// Premiere is true when Entry is an upcoming-list show; Entry.AirTimeUnix is then its premiere, 0 while undated.
 	Premiere bool
-	// Track names the track whose premiere Entry is ("sub", "dub" or "raw") when the subscription's set has
-	// several members; empty otherwise.
+	// Track names the track of Entry ("sub", "dub" or "raw"), a row's or a premiere's, when the subscription's set
+	// has several members; empty otherwise.
 	Track animeschedule.Track
+	// Set is the subscription's tracks.
+	Set animeschedule.SubscriptionTracks
+	// Unlisted are the members of a non-Sub set that are not listed yet.
+	Unlisted []animeschedule.Track
+}
+
+// episode is the entry's episode label, with its track when the set has several members: "Ep 2 (dub)".
+func (n nextEpisode) episode() string {
+	if n.Track == "" {
+		return n.Entry.Episode
+	}
+	return fmt.Sprintf("%s (%s)", n.Entry.Episode, n.Track)
+}
+
+// trackNoun is how a track reads in "a dubbed episode": subbed, dubbed or raw.
+func trackNoun(t animeschedule.Track) string {
+	switch t {
+	case animeschedule.TrackSub:
+		return "subbed"
+	case animeschedule.TrackDub:
+		return "dubbed"
+	}
+	return "raw"
+}
+
+// unlistedSentences are the confirmation sentences for each member not listed yet.
+func (n nextEpisode) unlistedSentences() string {
+	var out []string
+	for _, m := range n.Unlisted {
+		out = append(out, fmt.Sprintf("No %s is listed yet. You'll get a DM when a %s episode airs.", m, trackNoun(m)))
+	}
+	return strings.Join(out, "\n")
+}
+
+// noneListed is true when the set is not plain Sub and no member is listed.
+func (n nextEpisode) noneListed() bool {
+	return len(n.Unlisted) > 0 && len(n.Unlisted) == len(n.Set.Members())
+}
+
+// unlistedList is the list-line phrase for members not listed yet: "no dub listed yet", "no sub or dub listed
+// yet".
+func (n nextEpisode) unlistedList() string {
+	names := make([]string, len(n.Unlisted))
+	for i, m := range n.Unlisted {
+		names[i] = string(m)
+	}
+	if len(names) > 1 {
+		names = []string{strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]}
+	}
+	return "no " + names[0] + " listed yet"
 }
 
 // itsPremiere is the subject of a premiere or release sentence: "It", or "Its dub" when the track is named.
@@ -48,13 +99,39 @@ func sameShow(e animeschedule.ShowEntry, route, title string) bool {
 	return (&anime_subs.ShowSub{Show: title, Route: route}).Matches(e.Route, e.Name)
 }
 
-// findNextEpisode applies the next-episode rule over entries (every loaded week). A show matches by the rule of
-// sameShow. A show with no timetable entry falls back to the upcoming list's premiere.
-func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
+// timetableFor is what a subscription reads from the loaded weeks: every row of every track, and the rows its set
+// selects.
+type timetableFor struct {
+	Rows     []animeschedule.ShowEntry
+	Selected []animeschedule.SelectedRow
+}
+
+// loadTimetable reads the loaded weeks for a subscription's set.
+func loadTimetable(set animeschedule.SubscriptionTracks) timetableFor {
+	return timetableFor{Rows: animeschedule.LoadedTrackRows(), Selected: animeschedule.SelectLoaded(set)}
+}
+
+// findNextEpisode applies the next-episode rule: the earliest row the set selects at or after now across the
+// loaded weeks, else the latest aired one, else the earliest known premiere of the set's tracks on the upcoming
+// list. A show matches by the rule of sameShow. The track is named when the set has several members. Each member
+// of a set other than plain Sub that the show has no row of, and that the upcoming list does not give either, is
+// not listed yet; a raw fallback row does not list a sub.
+func findNextEpisode(tt timetableFor, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
+	n := placeOnTimetable(tt.Selected, upcoming, route, title, set, now)
+	n.Set = set
+	if set != animeschedule.SubscribeSub {
+		n.Unlisted = unlistedMembers(tt.Rows, upcoming, route, title, set)
+	}
+	return n
+}
+
+func placeOnTimetable(selected []animeschedule.SelectedRow, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks, now time.Time) nextEpisode {
 	nowUnix := now.Unix()
+	several := len(set.Members()) > 1
 	var next, last animeschedule.ShowEntry
 	var haveNext, haveLast bool
-	for _, e := range entries {
+	for _, r := range selected {
+		e := r.ShowEntry
 		if !sameShow(e, route, title) {
 			continue
 		}
@@ -66,11 +143,17 @@ func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule
 			last, haveLast = e, true
 		}
 	}
+	rowTrack := func(e animeschedule.ShowEntry) animeschedule.Track {
+		if several {
+			return e.Track.Known()
+		}
+		return ""
+	}
 	switch {
 	case haveNext:
-		return nextEpisode{Entry: next, Found: true, Upcoming: true}
+		return nextEpisode{Entry: next, Found: true, Upcoming: true, Track: rowTrack(next)}
 	case haveLast:
-		return nextEpisode{Entry: last, Found: true}
+		return nextEpisode{Entry: last, Found: true, Track: rowTrack(last)}
 	}
 	for _, u := range upcoming {
 		e := upcomingEntry(u)
@@ -82,13 +165,38 @@ func findNextEpisode(entries []animeschedule.ShowEntry, upcoming []animeschedule
 		var track animeschedule.Track
 		if p, member, ok := u.SetPremiere(set); ok {
 			e.AirTimeUnix = p.Unix()
-			if len(set.Members()) > 1 {
+			if several {
 				track = member
 			}
 		}
 		return nextEpisode{Entry: e, Found: true, Upcoming: e.AirTimeUnix == 0 || e.AirTimeUnix >= nowUnix, Premiere: true, Track: track}
 	}
 	return nextEpisode{}
+}
+
+// unlistedMembers are the members of the set the show has no row of in the loaded weeks and that the upcoming list
+// does not give it either.
+func unlistedMembers(rows []animeschedule.ShowEntry, upcoming []animeschedule.UpcomingShow, route, title string, set animeschedule.SubscriptionTracks) []animeschedule.Track {
+	var out []animeschedule.Track
+	for _, m := range set.Members() {
+		listed := false
+		for _, e := range rows {
+			if e.Track.Known() == m && sameShow(e, route, title) {
+				listed = true
+				break
+			}
+		}
+		for _, u := range upcoming {
+			if listed {
+				break
+			}
+			listed = u.HasTrack(m) && sameShow(upcomingEntry(u), route, title)
+		}
+		if !listed {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // statusKind is the case a show's place on the timetable falls in; the confirmation and the list line each render
@@ -133,6 +241,20 @@ func (n nextEpisode) kind() statusKind {
 
 // confirmationLine is the sentence after "Subscribed to ..." saying when the show airs next; "" when unknown.
 func (n nextEpisode) confirmationLine() string {
+	line := n.placeLine()
+	switch {
+	case n.noneListed():
+		return n.unlistedSentences()
+	case len(n.Unlisted) == 0:
+		return line
+	case line == "":
+		return n.unlistedSentences()
+	}
+	return line + "\n" + n.unlistedSentences()
+}
+
+// placeLine is the sentence for the show's place on the timetable; "" when unknown.
+func (n nextEpisode) placeLine() string {
 	unix := n.Entry.AirTimeUnix
 	switch n.kind() {
 	case statusMovieTBA:
@@ -148,9 +270,9 @@ func (n nextEpisode) confirmationLine() string {
 	case statusMovieReleased:
 		return fmt.Sprintf("%s released <t:%d:R>.", n.itsPremiere(), unix)
 	case statusNextEpisode:
-		return fmt.Sprintf("Next episode: %s, <t:%d:F> (<t:%d:R>).", n.Entry.Episode, unix, unix)
+		return fmt.Sprintf("Next episode: %s, <t:%d:F> (<t:%d:R>).", n.episode(), unix, unix)
 	case statusAired:
-		return fmt.Sprintf("%s aired <t:%d:R>. You'll get a DM when the next one airs.", n.Entry.Episode, unix)
+		return fmt.Sprintf("%s aired <t:%d:R>. You'll get a DM when the next one airs.", n.episode(), unix)
 	}
 	return ""
 }
@@ -161,6 +283,12 @@ func (n nextEpisode) listStatus() string {
 	out := ""
 	if label := n.Entry.MediaType.Label(); label != "" && n.Found {
 		out = " · " + label
+	}
+	if n.Set != animeschedule.SubscribeSub {
+		out += " · " + n.Set.Title()
+	}
+	if n.noneListed() {
+		return out + " · " + n.unlistedList()
 	}
 	switch n.kind() {
 	case statusMovieTBA:
@@ -176,9 +304,9 @@ func (n nextEpisode) listStatus() string {
 	case statusMovieReleased:
 		return out + fmt.Sprintf(" · %s <t:%d:R>", n.trackLabelled("released"), unix)
 	case statusNextEpisode:
-		return out + fmt.Sprintf(" · %s <t:%d:R>", n.Entry.Episode, unix)
+		return out + fmt.Sprintf(" · %s <t:%d:R>", n.episode(), unix)
 	case statusAired:
-		return out + fmt.Sprintf(" · %s aired <t:%d:R>", n.Entry.Episode, unix)
+		return out + fmt.Sprintf(" · %s aired <t:%d:R>", n.episode(), unix)
 	}
 	return " · no upcoming episode listed"
 }

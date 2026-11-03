@@ -103,7 +103,9 @@ func TestAddConfirmationNamesTheDubForASubAndDubSubscriptionWhoseDubPremieresFir
 }
 
 func TestAddConfirmationSaysPremiereDateTBAForATrackWithoutOne(t *testing.T) {
-	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Frieren", Route: "frieren", Premiere: premiereIn(10 * 24 * time.Hour)}})
+	// A dub clock with no raw clock means the dub exists but its premiere cannot be worked out.
+	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Frieren", Route: "frieren", Premiere: premiereIn(10 * 24 * time.Hour),
+		DubTime: time.Date(2026, 1, 1, 15, 0, 0, 0, time.UTC)}})
 	want := "Subscribed to **Frieren** (Dub).\nIts premiere date isn't announced yet. You'll get a DM when episode 1 airs."
 	if got := addWithTrack(t, "Frieren", "dub"); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
@@ -134,9 +136,9 @@ func TestListLinesNameTheRightTracksPremiere(t *testing.T) {
 	useStore(t, st)
 	got := reply(t, invoke(t, "list")).Embeds[0].Description
 	for _, want := range []string{
-		fmt.Sprintf("1. Frieren · premieres <t:%d:R>\n", premiereIn(40*24*time.Hour).Unix()),
-		fmt.Sprintf("2. Frieren Both · sub premieres <t:%d:R>\n", premiereIn(12*24*time.Hour).Unix()),
-		"3. Dubless · premiere date TBA\n",
+		fmt.Sprintf("1. Frieren · Dub · premieres <t:%d:R>\n", premiereIn(40*24*time.Hour).Unix()),
+		fmt.Sprintf("2. Frieren Both · Sub and Dub · sub premieres <t:%d:R>\n", premiereIn(12*24*time.Hour).Unix()),
+		"3. Dubless · Dub · no dub listed yet\n",
 		fmt.Sprintf("4. Plain · premieres <t:%d:R>\n", premiereIn(6*24*time.Hour).Unix()),
 	} {
 		if !strings.Contains(got, want) {
