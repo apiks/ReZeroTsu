@@ -26,14 +26,15 @@ const (
 	Deferred = interaction.Deferred
 )
 
-// PermissionLevel controls who can run a command.
+// PermissionLevel says who a command is for. Who may run a mod command is Discord's decision, not the bot's: a
+// mod command registers with default member permissions of Manage Server, and server admins grant it to other
+// roles, members or channels in Discord's command permissions (ADR-0001).
 type PermissionLevel int
 
 const (
-	PermEveryone PermissionLevel = iota // no check
-	PermMod                             // guild admin or moderator role (RequireGuildAdminOrMod)
-	PermAdmin                           // guild admin only (RequireGuildAdmin)
-	PermOwner                           // bot owner only
+	PermEveryone PermissionLevel = iota // registered with no default member permissions
+	PermMod                             // registered with default member permissions of Manage Server
+	PermOwner                           // bot owner only (prefix commands)
 )
 
 // BotRuntime provides guild/shard count and uptime for message commands.
@@ -238,13 +239,6 @@ func HandleMessageCommand(ctx context.Context, db *database.Client, s *discordgo
 	return true
 }
 
-var OwnerID string
-
-// SetOwnerID sets the bot owner ID for permission checks. Call once at startup.
-func SetOwnerID(id string) {
-	OwnerID = id
-}
-
 // AllCommands returns all registered commands sorted by name.
 func AllCommands() []*Command {
 	out := make([]*Command, 0, len(registry))
@@ -420,10 +414,10 @@ func contextsFor(ctx AllowedContext, installs []discordgo.ApplicationIntegration
 }
 
 func defaultMemberPermissionsForLevel(perm PermissionLevel) *int64 {
-	if perm != PermAdmin {
+	if perm != PermMod {
 		return nil
 	}
-	v := int64(discordgo.PermissionAdministrator)
+	v := int64(discordgo.PermissionManageGuild)
 	return &v
 }
 

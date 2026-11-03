@@ -1,8 +1,11 @@
 package bot
 
 import (
-	"reflect"
-	"slices"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"ReZeroTsu/internal/commands"
@@ -10,77 +13,63 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// userInstallable is the set of commands that work under a user install: the everyday commands and Show avatar.
-var userInstallable = map[string]bool{
-	"schedule": true, "subscription": true, "reminder": true, "roll": true, "pick": true, "joke": true,
-	"avatar": true, "help": true, "about": true, "invite": true, "ping": true, "Show avatar": true,
+// modCommands are the commands ADR-0001 puts behind Manage Server; every other registered command is for everyone.
+var modCommands = map[string]bool{
+	"settings": true, "voicerole": true, "raffle": true, "reddit": true, "reactrole": true, "say": true, "prune": true,
+	"Add reaction role": true, "Remove reaction roles": true, "Edit message": true,
 }
 
-func TestOnlyTheEverydayCommandsRegisterAsUserInstallable(t *testing.T) {
-	bothInstalls := []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall, discordgo.ApplicationIntegrationUserInstall}
-	serverOnly := []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
-
+func TestRegistrationPayloadCarriesManageServerOnEveryModCommandOnly(t *testing.T) {
 	seen := map[string]bool{}
 	for _, d := range commands.Definitions() {
 		seen[d.Name] = true
-		if d.IntegrationTypes == nil || d.Contexts == nil {
-			t.Errorf("%q registers without install types or contexts", d.Name)
-			continue
-		}
-		if userInstallable[d.Name] {
-			if !reflect.DeepEqual(*d.IntegrationTypes, bothInstalls) {
-				t.Errorf("%q install types = %v, want server and user", d.Name, *d.IntegrationTypes)
+		got := d.DefaultMemberPermissions
+		if modCommands[d.Name] {
+			if got == nil || *got != discordgo.PermissionManageGuild {
+				t.Errorf("%q default member permissions = %v, want Manage Server", d.Name, got)
 			}
-			for _, want := range []discordgo.InteractionContextType{discordgo.InteractionContextGuild, discordgo.InteractionContextBotDM, discordgo.InteractionContextPrivateChannel} {
-				if !slices.Contains(*d.Contexts, want) {
-					t.Errorf("%q contexts = %v, missing %v", d.Name, *d.Contexts, want)
-				}
-			}
-			continue
-		}
-		if !reflect.DeepEqual(*d.IntegrationTypes, serverOnly) {
-			t.Errorf("%q install types = %v, want server install only", d.Name, *d.IntegrationTypes)
-		}
-		if slices.Contains(*d.Contexts, discordgo.InteractionContextPrivateChannel) {
-			t.Errorf("%q contexts = %v, must not include private channels", d.Name, *d.Contexts)
+		} else if got != nil {
+			t.Errorf("%q default member permissions = %d, want none for an everyone command", d.Name, *got)
 		}
 	}
-	for name := range userInstallable {
+	for name := range modCommands {
 		if !seen[name] {
-			t.Errorf("%q is not registered", name)
+			t.Errorf("mod command %q is not registered", name)
+		}
+	}
+	for _, gone := range []string{"add-moderator-role", "remove-moderator-role", "moderator-roles", "mod-only", "react-module"} {
+		if seen[gone] {
+			t.Errorf("removed command %q is still registered", gone)
 		}
 	}
 }
 
-func TestShowAvatarRegistersAsAUserRightClickCommand(t *testing.T) {
-	for _, d := range commands.Definitions() {
-		if d.Name == "Show avatar" {
-			if d.Type != discordgo.UserApplicationCommand || d.Description != "" {
-				t.Errorf("Show avatar = type %v, description %q; want a user command with no description", d.Type, d.Description)
-			}
-			return
+// The moderator-role, mod-only and reacts-module settings are no longer read or written: servers set access in
+// Discord's command permissions (ADR-0001). This fails if Go code mentions them again.
+func TestRemovedModeratorSettingsAreNotReferenced(t *testing.T) {
+	banned := regexp.MustCompile(`\b(CommandRoles|ModOnly|ReactsModule|ModeratorRefusal|command_roles|mod_only|reacts_module)\b`)
+	root := filepath.Join("..", "..")
+	self := "registration_test.go"
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-	t.Fatal("Show avatar is not registered")
-}
-
-func TestMergedCommandsAreRegisteredAndTheOldNamesAreGone(t *testing.T) {
-	registered := map[string]bool{}
-	for _, d := range commands.Definitions() {
-		registered[d.Name] = true
-	}
-	for _, name := range []string{"settings", "voicerole", "reddit"} {
-		if !registered[name] {
-			t.Errorf("/%s is not registered", name)
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == ".claude") {
+			return fs.SkipDir
 		}
-	}
-	for _, name := range []string{
-		"bot-log", "donghua", "ping-message", "new-episodes", "daily-schedule",
-		"add-voice", "remove-voice", "voice-roles",
-		"add-reddit-feed", "remove-reddit-feed", "reddit-feeds",
-	} {
-		if registered[name] {
-			t.Errorf("old command /%s is still registered", name)
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || d.Name() == self {
+			return nil
 		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if m := banned.Find(b); m != nil {
+			t.Errorf("%s mentions %q, a removed moderator setting", path, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

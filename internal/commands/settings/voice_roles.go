@@ -48,7 +48,7 @@ func init() {
 		Response:   commands.Deferred,
 		Name:       "voicerole",
 		Desc:       "Give a role to members while they are in a voice channel.",
-		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
+		// Guard home: the moderator check is Discord's default member permissions (Manage Server) and server overrides.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "settings",

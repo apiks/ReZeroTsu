@@ -60,7 +60,6 @@ func (r *shardRuntime) Uptime() time.Duration { return time.Since(r.start) }
 
 // Run starts the shard manager, registers handlers and slash commands, blocks until ctx is cancelled, then shuts down.
 func Run(ctx context.Context, cfg *config.Config, db *database.Client) error {
-	commands.SetOwnerID(cfg.OwnerID)
 	mgr, err := shards.New("Bot " + cfg.BotToken)
 	if err != nil {
 		return err

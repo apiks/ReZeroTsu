@@ -5,25 +5,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"ReZeroTsu/internal/database"
-	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/interaction/interactiontest"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-type fakeSettings struct{ roles []string }
-
-func (f fakeSettings) GetGuildSettings(_ context.Context, _ string) (*guilds.GuildSettings, error) {
-	s := &guilds.GuildSettings{}
-	for _, id := range f.roles {
-		s.CommandRoles = append(s.CommandRoles, guilds.Role{ID: id})
-	}
-	return s, nil
-}
 
 // register adds cmd for one test and removes it afterwards.
 func register(t *testing.T, cmd *Command) {
@@ -48,9 +36,9 @@ func slashInteraction(name, guildID string, perms int64, roles ...string) *disco
 	return &discordgo.InteractionCreate{Interaction: i}
 }
 
-func run(t *testing.T, name string, fake *interactiontest.Fake, settings settingsReader, i *discordgo.InteractionCreate) error {
+func run(t *testing.T, name string, fake *interactiontest.Fake, i *discordgo.InteractionCreate) error {
 	t.Helper()
-	return dispatch(context.Background(), (*database.Client)(nil), settings, name, fake, nil, i)
+	return dispatch(context.Background(), (*database.Client)(nil), name, fake, nil, i)
 }
 
 func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
@@ -63,8 +51,6 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 	}
 	register(t, legacy("t-guildonly", PermEveryone, ContextGuildOnly))
 	register(t, legacy("t-dmonly", PermEveryone, ContextDMOnly))
-	register(t, legacy("t-mod", PermMod, ContextBoth))
-	register(t, legacy("t-admin", PermAdmin, ContextBoth))
 
 	tests := []struct {
 		name string
@@ -74,14 +60,12 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 	}{
 		{"server-only command in a DM", "t-guildonly", slashInteraction("t-guildonly", "", 0), "only be used in a server"},
 		{"DM-only command in a server", "t-dmonly", slashInteraction("t-dmonly", "g", 0), "only be used in DMs"},
-		{"Moderator command by a plain member", "t-mod", slashInteraction("t-mod", "g", 0), "moderator role"},
-		{"admin command by a plain member", "t-admin", slashInteraction("t-admin", "g", 0), "Administrator or Manage Server"},
 		{"unknown command", "t-missing", slashInteraction("t-missing", "g", 0), "Unknown command"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &interactiontest.Fake{}
-			if err := run(t, tt.cmd, fake, fakeSettings{}, tt.i); err != nil {
+			if err := run(t, tt.cmd, fake, tt.i); err != nil {
 				t.Fatalf("dispatch: %v", err)
 			}
 			calls := fake.Calls()
@@ -112,135 +96,12 @@ func TestDispatchRefusalsArePrivateAndBeforeAcknowledging(t *testing.T) {
 	}
 }
 
-func TestDispatchModeratorCheckStillGatesModeratorCommands(t *testing.T) {
-	var ran int
-	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
-		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
-
-	tests := []struct {
-		name     string
-		i        *discordgo.InteractionCreate
-		settings fakeSettings
-		guild    *discordgo.Guild
-		ok       bool
-	}{
-		{"plain member is refused", slashInteraction("t-mod", "g", 0), fakeSettings{}, nil, false},
-		{"member with an unrelated role is refused", slashInteraction("t-mod", "g", 0, "other"), fakeSettings{roles: []string{"mods"}}, nil, false},
-		{"Manage Server passes", slashInteraction("t-mod", "g", discordgo.PermissionManageGuild), fakeSettings{}, nil, true},
-		{"Administrator passes", slashInteraction("t-mod", "g", discordgo.PermissionAdministrator), fakeSettings{}, nil, true},
-		{"granted role passes", slashInteraction("t-mod", "g", 0, "mods"), fakeSettings{roles: []string{"mods"}}, nil, true},
-		{"guild owner passes", slashInteraction("t-mod", "g", 0), fakeSettings{}, &discordgo.Guild{ID: "g", OwnerID: "user"}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ran = 0
-			fake := &interactiontest.Fake{Guilds: map[string]*discordgo.Guild{}}
-			if tt.guild != nil {
-				fake.Guilds["g"] = tt.guild
-			}
-			if err := run(t, "t-mod", fake, tt.settings, tt.i); err != nil {
-				t.Fatal(err)
-			}
-			if (ran == 1) != tt.ok {
-				t.Errorf("handler ran %d times, want ran=%v; calls %v", ran, tt.ok, fake.Ops())
-			}
-			if !tt.ok && fake.Calls()[len(fake.Calls())-1].Visibility != interaction.Private {
-				t.Errorf("refusal was not private: %+v", fake.Calls())
-			}
-		})
-	}
-}
-
-// stallingSettings never answers: it blocks until the context given to it ends, as a database that has stopped
-// responding would.
-type stallingSettings struct{}
-
-func (stallingSettings) GetGuildSettings(ctx context.Context, _ string) (*guilds.GuildSettings, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-// A permission check that cannot finish inside the bound fails closed: one private "couldn't check" reply, sent
-// before acknowledging, and the handler does not run.
-func TestDispatchPermissionCheckTimesOutClosed(t *testing.T) {
-	old := permissionCheckTimeout
-	permissionCheckTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { permissionCheckTimeout = old })
-
-	var ran int
-	handler := func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }
-	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred, Handler: handler})
-	register(t, &Command{Name: "t-admin", Permission: PermAdmin, Visibility: Public, Response: Deferred, Handler: handler})
-
-	tests := []struct {
-		name     string
-		cmd      string
-		settings settingsReader
-		stall    bool
-	}{
-		{"settings read stalls on a Moderator command", "t-mod", stallingSettings{}, false},
-		{"guild fetch stalls on a Moderator command", "t-mod", fakeSettings{}, true},
-		{"guild fetch stalls on an admin command", "t-admin", fakeSettings{}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ran = 0
-			fake := &interactiontest.Fake{StallGuild: tt.stall}
-			start := time.Now()
-			if err := run(t, tt.cmd, fake, tt.settings, slashInteraction(tt.cmd, "g", 0)); err != nil {
-				t.Fatal(err)
-			}
-			if time.Since(start) > time.Second {
-				t.Error("the check was not bounded")
-			}
-			calls := fake.Calls() // may start with the Guild read that preceded the stalled settings read
-			last := calls[len(calls)-1]
-			if last.Op != "Reply" || last.Visibility != interaction.Private {
-				t.Fatalf("want a private Reply last, got %+v", calls)
-			}
-			for _, c := range calls[:len(calls)-1] {
-				if c.Op == "Defer" || c.Op == "Reply" {
-					t.Fatalf("want one reply and no Defer, got %v", fake.Ops())
-				}
-			}
-			if !strings.Contains(last.Response.Content+descriptionOf(last), msgPermissionCheckTimeout) {
-				t.Errorf("reply = %+v, want %q", last.Response, msgPermissionCheckTimeout)
-			}
-			if ran != 0 {
-				t.Error("handler ran after a timed-out check")
-			}
-		})
-	}
-}
-
-func descriptionOf(c interactiontest.Call) string {
-	var text string
-	for _, e := range c.Response.Embeds {
-		text += e.Description
-	}
-	return text
-}
-
-// A member who passes on a cheap check never waits on the stalled lookups.
-func TestDispatchCheapPermissionPassSkipsTheSlowLookups(t *testing.T) {
-	ran := 0
-	register(t, &Command{Name: "t-admin", Permission: PermAdmin, Visibility: Public, Response: Deferred,
-		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
-	fake := &interactiontest.Fake{StallGuild: true}
-	if err := run(t, "t-admin", fake, stallingSettings{}, slashInteraction("t-admin", "g", discordgo.PermissionAdministrator)); err != nil {
-		t.Fatal(err)
-	}
-	if ran != 1 {
-		t.Errorf("handler ran %d times, calls %v", ran, fake.Ops())
-	}
-}
-
 func TestDispatchLegacyCommandsKeepThePublicDeferredShape(t *testing.T) {
 	ran := false
 	register(t, &Command{Name: "t-legacy", Visibility: Public, Response: Deferred,
 		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran = true }})
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-legacy", fake, fakeSettings{}, slashInteraction("t-legacy", "g", 0)); err != nil {
+	if err := run(t, "t-legacy", fake, slashInteraction("t-legacy", "g", 0)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()
@@ -271,7 +132,7 @@ func TestDispatchNewFormAcknowledgesByDeclaredMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.cmd, func(t *testing.T) {
 			fake := &interactiontest.Fake{}
-			if err := run(t, tt.cmd, fake, fakeSettings{}, slashInteraction(tt.cmd, "g", 0)); err != nil {
+			if err := run(t, tt.cmd, fake, slashInteraction(tt.cmd, "g", 0)); err != nil {
 				t.Fatal(err)
 			}
 			if got := strings.Join(fake.Ops(), ","); got != strings.Join(tt.want, ",") {
@@ -295,7 +156,7 @@ func TestDispatchLateFailureOnPublicDeferredCommandIsPrivate(t *testing.T) {
 	for _, name := range []string{"t-panic", "t-err"} {
 		t.Run(name, func(t *testing.T) {
 			fake := &interactiontest.Fake{}
-			if err := run(t, name, fake, fakeSettings{}, slashInteraction(name, "g", 0)); err != nil {
+			if err := run(t, name, fake, slashInteraction(name, "g", 0)); err != nil {
 				t.Fatal(err)
 			}
 			calls := fake.Calls()
@@ -314,7 +175,7 @@ func TestDispatchFailureBeforeAnyReplyOnDirectCommandIsAPrivateReply(t *testing.
 	register(t, &Command{Name: "t-direct-panic", Visibility: Public, Response: Direct,
 		Run: func(*interaction.Context) error { panic("boom") }})
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-direct-panic", fake, fakeSettings{}, slashInteraction("t-direct-panic", "g", 0)); err != nil {
+	if err := run(t, "t-direct-panic", fake, slashInteraction("t-direct-panic", "g", 0)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fake.Calls()
@@ -327,7 +188,7 @@ func TestDispatchFailureOnPrivateDeferredCommandReplacesThePlaceholder(t *testin
 	register(t, &Command{Name: "t-private-err", Visibility: Private, Response: Deferred,
 		Run: func(*interaction.Context) error { return errors.New("x") }})
 	fake := &interactiontest.Fake{}
-	if err := run(t, "t-private-err", fake, fakeSettings{}, slashInteraction("t-private-err", "g", 0)); err != nil {
+	if err := run(t, "t-private-err", fake, slashInteraction("t-private-err", "g", 0)); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(fake.Ops(), ","); got != "Defer,EditReply" {
@@ -358,5 +219,25 @@ func TestAddRejectsUndeclaredOrInconsistentCommands(t *testing.T) {
 			}()
 			Add(tt.cmd)
 		})
+	}
+}
+
+// A mod command is gated by Discord (default member permissions and server overrides) before the interaction
+// reaches the bot, so dispatch runs it for any member it receives, with no bot-side check or lookup.
+func TestDispatchDoesNotRefuseAModCommandForAMemberWithoutManageServer(t *testing.T) {
+	var ran int
+	register(t, &Command{Name: "t-mod", Permission: PermMod, Visibility: Public, Response: Deferred,
+		Handler: func(context.Context, *database.Client, *discordgo.Session, *discordgo.InteractionCreate) { ran++ }})
+	fake := &interactiontest.Fake{StallGuild: true}
+	if err := run(t, "t-mod", fake, slashInteraction("t-mod", "g", 0, "some-role")); err != nil {
+		t.Fatal(err)
+	}
+	if ran != 1 {
+		t.Errorf("handler ran %d times, calls %v", ran, fake.Ops())
+	}
+	for _, c := range fake.Calls() {
+		if c.Op == "Reply" || c.Op == "Guild" {
+			t.Errorf("calls = %v, want only the acknowledgement", fake.Ops())
+		}
 	}
 }
