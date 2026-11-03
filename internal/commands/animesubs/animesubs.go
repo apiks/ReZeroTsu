@@ -44,7 +44,7 @@ func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages,
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(entries, upcoming, list[j].Route, list[j].Show, now).listStatus())
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(entries, upcoming, list[j].Route, list[j].Show, subTracks(list[j]), now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
@@ -52,6 +52,13 @@ func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages,
 		fmt.Fprintf(&b, "Page %d of %d. Showing %d–%d of %d.\n", page+1, totalPages, start+1, endShow, n)
 	}
 	return b.String()
+}
+
+// subTracks is the subscription tracks a stored entry holds; an entry without a set, or with an unreadable one,
+// reads as Sub.
+func subTracks(s *anime_subs.ShowSub) animeschedule.SubscriptionTracks {
+	set, _ := animeschedule.ParseSubscriptionTracks(s.Tracks)
+	return set
 }
 
 func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
@@ -172,7 +179,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, only 
 	if set != animeschedule.SubscribeSub {
 		desc = fmt.Sprintf("Subscribed to **%s** (%s).", showName, set.Title())
 	}
-	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, now).confirmationLine(); line != "" {
+	if line := findNextEpisode(animeschedule.AllEntries(), animeschedule.UpcomingShows(), show.Route, showName, set, now).confirmationLine(); line != "" {
 		desc += "\n" + line
 	}
 	return desc, true, nil
