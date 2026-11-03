@@ -156,12 +156,8 @@ func init() {
 }
 
 func autocompleteRemindTime(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
 	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, hint := range timeHintChoices {
-		if focusedLower != "" && !strings.HasPrefix(strings.ToLower(hint), focusedLower) {
-			continue
-		}
+	for _, hint := range commands.MatchAnywhere(timeHintChoices, focusedValue, func(h string) []string { return []string{h} }) {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: hint, Value: hint})
 	}
 	return choices
@@ -173,21 +169,14 @@ func autocompleteRemindID(ctx context.Context, db *database.Client, s *discordgo
 	if err != nil || slice == nil || len(slice.Reminders) == 0 {
 		return nil
 	}
-	focusedTrim := strings.TrimSpace(focusedValue)
-	var filtered []reminders.RemindMe
-	for _, r := range slice.Reminders {
-		idStr := strconv.Itoa(r.RemindID)
-		if focusedTrim != "" && !strings.HasPrefix(idStr, focusedTrim) {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-	sort.Slice(filtered, func(a, b int) bool { return filtered[a].RemindID < filtered[b].RemindID })
-	const maxChoices = 25
+	sorted := append([]reminders.RemindMe(nil), slice.Reminders...)
+	sort.Slice(sorted, func(a, b int) bool { return sorted[a].RemindID < sorted[b].RemindID })
+	filtered := commands.MatchAnywhere(sorted, focusedValue, func(r reminders.RemindMe) []string {
+		return []string{strconv.Itoa(r.RemindID)}
+	})
 	const maxNameLen = 100
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, min(len(filtered), maxChoices))
-	for j := 0; j < len(filtered) && j < maxChoices; j++ {
-		r := filtered[j]
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(filtered))
+	for _, r := range filtered {
 		msgShort := r.Message
 		if len(msgShort) > 50 {
 			msgShort = msgShort[:47] + "..."

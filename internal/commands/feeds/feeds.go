@@ -91,18 +91,13 @@ func normalizeAuthor(s string) string {
 }
 
 func autocompletePostType(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	var choices []*discordgo.ApplicationCommandOptionChoice
-	for _, name := range postTypeChoices {
-		if focusedLower != "" && !strings.HasPrefix(name, focusedLower) {
-			continue
-		}
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
+	names := commands.MatchAnywhere(postTypeChoices, focusedValue, func(n string) []string { return []string{n} })
+	if len(names) == 0 {
+		names = postTypeChoices
 	}
-	if len(choices) == 0 {
-		for _, name := range postTypeChoices {
-			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
-		}
+	var choices []*discordgo.ApplicationCommandOptionChoice
+	for _, name := range names {
+		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
 	}
 	return choices
 }
@@ -139,23 +134,8 @@ func autocompleteRemoveSubreddit(ctx context.Context, db *database.Client, _ *di
 	for sub := range seen {
 		subs = append(subs, sub)
 	}
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	if focusedLower != "" {
-		var filtered []string
-		for _, sub := range subs {
-			subLower := strings.ToLower(sub)
-			rSub := "r/" + subLower
-			if strings.HasPrefix(rSub, focusedLower) || strings.HasPrefix(subLower, focusedLower) {
-				filtered = append(filtered, sub)
-			}
-		}
-		subs = filtered
-	}
 	sort.Strings(subs)
-	const maxChoices = 25
-	if len(subs) > maxChoices {
-		subs = subs[:maxChoices]
-	}
+	subs = commands.MatchAnywhere(subs, focusedValue, func(sub string) []string { return []string{sub, "r/" + sub} })
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(subs))
 	for j, sub := range subs {
 		name := "r/" + sub
@@ -196,25 +176,10 @@ func autocompleteRemoveChannel(ctx context.Context, db *database.Client, s *disc
 		}
 		list = append(list, channelChoice{id: channelID, name: display})
 	}
-	focusedLower := strings.ToLower(strings.TrimSpace(focusedValue))
-	if focusedLower != "" {
-		focusedTrim := strings.TrimPrefix(focusedLower, "#")
-		var filtered []channelChoice
-		for _, c := range list {
-			nameLower := strings.ToLower(c.name)
-			nameNoHash := strings.TrimPrefix(nameLower, "#")
-			idLower := strings.ToLower(c.id)
-			if strings.HasPrefix(nameLower, focusedLower) || strings.HasPrefix(nameNoHash, focusedTrim) || strings.HasPrefix(idLower, focusedLower) {
-				filtered = append(filtered, c)
-			}
-		}
-		list = filtered
-	}
 	sort.Slice(list, func(a, b int) bool { return list[a].name < list[b].name })
-	const maxChoices = 25
-	if len(list) > maxChoices {
-		list = list[:maxChoices]
-	}
+	list = commands.MatchAnywhere(list, focusedValue, func(c channelChoice) []string {
+		return []string{c.name, strings.TrimPrefix(c.name, "#"), c.id}
+	})
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(list))
 	for j, c := range list {
 		name := c.name

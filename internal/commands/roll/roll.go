@@ -62,20 +62,12 @@ func init() {
 }
 
 func autocompleteRollNumber(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	focusedTrim := strings.TrimSpace(focusedValue)
 	var choices []*discordgo.ApplicationCommandOptionChoice
-	const maxChoices = 25
-	for _, n := range rollChoices {
-		if focusedTrim != "" && !strings.HasPrefix(strconv.Itoa(n), focusedTrim) {
-			continue
-		}
+	for _, n := range commands.MatchAnywhere(rollChoices, focusedValue, func(n int) []string { return []string{strconv.Itoa(n), "d" + strconv.Itoa(n)} }) {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
 			Name:  "d" + strconv.Itoa(n) + " (1–" + strconv.Itoa(n) + ")",
 			Value: n,
 		})
-		if len(choices) >= maxChoices {
-			break
-		}
 	}
 	return choices
 }
