@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	embedTitleSchedule    = "Anime Schedule"
 	embedTitleUnavailable = "Anime Schedule"
 	msgNotConfigured      = "Schedule unavailable. API key is not configured."
 	msgTryAgainMinutes    = "Schedule temporarily unavailable. Try again in a few minutes."
@@ -49,41 +48,6 @@ func init() {
 	})
 	commands.RegisterCopySafePaginationRenderer("schedule", RenderSchedulePage)
 
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "schedule",
-		Aliases:    []string{"schedul", "schedu", "schedle", "schdule", "animeschedule", "anischedule"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			if !animeschedule.APIKeyConfigured() {
-				emb := commands.NewEmbed(s, embedTitleUnavailable, msgNotConfigured)
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			if !animeschedule.HasData() {
-				emb := commands.NewEmbed(s, embedTitleUnavailable, msgTryAgainMinutes)
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			weekday := int(time.Now().Weekday())
-			if dayStr := strings.TrimSpace(args); dayStr != "" {
-				weekday = parseDay(dayStr)
-				if weekday < 0 || weekday > 6 {
-					emb := commands.NewEmbed(s, embedTitleSchedule, msgCannotParseDay)
-					_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-					return
-				}
-			}
-			donghua := true
-			shows := animeschedule.GetDayShows(weekday, donghua)
-			emb := BuildScheduleEmbed(weekday, shows)
-			components := commands.BuildSchedulePaginationComponents(weekday, m.Author.ID)
-			_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
-				Embeds:     []*discordgo.MessageEmbed{emb},
-				Components: components,
-			})
-		},
-	})
 }
 
 func autocompleteScheduleDay(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {

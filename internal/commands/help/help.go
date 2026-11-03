@@ -1,14 +1,12 @@
 package help
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 
@@ -59,16 +57,6 @@ func init() {
 		Run:        runHelp,
 	})
 	commands.AddComponent(pickerPrefix, handlePick)
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "help",
-		Aliases:    []string{"h"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			// Removed with the user prefix commands (ticket 7.3).
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, dmHelpEmbed(s))
-		},
-	})
 }
 
 // category is one help page: the visible commands of a module.
@@ -278,21 +266,4 @@ func handlePick(ic *interaction.Context, _ *discordgo.Session) error {
 	}
 	r.Visibility = interaction.Private
 	return ic.Reply(r)
-}
-
-// dmHelpEmbed is the DM prefix command's listing: every command that works in a DM, by category.
-func dmHelpEmbed(s *discordgo.Session) *discordgo.MessageEmbed {
-	cats := buildCategories(listCommands(), scopeDM)
-	if len(cats) == 0 {
-		return commands.NewEmbed(s, "Commands", "No commands available for you in this context.", supportFooter())
-	}
-	fields := make([]*discordgo.MessageEmbedField, 0, len(cats))
-	for _, c := range cats {
-		v := strings.Join(commandLines(c.cmds, false), "\n")
-		if len(v) > discord.MaxEmbedFieldValueLength {
-			v = v[:discord.MaxEmbedFieldValueLength]
-		}
-		fields = append(fields, &discordgo.MessageEmbedField{Name: c.name, Value: v})
-	}
-	return commands.NewEmbedWithFields(s, "Commands", "", fields, supportFooter())
 }
