@@ -27,7 +27,7 @@ func TestPostTakesARaffleNameThatAutocompletes(t *testing.T) {
 
 func TestPostPutsAButtonMessageOnARaffleThatHasNone(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Grand Raffle", ParticipantIDs: []string{"a", "b"}, WinnerID: "w"})
-	fake := invokeSub(t, "post", nameOption("Grand Raffle"))
+	fake := invokeManage(t, "post", nameOption("Grand Raffle"))
 
 	posted := lastCall(t, fake, "PostMessage")
 	body := text(posted.Response)
@@ -54,7 +54,7 @@ func TestPostPutsAButtonMessageOnARaffleThatHasNone(t *testing.T) {
 
 func TestPostMovesAnExistingButtonMessageAndMarksTheOldOneMoved(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Grand Raffle", ParticipantIDs: []string{"a"}, ChannelID: "c9", MessageID: "old"})
-	fake := invokeSub(t, "post", nameOption("grand raffle"))
+	fake := invokeManage(t, "post", nameOption("grand raffle"))
 
 	edit := lastCall(t, fake, "EditMessage")
 	if edit.ChannelID != "c9" || edit.MessageID != "old" || !strings.Contains(text(edit.Response), "This raffle moved: https://discord.com/channels/g/c/posted") {
@@ -81,7 +81,7 @@ func TestPostMovesAnExistingButtonMessageAndMarksTheOldOneMoved(t *testing.T) {
 
 func TestPostOnALegacyReactionRaffleKeepsItsEntrantsAndReactionMessage(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Old", ParticipantIDs: []string{"a", "b", "c"}, ReactMessageID: "react1"})
-	fake := invokeSub(t, "post", nameOption("Old"))
+	fake := invokeManage(t, "post", nameOption("Old"))
 	got := st.raffles[0]
 	if got.ReactMessageID != "react1" || len(got.ParticipantIDs) != 3 || got.MessageID != "posted" {
 		t.Errorf("stored raffle = %+v", got)
@@ -93,7 +93,7 @@ func TestPostOnALegacyReactionRaffleKeepsItsEntrantsAndReactionMessage(t *testin
 
 func TestPostRefusesAnUnknownRaffleWithoutPosting(t *testing.T) {
 	useManage(t, &guilds.Raffle{Name: "Grand Raffle"})
-	fake := invokeSub(t, "post", nameOption("nope"))
+	fake := invokeManage(t, "post", nameOption("nope"))
 	if slices.Contains(fake.Ops(), "PostMessage") {
 		t.Errorf("ops %v", fake.Ops())
 	}
@@ -105,7 +105,7 @@ func TestPostRefusesAnUnknownRaffleWithoutPosting(t *testing.T) {
 func TestPostExplainsAMissingPermissionAndStoresNothing(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Grand Raffle", ChannelID: "c9", MessageID: "old"})
 	fake := &interactiontest.Fake{Fail: map[string]error{"PostMessage": &discordgo.RESTError{Response: &http.Response{StatusCode: 403}}}}
-	runSub(t, fake, "post", nameOption("Grand Raffle"))
+	runManage(t, fake, "post", nameOption("Grand Raffle"))
 	got := text(lastCall(t, fake, "EditReply").Response)
 	if !strings.Contains(got, "<#c>") || !strings.Contains(got, "Send Messages") || st.raffles[0].MessageID != "old" {
 		t.Errorf("reply %q, message %q", got, st.raffles[0].MessageID)
@@ -118,7 +118,7 @@ func TestPostExplainsAMissingPermissionAndStoresNothing(t *testing.T) {
 func TestPostRemovesTheMessageItPostedWhenTheRaffleCannotBeUpdated(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Grand Raffle", ChannelID: "c9", MessageID: "old"})
 	st.failMessage = errors.New("db down")
-	fake := invokeSub(t, "post", nameOption("Grand Raffle"))
+	fake := invokeManage(t, "post", nameOption("Grand Raffle"))
 	if del := lastCall(t, fake, "DeleteMessage"); del.ChannelID != "c" || del.MessageID != "posted" {
 		t.Errorf("deleted %+v", del)
 	}
@@ -133,7 +133,7 @@ func TestPostRemovesTheMessageItPostedWhenTheRaffleCannotBeUpdated(t *testing.T)
 func TestAFailedEditOfTheOldMessageDoesNotFailThePost(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Grand Raffle", ChannelID: "c9", MessageID: "old"})
 	fake := &interactiontest.Fake{Fail: map[string]error{"EditMessage": errors.New("unknown message")}}
-	runSub(t, fake, "post", nameOption("Grand Raffle"))
+	runManage(t, fake, "post", nameOption("Grand Raffle"))
 	if st.raffles[0].MessageID != "posted" {
 		t.Errorf("stored message %q", st.raffles[0].MessageID)
 	}

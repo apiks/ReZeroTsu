@@ -2,7 +2,6 @@ package raffle
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 )
-
-const msgNoSuchRaffle = "No such raffle."
 
 // postStore is the part of the guild repository /raffle post uses. SetRaffleMessage changes only the button
 // message's IDs, so entrants, the latest winner and a legacy reaction message are never rewritten.
@@ -34,33 +31,8 @@ func postSubcommand() *commands.Subcommand {
 			{Type: discordgo.ApplicationCommandOptionString, Name: "raffle", Description: "The raffle to post.", Required: true, Autocomplete: true},
 		},
 		Run:                runPost,
-		AutocompleteOption: autocompletePost,
+		AutocompleteOption: autocompleteRaffleName,
 	}
-}
-
-// autocompletePost offers the server's raffle names, matched anywhere in the name.
-func autocompletePost(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	if i.GuildID == "" {
-		return nil
-	}
-	raffles, err := postStoreOf(db).GetRaffles(ctx, i.GuildID)
-	if err != nil {
-		logger.For("raffle").Error("raffle autocomplete failed", "guild_id", i.GuildID, "err", err)
-		return nil
-	}
-	var names []string
-	for _, r := range raffles {
-		if r != nil && r.Name != "" {
-			names = append(names, r.Name)
-		}
-	}
-	sort.Strings(names)
-	names = commands.MatchAnywhere(names, typed, func(n string) []string { return []string{n} })
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(names))
-	for j, name := range names {
-		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: clip(name), Value: clip(name)}
-	}
-	return choices
 }
 
 // movedMessage is the earlier raffle message after /raffle post put the raffle elsewhere: the link to the new

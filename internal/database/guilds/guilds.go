@@ -308,6 +308,16 @@ func (r *Repo) SetRaffle(ctx context.Context, guildID string, raffle *Raffle) er
 	return nil
 }
 
+// SetRaffleWinner stores the latest draw's winner in one statement, leaving the entrants untouched.
+func (r *Repo) SetRaffleWinner(ctx context.Context, guildID, raffleName, winnerID string) error {
+	filter := bson.M{"_id": guildID, "raffles.name": raffleName}
+	update := bson.M{"$set": bson.M{"raffles.$.winner_id": winnerID}}
+	if _, err := r.coll.UpdateOne(ctx, filter, update); err != nil {
+		return fmt.Errorf("SetRaffleWinner: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) DeleteRaffle(ctx context.Context, guildID, name string) error {
 	filter := bson.M{"_id": guildID}
 	update := bson.M{"$pull": bson.M{"raffles": bson.M{"name": name}}}

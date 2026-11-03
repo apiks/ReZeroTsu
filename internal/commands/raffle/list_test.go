@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -58,15 +59,15 @@ func useManage(t *testing.T, raffles ...*guilds.Raffle) *manageStore {
 	return st
 }
 
-// invokeSub runs a /raffle subcommand the way dispatch does for a private deferred command.
-func invokeSub(t *testing.T, name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *interactiontest.Fake {
+// invokeManage runs a /raffle subcommand the way dispatch does for a private deferred command.
+func invokeManage(t *testing.T, name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) *interactiontest.Fake {
 	t.Helper()
 	fake := &interactiontest.Fake{}
-	runSub(t, fake, name, opts...)
+	runManage(t, fake, name, opts...)
 	return fake
 }
 
-func runSub(t *testing.T, fake *interactiontest.Fake, name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) {
+func runManage(t *testing.T, fake *interactiontest.Fake, name string, opts ...*discordgo.ApplicationCommandInteractionDataOption) {
 	t.Helper()
 	cmd := raffleCommand(t)
 	ic := interactiontest.NewCommandContext(fake, cmd.Visibility, cmd.Response, discordgo.ApplicationCommandInteractionData{Name: "raffle", Options: opts})
@@ -125,7 +126,7 @@ func TestListShowsEveryRaffleWithItsEntrantCountAndALinkPrivately(t *testing.T) 
 		&guilds.Raffle{Name: "Grand Raffle", ParticipantIDs: []string{"a", "b"}, ChannelID: "c", MessageID: "m1"},
 		&guilds.Raffle{Name: "Old Raffle", ParticipantIDs: []string{"a"}, ReactMessageID: "r1"},
 	)
-	fake := invokeSub(t, "list")
+	fake := invokeManage(t, "list")
 	calls := fake.Calls()
 	if calls[0].Op != "Defer" || calls[0].Visibility != interaction.Private {
 		t.Fatalf("first call = %+v, want a private Defer", calls[0])
@@ -159,7 +160,7 @@ func fieldsText(r interaction.Response) string {
 
 func TestListWithNoRafflesSaysSoWithoutAPicker(t *testing.T) {
 	useManage(t)
-	r := lastCall(t, invokeSub(t, "list"), "EditReply").Response
+	r := lastCall(t, invokeManage(t, "list"), "EditReply").Response
 	if !strings.Contains(text(r), "There are no raffles") || len(r.Components) != 0 {
 		t.Errorf("reply = %+v", r)
 	}
@@ -168,7 +169,7 @@ func TestListWithNoRafflesSaysSoWithoutAPicker(t *testing.T) {
 func TestListStoreFailureIsReportedPrivately(t *testing.T) {
 	st := useManage(t)
 	st.failList = errors.New("db down")
-	r := lastCall(t, invokeSub(t, "list"), "EditReply").Response
+	r := lastCall(t, invokeManage(t, "list"), "EditReply").Response
 	if r.Content != interaction.SomethingWentWrong {
 		t.Errorf("reply = %+v", r)
 	}
@@ -176,7 +177,7 @@ func TestListStoreFailureIsReportedPrivately(t *testing.T) {
 
 func TestListPagesCarryTheirOwnPickerOfAtMost25(t *testing.T) {
 	useManage(t, manyRaffles(30)...)
-	first := lastCall(t, invokeSub(t, "list"), "EditReply").Response
+	first := lastCall(t, invokeManage(t, "list"), "EditReply").Response
 	picker, _ := pickerOf(first)
 	if len(picker.Options) != 25 || picker.Options[0].Value != "Raffle 00" || !hasPageButtons(first) {
 		t.Fatalf("first page picker has %d options, buttons %v", len(picker.Options), hasPageButtons(first))
@@ -259,15 +260,30 @@ func TestChoosingTheLastRaffleClearsThePicker(t *testing.T) {
 	}
 }
 
-func TestAFailedCloseEditStillDeletesTheRaffle(t *testing.T) {
+func TestAMessageThatNoLongerExistsDoesNotBlockTheRemoval(t *testing.T) {
 	st := useManage(t, &guilds.Raffle{Name: "Gone", ChannelID: "c", MessageID: "m1"})
 	ic := pick("user", firstPickerID(t, "user"), "Gone")
-	ic.Port.(*interactiontest.Fake).Fail = map[string]error{"EditMessage": errors.New("unknown message")}
+	unknown := &discordgo.RESTError{Response: &http.Response{StatusCode: 404}, Message: &discordgo.APIErrorMessage{Code: discordgo.ErrCodeUnknownMessage}}
+	ic.Port.(*interactiontest.Fake).Fail = map[string]error{"EditMessage": unknown}
 	if err := handleRemovePicker(ic, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(st.deleted, []string{"Gone"}) {
 		t.Errorf("deleted %v", st.deleted)
+	}
+}
+
+func TestAnyOtherCloseFailureKeepsTheRaffleAndExplainsPrivately(t *testing.T) {
+	st := useManage(t, &guilds.Raffle{Name: "Kept", ChannelID: "c9", MessageID: "m1"})
+	ic := pick("user", firstPickerID(t, "user"), "Kept")
+	fake := ic.Port.(*interactiontest.Fake)
+	fake.Fail = map[string]error{"EditMessage": &discordgo.RESTError{Response: &http.Response{StatusCode: 403}}}
+	if err := handleRemovePicker(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := fake.Calls()[len(fake.Calls())-1]
+	if len(st.deleted) != 0 || last.Op != "Reply" || last.Visibility != interaction.Private || !strings.Contains(last.Response.Content, "<#c9>") {
+		t.Errorf("deleted %v, last call %+v", st.deleted, last)
 	}
 }
 

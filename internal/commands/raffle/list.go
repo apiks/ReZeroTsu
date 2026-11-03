@@ -27,7 +27,6 @@ const (
 	msgNoRaffles        = "There are no raffles."
 	msgOnlyOwnerRemoves = "Only the moderator who ran /raffle list can remove from it."
 	msgStalePicker      = "Could not read that choice. Run /raffle list again."
-	msgEnded            = "This raffle has ended"
 	maxChoiceLength     = 100
 )
 
@@ -167,26 +166,9 @@ func disabledButtons() discordgo.MessageComponent {
 	}}
 }
 
-// winnerLine is the latest-winner line of a raffle message.
-func winnerLine(r *guilds.Raffle) string {
-	if r.WinnerID == "" {
-		return msgNoWinnerYet
-	}
-	return "Latest winner: <@" + r.WinnerID + ">"
-}
-
-// closedRaffleMessage is a raffle message after its raffle is removed: "This raffle has ended", the last winner
-// kept and the buttons disabled.
-func closedRaffleMessage(r *guilds.Raffle) interaction.Response {
-	desc := msgEnded + "\n" + winnerLine(r)
-	return interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{commands.NewEmbed(nil, r.Name, desc)},
-		Components: []discordgo.MessageComponent{disabledButtons()},
-	}
-}
-
-// handleRemovePicker removes the chosen raffle the way /raffle remove does: its raffle message is closed, then the
-// record is deleted, then the page is re-rendered.
+// handleRemovePicker removes the chosen raffle the way /raffle remove (runRemove) does: its raffle message is
+// closed with closedMessage, then the record is deleted, then the page is re-rendered. As in runRemove, a message
+// that no longer exists does not block the removal, and any other edit failure is explained and keeps the raffle.
 // Guard homes: only the moderator whose list it is may remove from it, checked before the store is touched,
 // whatever message the picker sits on (the list is private, so only that moderator can see it either way). The
 // "No such raffle" check of /remove-raffle is the lookup below: a choice already gone just re-renders.
@@ -217,7 +199,11 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		}
 	}
 	if chosen != nil {
-		closeRaffleMessage(ic, chosen)
+		if chosen.MessageID != "" {
+			if err := ic.EditMessage(chosen.ChannelID, chosen.MessageID, closedMessage(chosen)); err != nil && !discord.IsUnknownMessage(err) {
+				return ic.Fail(err, raffleErrorContext(chosen.ChannelID))
+			}
+		}
 		if err := store.DeleteRaffle(ic.Context(), ic.GuildID, chosen.Name); err != nil {
 			return pickerFailed(ic, "Could not remove raffle.", err)
 		}
@@ -233,18 +219,6 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		})
 	}
 	return ic.UpdateMessage(renderPage(raffles, page, authorID, ic.GuildID))
-}
-
-// closeRaffleMessage edits the raffle's button message to its ended form. A failure is logged and does not stop the
-// removal: the message may already be deleted, and the record must still go.
-func closeRaffleMessage(ic *interaction.Context, r *guilds.Raffle) {
-	if r.MessageID == "" {
-		return
-	}
-	if err := ic.EditMessage(r.ChannelID, r.MessageID, closedRaffleMessage(r)); err != nil {
-		text, _ := interaction.ExplainError(err, raffleErrorContext(r.ChannelID))
-		logger.For("raffle").Error("raffle message close failed", "guild_id", ic.GuildID, "channel_id", r.ChannelID, "reason", text, "err", err)
-	}
 }
 
 func pickerFailed(ic *interaction.Context, text string, err error) error {
