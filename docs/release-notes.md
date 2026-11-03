@@ -2,6 +2,10 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Subscription UX (spec #79)
+
+- `/subscription add` suggestions (#94) carry the media type of non-TV shows ("· TV Short", "· ONA", "· Donghua", "· OVA", "· Special", "· Movie") and "· subscribed" for shows you already follow, which are listed last. A new optional `type` option (TV, TV Short, ONA, Donghua, OVA, Special, Movie) narrows the suggestions and the typed lookup to that type; Donghua means Chinese ONA.
+
 ## Schedule UX (spec #78, tickets #88 to #91)
 
 - `/schedule` shows a day picker above Previous and Next. Pick any day of last week, this week or next week, or step with Previous and Next across week boundaries. Use the picker or buttons instead of re-running `/schedule` for another weekday.

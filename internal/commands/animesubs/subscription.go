@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
@@ -52,13 +53,18 @@ func init() {
 		Subcommands: []*commands.Subcommand{
 			{
 				Name: "add",
-				Desc: "Subscribe to DMs for an airing anime; the reply says when it airs next.",
+				Desc: "Subscribe to DMs for an airing anime; the reply says when it airs next. Filter with type.",
 				Options: []*discordgo.ApplicationCommandOption{{
 					Type:         discordgo.ApplicationCommandOptionString,
 					Name:         "anime",
 					Description:  "An airing anime: any part of its title, romaji, English or native name",
 					Required:     true,
 					Autocomplete: true,
+				}, {
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        optType,
+					Description: "Only this kind of release: TV, TV Short, ONA, Donghua, OVA, Special or Movie",
+					Choices:     typeChoices,
 				}},
 				Run:                runAdd,
 				AutocompleteOption: autocompleteAdd,
@@ -100,6 +106,11 @@ func finish(ic *interaction.Context, desc string, logErr error) error {
 	return answer(ic, desc)
 }
 
+// typeArg is the `type` filter the invoker set, or nil.
+func typeArg(ic *interaction.Context) *animeschedule.MediaType {
+	return typeFilter(ic.Command.Options)
+}
+
 func animeArg(ic *interaction.Context) string {
 	if opt := commands.ParseOption(ic.Command.Options, "anime"); opt != nil {
 		return opt.StringValue()
@@ -110,7 +121,7 @@ func animeArg(ic *interaction.Context) string {
 // runAdd keeps today's rules through subCore: the show must be airing, one entry per show by match key, the
 // subscription limit, and seeding from today's aired entry.
 func runAdd(ic *interaction.Context) error {
-	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic))
+	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic), typeArg(ic))
 	if !confirmed {
 		return finish(ic, desc, logErr)
 	}
