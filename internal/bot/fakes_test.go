@@ -415,15 +415,20 @@ func (f *fakeSentState) SetAutopost(_ context.Context, guildID, postType string,
 		delete(f.Autoposts, apKey(guildID, postType))
 		return nil
 	}
-	c := *ap
+	// Like the Mongo repository, which rebuilds the entry from PostType, Name, ID and RoleID only.
+	c := guilds.Autopost{PostType: postType, Name: ap.Name, ID: ap.ID, RoleID: ap.RoleID}
 	f.Autoposts[apKey(guildID, postType)] = &c
 	return nil
 }
 
+// GetGuildSettings returns the defaults for a guild without settings, like the Mongo repository.
 func (f *fakeSentState) GetGuildSettings(_ context.Context, guildID string) (*guilds.GuildSettings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.Settings[guildID], nil
+	if s, ok := f.Settings[guildID]; ok && s != nil {
+		return s, nil
+	}
+	return guilds.DefaultGuildSettings(), nil
 }
 
 func (f *fakeSentState) SaveFeedChecks(_ context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
