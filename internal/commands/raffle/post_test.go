@@ -137,8 +137,12 @@ func TestAFailedEditOfTheOldMessageDoesNotFailThePost(t *testing.T) {
 	if st.raffles[0].MessageID != "posted" {
 		t.Errorf("stored message %q", st.raffles[0].MessageID)
 	}
-	if got := text(lastCall(t, fake, "EditReply").Response); !strings.Contains(got, "channels/g/c/posted") {
+	got := text(lastCall(t, fake, "EditReply").Response)
+	if !strings.Contains(got, "channels/g/c/posted") {
 		t.Errorf("reply %q", got)
+	}
+	if !strings.Contains(got, "buttons are still live") {
+		t.Errorf("reply %q does not say the old message is still live", got)
 	}
 }
 

@@ -326,3 +326,37 @@ func TestPickerDeleteFailureIsRefusedPrivately(t *testing.T) {
 		t.Errorf("last call = %+v", got)
 	}
 }
+
+func TestPickerStillDeletesWhenTheRaffleChannelWasDeleted(t *testing.T) {
+	st := useManage(t, &guilds.Raffle{Name: "Gone", ChannelID: "c", MessageID: "m1"})
+	ic := pick("user", firstPickerID(t, "user"), "Gone")
+	ic.Port.(*interactiontest.Fake).Fail = map[string]error{"EditMessage": restError(discordgo.ErrCodeUnknownChannel, 404)}
+	if err := handleRemovePicker(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(st.deleted, []string{"Gone"}) {
+		t.Errorf("deleted %v", st.deleted)
+	}
+}
+
+func TestPickerRemovesNothingWhenTwoNamesClipAlike(t *testing.T) {
+	shared := strings.Repeat("a", maxChoiceLength)
+	st := useManage(t,
+		&guilds.Raffle{Name: shared + "-first", ChannelID: "c", MessageID: "m1"},
+		&guilds.Raffle{Name: shared + "-second", ChannelID: "c", MessageID: "m2"},
+	)
+	ic := pick("user", firstPickerID(t, "user"), shared)
+	if err := handleRemovePicker(ic, nil); err != nil {
+		t.Fatal(err)
+	}
+	fake := ic.Port.(*interactiontest.Fake)
+	if len(st.deleted) != 0 || len(st.raffles) != 2 || slices.Contains(fake.Ops(), "EditMessage") {
+		t.Errorf("deleted %v, ops %v: an ambiguous choice must change nothing", st.deleted, fake.Ops())
+	}
+	last := fake.Calls()[len(fake.Calls())-1]
+	if last.Op != "Reply" || last.Visibility != interaction.Private ||
+		!strings.Contains(last.Response.Content, shared+"-first") || !strings.Contains(last.Response.Content, shared+"-second") ||
+		!strings.Contains(last.Response.Content, "/raffle remove") {
+		t.Errorf("last call = %+v", last)
+	}
+}

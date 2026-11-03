@@ -454,7 +454,9 @@ func (r *Repo) MarkAutopostPosted(ctx context.Context, guildID, postType, date s
 	return nil
 }
 
-func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) error {
+// UpdateRaffleParticipant adds the user to the named raffle's entrants, or removes them, in one single-statement
+// update. It reports whether a raffle matched, so a caller can tell a raffle deleted meanwhile from a no-op.
+func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName, userID string, remove bool) (bool, error) {
 	filter := bson.M{"_id": guildID, "raffles.name": raffleName}
 	var update bson.M
 	if remove {
@@ -462,11 +464,11 @@ func (r *Repo) UpdateRaffleParticipant(ctx context.Context, guildID, raffleName,
 	} else {
 		update = bson.M{"$addToSet": bson.M{"raffles.$.participant_ids": userID}}
 	}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
+	res, err := r.coll.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return fmt.Errorf("UpdateRaffleParticipant: %w", err)
+		return false, fmt.Errorf("UpdateRaffleParticipant: %w", err)
 	}
-	return nil
+	return res.MatchedCount > 0, nil
 }
 
 // ListBotLogChannelIDs returns all non-empty bot log channel IDs.

@@ -210,3 +210,45 @@ func TestDrawAndRemoveAreRegisteredWithAutocompleteAndTheOldCommandsAreGone(t *t
 		}
 	}
 }
+
+func restError(code int, status int) error {
+	return &discordgo.RESTError{Response: &http.Response{StatusCode: status}, Message: &discordgo.APIErrorMessage{Code: code}}
+}
+
+func TestRemoveStillDeletesWhenTheRaffleChannelWasDeleted(t *testing.T) {
+	st := &fakeStore{raffles: []*guilds.Raffle{{Name: "x", ChannelID: "c", MessageID: "m1"}}}
+	useDrawStore(t, st)
+	fake := &interactiontest.Fake{Fail: map[string]error{"EditMessage": restError(discordgo.ErrCodeUnknownChannel, 404)}}
+	invokeSub(t, fake, "remove", "x")
+	if len(st.raffles) != 0 {
+		t.Errorf("record kept: %+v", st.raffles)
+	}
+	if got := text(lastCall(t, fake, "EditReply").Response); strings.Contains(got, "channels/") {
+		t.Errorf("reply %q links to a message that is gone", got)
+	}
+}
+
+func TestRemoveReplyLinksTheClosedMessage(t *testing.T) {
+	st := &fakeStore{raffles: []*guilds.Raffle{{Name: "x", ChannelID: "c9", MessageID: "m1"}}}
+	useDrawStore(t, st)
+	fake := &interactiontest.Fake{}
+	invokeSub(t, fake, "remove", "x")
+	if got := text(lastCall(t, fake, "EditReply").Response); !strings.Contains(got, "https://discord.com/channels/g/c9/m1") {
+		t.Errorf("reply %q has no link", got)
+	}
+}
+
+func TestADrawWhoseMessageEditFailsTellsTheModeratorPrivatelyAfterTheAnnouncement(t *testing.T) {
+	st := &fakeStore{raffles: []*guilds.Raffle{{Name: "x", ParticipantIDs: []string{"only"}, ChannelID: "c9", MessageID: "m1"}}}
+	useDrawStore(t, st)
+	fake := &interactiontest.Fake{Fail: map[string]error{"EditMessage": &discordgo.RESTError{Response: &http.Response{StatusCode: 403}}}}
+	invokeSub(t, fake, "draw", "x")
+	ops := fake.Ops()
+	if ops[len(ops)-2] != "EditReply" || ops[len(ops)-1] != "FollowUp" {
+		t.Fatalf("ops %v, want the announcement then a follow-up", ops)
+	}
+	follow := lastCall(t, fake, "FollowUp")
+	if follow.Visibility != interaction.Private || !strings.Contains(follow.Response.Content, "The winner is announced, but I couldn't update the raffle message") || !strings.Contains(follow.Response.Content, "<#c9>") {
+		t.Errorf("follow-up = %+v", follow)
+	}
+}
