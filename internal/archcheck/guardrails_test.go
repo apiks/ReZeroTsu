@@ -127,10 +127,9 @@ const portAdapterFile = "interaction/discordgo.go"
 // internal/. Each area spec (#33 to #36) removes the entries it migrates, and ticket 7.2 deletes the allowlist.
 // A stale entry (a file that no longer makes such a call) fails the test, so the list only shrinks.
 var legacyResponseFiles = map[string]bool{
-	"commands/command.go":     true, // autocomplete answers and RespondEphemeral
-	"commands/helpers.go":     true, // RespondEmbed helpers
-	"commands/pagination.go":  true, // pagination buttons
-	"commands/feeds/feeds.go": true,
+	"commands/command.go":    true, // autocomplete answers and RespondEphemeral
+	"commands/helpers.go":    true, // RespondEmbed helpers
+	"commands/pagination.go": true, // pagination buttons
 }
 
 // responseCalls lists every interaction-response call in a file, ignoring the allowlists.
@@ -366,7 +365,7 @@ func init() {
 		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
 		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
 		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
-		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/feeds/feeds.go", 0},
+		{"allowlisted legacy files may respond", responding, checkInteractionResponses, "commands/helpers.go", 0},
 		{"port calls are not session responses", clean, checkInteractionResponses, "commands/roll/rollnew.go", 0},
 		{"a command without Visibility is flagged", registering, checkCommandsDeclareVisibility, "x.go", 2},
 	}

@@ -28,11 +28,11 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Everyone** (also usable under a user install, in any server, DM or group DM): `/schedule`, `/subscription` (`add`, `remove`, `list`, `clear`), `/reminder` (`set`, `list`, `remove`), `/roll`, `/pick`, `/joke`, `/avatar`, `/help`, `/about`, `/invite`, `/ping`, and the right-click user command **Show avatar**.
 
-**Server settings:** `/bot-log`, `/new-episodes`, `/daily-schedule`, `/donghua`, `/ping-message`, `/mod-only`, `/react-module`, `/moderator-roles`, `/add-moderator-role`, `/remove-moderator-role`.
+**Server settings:** `/settings` (bot log, new-episodes and daily-schedule autoposts, ping role, donghua, ping message), `/mod-only`, `/react-module`, `/moderator-roles`, `/add-moderator-role`, `/remove-moderator-role`.
 
-**Voice roles:** `/add-voice`, `/remove-voice`, `/voice-roles`.
+**Voice roles:** `/voicerole add`, `/voicerole remove`, `/voicerole list`.
 
-**Reddit feeds:** `/add-reddit-feed`, `/remove-reddit-feed`, `/reddit-feeds`.
+**Reddit feeds:** `/reddit add`, `/reddit remove`, `/reddit list`.
 
 **Reaction roles:** right-click a message for **Add reaction role** or **Remove reaction roles**, and `/reactrole list` to see and remove them.
 

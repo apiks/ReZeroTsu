@@ -199,7 +199,7 @@ func handlePagination(ic *interaction.Context, s *discordgo.Session) error {
 		return ic.Refuse(msgInvalidButton)
 	}
 	switch cmd {
-	case "raffle", "reactrole", "reddit-feeds":
+	case "raffle", "reactrole", "reddit":
 		if ic.GuildID == "" || ic.Member == nil {
 			return ic.Refuse(msgFailedLoad)
 		}
