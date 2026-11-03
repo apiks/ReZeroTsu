@@ -127,7 +127,8 @@ func channelOption(ic *interaction.Context) string {
 }
 
 // clip cuts text to at most n characters.
-func clip(text string, n int) string {
+func clip(text string) string {
+	const n = maxChoiceLength
 	r := []rune(text)
 	if len(r) <= n {
 		return text

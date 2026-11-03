@@ -121,9 +121,9 @@ func removePicker(entries []guilds.FeedEntry, page int, authorID string) discord
 			label += " " + f.Title
 		}
 		options = append(options, discordgo.SelectMenuOption{
-			Label:       clip(label, maxChoiceLength),
+			Label:       clip(label),
 			Value:       v,
-			Description: clip("Channel ID "+f.ChannelID, maxChoiceLength),
+			Description: clip("Channel ID " + f.ChannelID),
 		})
 	}
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{

@@ -67,7 +67,7 @@ func subredditChoices(ctx context.Context, st store, guildID, typed string) []*d
 	subs = commands.MatchAnywhere(subs, typed, func(sub string) []string { return []string{sub, "r/" + sub} })
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(subs))
 	for j, sub := range subs {
-		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: clip("r/"+sub, maxChoiceLength), Value: clip(sub, maxChoiceLength)}
+		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: clip("r/" + sub), Value: clip(sub)}
 	}
 	return choices
 }
@@ -118,7 +118,7 @@ func channelChoices(ctx context.Context, st store, nameOf func(id string) string
 	})
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(list))
 	for j, c := range list {
-		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: clip(c.name, maxChoiceLength), Value: c.id}
+		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: clip(c.name), Value: c.id}
 	}
 	return choices
 }
@@ -183,7 +183,7 @@ func pickKey(f guilds.FeedEntry) string {
 	return strings.Join([]string{f.ChannelID, f.PostType, f.Subreddit, f.Author, f.Title}, "|")
 }
 
-func pickValue(f guilds.FeedEntry) string { return clip(pickKey(f), maxChoiceLength) }
+func pickValue(f guilds.FeedEntry) string { return clip(pickKey(f)) }
 
 // sameFeedScope reports whether RemoveFeed with f's fields also removes g: it matches on channel, subreddit and
 // post type, and narrows by author and title only when they are not empty.
