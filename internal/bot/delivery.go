@@ -120,6 +120,9 @@ type SentState interface {
 	// MarkUserShowNotified records one show of a user's document as notified with its air time and episode
 	// key, in a single-statement update (matched by show name).
 	MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error
+	// SetUserShowRoute records route on one show of a user's document that has none, in a single-statement
+	// update (matched by show name).
+	SetUserShowRoute(ctx context.Context, id, showName, route string) error
 
 	// --- ticket #10 (feeds) ---
 
@@ -290,6 +293,10 @@ func (m *mongoSentState) MarkSchedulePosted(ctx context.Context, guildID, date s
 
 func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName string, airUnix int64, episodeKey string) error {
 	return m.db.AnimeSubs().MarkShowNotified(ctx, id, showName, airUnix, episodeKey)
+}
+
+func (m *mongoSentState) SetUserShowRoute(ctx context.Context, id, showName, route string) error {
+	return m.db.AnimeSubs().SetShowRoute(ctx, id, showName, route)
 }
 
 func (m *mongoSentState) ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error) {

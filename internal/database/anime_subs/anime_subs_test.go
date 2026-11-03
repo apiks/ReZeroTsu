@@ -9,6 +9,31 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
+func TestShowSubRouteIsOptionalInStoredDocuments(t *testing.T) {
+	legacy, err := bson.Marshal(bson.M{"show": "Frieren", "notified": true, "guild": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sub ShowSub
+	if err := bson.Unmarshal(legacy, &sub); err != nil {
+		t.Fatal(err)
+	}
+	if sub.Route != "" || sub.Show != "Frieren" {
+		t.Errorf("legacy sub = %+v, want empty route", sub)
+	}
+	out, err := bson.Marshal(&ShowSub{Show: "Frieren"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw bson.M
+	if err := bson.Unmarshal(out, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["route"]; ok {
+		t.Errorf("an empty route is stored: %v", raw)
+	}
+}
+
 func dupKeyErr() error {
 	return mongo.WriteException{WriteErrors: mongo.WriteErrors{{Code: 11000, Message: "E11000 duplicate key"}}}
 }

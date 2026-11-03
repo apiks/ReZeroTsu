@@ -240,3 +240,55 @@ func TestProcessAnimeSubUserShutdownDuringOpenDMLogsNoError(t *testing.T) {
 		t.Errorf("error logs = %d, want 0 on shutdown", n)
 	}
 }
+
+func TestProcessAnimeSubUserMatchesByRouteFirst(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	aired := now.Unix() - 600
+	const user = "u1"
+	dm := "dm-" + user
+	ep := func(name, route string) animeschedule.ShowEntry {
+		return animeschedule.ShowEntry{Name: name, Route: route, Episode: "Episode 2", AirTimeUnix: aired, AirType: "sub"}
+	}
+	run := func(sub *anime_subs.ShowSub, show animeschedule.ShowEntry) (*fakeDiscord, *fakeSentState) {
+		d, st := newFakeDiscord(), newFakeSentState()
+		st.AnimeSubs[user] = &anime_subs.AnimeSubs{ID: user, Shows: []*anime_subs.ShowSub{sub}}
+		doc, _ := st.GetAnimeSubs(context.Background(), user)
+		_ = processAnimeSubUser(context.Background(), d, newTestSenders(d), st, doc, []animeschedule.ShowEntry{show}, now)
+		return d, st
+	}
+
+	t.Run("a renamed show still gets its DM through the route", func(t *testing.T) {
+		d, _ := run(&anime_subs.ShowSub{Show: "Old Title", Route: "show-a"}, ep("New Title", "show-a"))
+		if n := len(d.deliveredTo(dm)); n != 1 {
+			t.Fatalf("DMs = %d, want 1", n)
+		}
+	})
+	t.Run("a subscription with a route is not matched by title", func(t *testing.T) {
+		d, st := run(&anime_subs.ShowSub{Show: "Show A", Route: "show-a"}, ep("Show A", "other-route"))
+		if n := len(d.deliveredTo(dm)); n != 0 {
+			t.Fatalf("DMs = %d, want 0", n)
+		}
+		if got := st.userShow(user, "Show A").Route; got != "show-a" {
+			t.Errorf("route = %q, want it unchanged", got)
+		}
+	})
+	t.Run("a title match saves the entry's route", func(t *testing.T) {
+		d, st := run(&anime_subs.ShowSub{Show: "Show A"}, ep("show a", "show-a"))
+		if n := len(d.deliveredTo(dm)); n != 1 {
+			t.Fatalf("DMs = %d, want 1", n)
+		}
+		if got := st.userShow(user, "Show A").Route; got != "show-a" {
+			t.Errorf("route = %q, want show-a", got)
+		}
+	})
+	t.Run("the route is saved even when the episode was already notified", func(t *testing.T) {
+		show := ep("Show A", "show-a")
+		d, st := run(&anime_subs.ShowSub{Show: "Show A", Notified: true, LastNotifiedAirUnix: aired}, show)
+		if n := len(d.deliveredTo(dm)); n != 0 {
+			t.Fatalf("DMs = %d, want 0", n)
+		}
+		if got := st.userShow(user, "Show A").Route; got != "show-a" {
+			t.Errorf("route = %q, want show-a", got)
+		}
+	})
+}

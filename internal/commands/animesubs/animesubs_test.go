@@ -324,3 +324,18 @@ func TestAiredTodayEntry(t *testing.T) {
 		})
 	}
 }
+
+func TestSubCoreStoresTheResolvedShowRoute(t *testing.T) {
+	old := showLookup
+	showLookup = func(string) (animeschedule.ShowEntry, bool) {
+		return animeschedule.ShowEntry{Name: "Frieren", Route: "sousou-no-frieren"}, true
+	}
+	t.Cleanup(func() { showLookup = old })
+	st := newFakeStore()
+	if _, err := subCore(context.Background(), st, "u", "frieren"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.docs["u"]; len(got) != 1 || got[0].Route != "sousou-no-frieren" {
+		t.Fatalf("stored subscription = %+v, want route sousou-no-frieren", got)
+	}
+}
