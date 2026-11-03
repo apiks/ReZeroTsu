@@ -97,7 +97,7 @@ func pageFields(raffles []*guilds.Raffle, guildID string) []*discordgo.MessageEm
 		}
 		value := entrantCount(r)
 		if r.MessageID != "" {
-			value += " - " + messageLink(guildID, r.ChannelID, r.MessageID)
+			value += " - " + commands.MessageLink(guildID, r.ChannelID, r.MessageID)
 		}
 		fields = append(fields, &discordgo.MessageEmbedField{Name: string(name), Value: value})
 	}
@@ -234,7 +234,7 @@ func ambiguousChoice(matches []*guilds.Raffle) string {
 			fmt.Fprintf(&b, "\n...and %d more", len(matches)-shown)
 			break
 		}
-		b.WriteString("\n- " + truncate(r.Name, nameLimit))
+		b.WriteString("\n- " + commands.TruncateRunes(r.Name, nameLimit))
 	}
 	b.WriteString("\nUse /raffle remove with the full name instead.")
 	return b.String()

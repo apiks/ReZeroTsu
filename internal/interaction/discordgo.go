@@ -104,6 +104,10 @@ func (p *DiscordgoPort) AddReaction(channelID, messageID, emoji string) error {
 	return p.s.MessageReactionAdd(channelID, messageID, emoji)
 }
 
+func (p *DiscordgoPort) RemoveOwnReaction(channelID, messageID, emoji string) error {
+	return p.s.MessageReactionRemove(channelID, messageID, emoji, "@me")
+}
+
 func (p *DiscordgoPort) ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error) {
 	return p.s.ChannelMessages(channelID, limit, beforeID, "", "")
 }

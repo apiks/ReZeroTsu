@@ -2,7 +2,6 @@ package raffle
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -74,11 +73,6 @@ func init() {
 	commands.AddComponent(buttonPrefix, handleButton)
 }
 
-// messageLink is the URL of a message in a server.
-func messageLink(guildID, channelID, messageID string) string {
-	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
-}
-
 // raffleMessage is the raffle message: the name, the entrant count, the latest winner and the Enter and Leave
 // buttons.
 func raffleMessage(r *guilds.Raffle) interaction.Response {
@@ -130,7 +124,7 @@ func runCreate(ic *interaction.Context) error {
 		}
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	return ic.EditReply(interaction.Response{Content: "Raffle **" + name + "** is posted: " + messageLink(ic.GuildID, msg.ChannelID, msg.ID)})
+	return ic.EditReply(interaction.Response{Content: "Raffle **" + name + "** is posted: " + commands.MessageLink(ic.GuildID, msg.ChannelID, msg.ID)})
 }
 
 // handleButton enters or removes the member who pressed Enter or Leave on a raffle message.

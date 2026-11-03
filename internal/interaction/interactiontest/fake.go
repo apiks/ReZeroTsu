@@ -117,6 +117,10 @@ func (f *Fake) AddReaction(channelID, messageID, emoji string) error {
 	return f.record(Call{Op: "AddReaction", ChannelID: channelID, MessageID: messageID, Emoji: emoji})
 }
 
+func (f *Fake) RemoveOwnReaction(channelID, messageID, emoji string) error {
+	return f.record(Call{Op: "RemoveOwnReaction", ChannelID: channelID, MessageID: messageID, Emoji: emoji})
+}
+
 // ListMessages answers from History[channelID], which is ordered newest first.
 func (f *Fake) ListMessages(channelID string, limit int, beforeID string) ([]*discordgo.Message, error) {
 	if err := f.record(Call{Op: "ListMessages", ChannelID: channelID, MessageID: beforeID}); err != nil {
