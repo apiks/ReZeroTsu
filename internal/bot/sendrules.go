@@ -24,8 +24,8 @@ const (
 	sentWriteTimeout = 5 * time.Second
 )
 
-// errSendNotAttempted marks a Send error returned before any request was made (a send-limiter wait ended by
-// the context). Only such errors skip verification; see sendNotAttempted.
+// errSendNotAttempted marks a Send error returned before any request was made (the webhook limiter wait in
+// SendBatchToChannel ended by the context). Only such errors skip verification; see sendNotAttempted.
 var errSendNotAttempted = errors.New("send not attempted")
 
 // notAttempted wraps err (a context error from a wait that precedes the request) as errSendNotAttempted while

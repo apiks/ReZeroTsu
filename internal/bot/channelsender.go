@@ -10,8 +10,11 @@ import (
 
 // The channel sender is the one way a delivery run posts its messages to a single channel or DM under the send
 // rules (see GLOSSARY.md):
+//   - a post checks for shutdown, waits for one token of the shared send budget at its policy's priority, checks
+//     for shutdown again, then sends; a failed token wait (shutdown, or the limiter stopping) or shutdown noticed
+//     after the wait sends nothing and reports cancelled, and the bot-account fallback uses the same token;
 //   - nothing is sent once the context is cancelled, and a context error never triggers a fallback send; only a
-//     Send that never made the request (errSendNotAttempted: a send-limiter wait ended by the context) skips
+//     Send that never made the request (errSendNotAttempted: the webhook limiter wait ended by the context) skips
 //     verification, while any other context error (e.g. an in-flight client timeout) stays Unknown;
 //   - the webhook -> bot-account fallback runs at most once per post, only when the webhook send is Rejected as
 //     an unknown/invalid webhook (which is invalidated first) or with a channel-terminal code (deleted,
@@ -32,43 +35,92 @@ type sendPolicy struct {
 	label string
 	// botAccountOnly posts through the bot account and never looks up a webhook.
 	botAccountOnly bool
+	// priority is the send priority at which a post waits for the shared send budget.
+	priority int
 }
 
-// newEpisodesPolicy is the policy for new-episodes posts: webhook or bot account, presume delivered.
+// newEpisodesPolicy is the policy for new-episodes posts: webhook or bot account, presume delivered, anime subs
+// priority.
 func newEpisodesPolicy() sendPolicy {
-	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send"}
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", priority: PriorityAnimeSubs}
 }
 
-// dmPolicy is the policy for DMs (episode DMs, reminders): bot account only, presume delivered.
-func dmPolicy() sendPolicy {
-	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true}
+// episodeDMPolicy is the policy for episode DMs: bot account only, presume delivered, anime subs priority.
+func episodeDMPolicy() sendPolicy {
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true, priority: PriorityAnimeSubs}
 }
 
-// feedPolicy is the policy for feed posts: webhook or bot account, a failed verification means not delivered.
+// reminderPolicy is the policy for reminder DMs: bot account only, presume delivered, reminders priority.
+func reminderPolicy() sendPolicy {
+	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true, priority: PriorityReminders}
+}
+
+// feedPolicy is the policy for feed posts: webhook or bot account, a failed verification means not delivered,
+// feeds priority.
 func feedPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send"}
+	return sendPolicy{match: feedMessageInRecent, label: "feed send", priority: PriorityFeeds}
 }
 
 // feedPinPolicy is the policy for a pinned feed item: bot account only (a message ID is needed to pin), a failed
-// verification means not delivered.
+// verification means not delivered, feeds priority.
 func feedPinPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send", botAccountOnly: true}
+	return sendPolicy{match: feedMessageInRecent, label: "feed send", botAccountOnly: true, priority: PriorityFeeds}
 }
 
 // schedulePolicy is the policy for the daily schedule posted at now: webhook or bot account, matching the
-// schedule title posted on the current UTC day, a failed verification means not delivered.
+// schedule title posted on the current UTC day, a failed verification means not delivered, schedule priority.
 func schedulePolicy(title string, now time.Time) sendPolicy {
-	return sendPolicy{match: scheduleMatcher(title, now), label: "schedule send"}
+	return sendPolicy{match: scheduleMatcher(title, now), label: "schedule send", priority: PrioritySchedule}
 }
 
-// PostResult is the outcome of one channelSender.post.
+// PostOutcome is what one channelSender.post concluded about its message. It differs from the discord package's
+// SendOutcome, which classifies the answer to a single Discord call (sent, rejected or unknown): a post may make
+// several calls (webhook, bot-account fallback, verification read) and reports the one conclusion that a delivery
+// run switches on, including a shutdown that the single calls do not describe.
+type PostOutcome int
+
+const (
+	// PostDelivered means the message is confirmed delivered.
+	PostDelivered PostOutcome = iota + 1
+	// PostPresumed means the message is treated as delivered because verifying an unknown outcome failed under a
+	// policy that presumes delivery.
+	PostPresumed
+	// PostRejected means Discord refused the final attempt; nothing was delivered.
+	PostRejected
+	// PostMissing means an unknown outcome was verified as not delivered, or its verification failed under a
+	// policy that does not presume delivery.
+	PostMissing
+	// PostCancelled means the post ended undelivered because shutdown was under way, or because its send-limiter
+	// token wait failed while the context was alive (the limiter stopped).
+	PostCancelled
+)
+
+func (o PostOutcome) String() string {
+	switch o {
+	case PostDelivered:
+		return "delivered"
+	case PostPresumed:
+		return "presumed"
+	case PostRejected:
+		return "rejected"
+	case PostMissing:
+		return "missing"
+	case PostCancelled:
+		return "cancelled"
+	default:
+		return "invalid"
+	}
+}
+
+// PostResult is the result of one channelSender.post.
 type PostResult struct {
-	// Delivered is true when the message is confirmed, or presumed (verification failed), delivered.
-	Delivered bool
-	// Presumed is true when Delivered was assumed because verification failed.
-	Presumed bool
-	// Err is the error that ended an undelivered post (a Rejected error, the Unknown error verified missing,
-	// or the context error).
+	// Outcome is what the post concluded.
+	Outcome PostOutcome
+	// Terminal is why Discord's final rejection means the channel cannot be posted to; it is
+	// discord.ChannelNotTerminal unless Outcome is PostRejected.
+	Terminal discord.ChannelTerminalReason
+	// Err is the error that ended an undelivered post (the rejection, the unknown error verified missing, or the
+	// context error), kept for logging.
 	Err error
 	// MessageID is the delivered message's ID when known (bot-account sends and matched messages).
 	MessageID string
@@ -91,29 +143,38 @@ type channelSender struct {
 	guildID, channelID string
 	webhook            *WebhookTarget
 	policy             sendPolicy
+	limiter            sendTokenAcquirer
 }
 
-// channelSenderFactory opens channel senders over one shard's raw Discord adapter and the webhook cache shared by
-// all shards. It is built once per shard. The cache owns time (it holds the injected clock), so the factory has none.
+// sendTokenAcquirer is the shared send budget as the channel sender uses it: one wait for one token at a priority.
+// The real *SendLimiter satisfies it.
+type sendTokenAcquirer interface {
+	Acquire(ctx context.Context, priority int) error
+}
+
+// channelSenderFactory opens channel senders over one shard's raw Discord adapter, the webhook cache shared by
+// all shards and the send limiter shared by all shards. It is built once per shard. The cache owns time (it holds
+// the injected clock), so the factory has none.
 type channelSenderFactory struct {
-	raw   RawDiscord
-	cache *webhookCache
+	raw     RawDiscord
+	cache   *webhookCache
+	limiter sendTokenAcquirer
 }
 
-func newChannelSenderFactory(raw RawDiscord, cache *webhookCache) *channelSenderFactory {
-	return &channelSenderFactory{raw: raw, cache: cache}
+func newChannelSenderFactory(raw RawDiscord, cache *webhookCache, limiter sendTokenAcquirer) *channelSenderFactory {
+	return &channelSenderFactory{raw: raw, cache: cache, limiter: limiter}
 }
 
 // open opens a channel sender for channelID (guildID is empty for a DM) under policy.
 func (f *channelSenderFactory) open(guildID, channelID string, policy sendPolicy) *channelSender {
-	return newChannelSender(f.raw, f.cache, guildID, channelID, policy)
+	return newChannelSender(f.raw, f.cache, f.limiter, guildID, channelID, policy)
 }
 
 // newChannelSender opens a channel sender for channelID (guildID is empty for a DM) under policy. Unless the policy
 // is bot-account only it picks the channel's webhook once: none for an avoided channel, else the cached webhook,
 // else one resolved through the raw port (and cached).
-func newChannelSender(d RawDiscord, cache *webhookCache, guildID, channelID string, policy sendPolicy) *channelSender {
-	c := &channelSender{d: d, cache: cache, guildID: guildID, channelID: channelID, policy: policy}
+func newChannelSender(d RawDiscord, cache *webhookCache, limiter sendTokenAcquirer, guildID, channelID string, policy sendPolicy) *channelSender {
+	c := &channelSender{d: d, cache: cache, limiter: limiter, guildID: guildID, channelID: channelID, policy: policy}
 	if !policy.botAccountOnly {
 		c.webhook = c.selectWebhook()
 	}
@@ -146,28 +207,47 @@ func (c *channelSender) post(ctx context.Context, msg OutgoingMessage) PostResul
 	if out.webhookRejected {
 		c.webhook = nil
 	}
-	if !out.Delivered && out.Err != nil && discord.ClassifyChannelTerminal(out.Err) != discord.ChannelNotTerminal {
+	if out.Outcome == PostRejected && out.Terminal != discord.ChannelNotTerminal {
 		// The final attempt was rejected as channel-terminal: drop the channel's cached webhook so the next run
 		// resolves it again (the permission check then fails before any REST call).
 		c.cache.Invalidate(c.guildID, c.channelID)
 	}
+	if (out.Outcome == PostRejected || out.Outcome == PostMissing) && ctx.Err() != nil {
+		// Undelivered while shutdown is under way, whatever the underlying error: no run handles it as a failure.
+		out.PostResult = PostResult{Outcome: PostCancelled, Err: out.Err}
+	}
 	return out.PostResult
 }
 
-// deliver makes one post: cancel check, never-attempted check, outcome classification, rejected-webhook
-// fallback, Unknown verification and unrecognised-rejection logging.
+// rejectedResult is the result of a post whose final attempt Discord refused with err.
+func rejectedResult(err error) PostResult {
+	return PostResult{Outcome: PostRejected, Terminal: discord.ClassifyChannelTerminal(err), Err: err}
+}
+
+// deliver makes one post: shutdown check, one token wait, shutdown check again, send, never-attempted check, outcome
+// classification, rejected-webhook fallback, Unknown verification and unrecognised-rejection logging.
 func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOutcome {
 	if err := ctx.Err(); err != nil {
-		return sendOutcome{PostResult: PostResult{Err: err}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
+	}
+	// One token per post, taken after the shutdown check and before the first send; the bot-account fallback below
+	// reuses it. A failed wait (shutdown, or the limiter stopping) sends nothing.
+	if err := c.limiter.Acquire(ctx, c.policy.priority); err != nil {
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
+	}
+	// A successful wait does not prove the context is alive (the limiter's fast path never reads it, and its Done
+	// branch can return a token already granted), and the Discord port ignores ctx, so check again before sending.
+	if err := ctx.Err(); err != nil {
+		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
 	}
 	webhook := c.webhook
 	id, err := c.d.Send(ctx, c.channelID, webhook, msg)
 	if sendNotAttempted(err) {
-		return sendOutcome{PostResult: PostResult{Err: err}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}}
 	}
 	switch discord.ClassifySend(err) {
 	case discord.Sent:
-		return sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 	case discord.Unknown:
 		return c.verify(ctx, webhook, msg, err)
 	}
@@ -182,19 +262,19 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 			c.cache.Invalidate(c.guildID, c.channelID)
 		}
 		if cerr := ctx.Err(); cerr != nil {
-			return sendOutcome{PostResult: PostResult{Err: cerr}, webhookRejected: true}
+			return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: cerr}, webhookRejected: true}
 		}
 		id, err = c.d.Send(ctx, c.channelID, nil, msg)
 		if sendNotAttempted(err) {
-			return sendOutcome{PostResult: PostResult{Err: err}, webhookRejected: true}
+			return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}, webhookRejected: true}
 		}
 		if outcome := discord.ClassifySend(err); outcome != discord.Rejected {
-			res := sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+			res := sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 			if outcome == discord.Unknown {
 				res = c.verify(ctx, nil, msg, err)
 			}
 			res.webhookRejected = true
-			if res.Delivered && !res.Presumed && !gone {
+			if res.Outcome == PostDelivered && !gone {
 				// The bot account can post where the webhook cannot: stop offering the webhook, or every later
 				// run spends another rejected (401/403) request on it before falling back. A presumed delivery
 				// proves nothing about the bot account, so it does not avoid the webhook.
@@ -203,10 +283,10 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 			return res
 		}
 		c.logUnrecognisedRejection(err)
-		return sendOutcome{PostResult: PostResult{Err: err}, webhookRejected: true}
+		return sendOutcome{PostResult: rejectedResult(err), webhookRejected: true}
 	}
 	c.logUnrecognisedRejection(err)
-	return sendOutcome{PostResult: PostResult{Err: err}}
+	return sendOutcome{PostResult: rejectedResult(err)}
 }
 
 // verify reads recent channel messages to decide whether an Unknown send actually landed. It runs detached from
@@ -220,16 +300,16 @@ func (c *channelSender) verify(ctx context.Context, webhook *WebhookTarget, msg 
 		if c.policy.presumeOnVerifyFailure {
 			logger.For("delivery").Warn("could not verify unknown "+c.policy.label+", treating as delivered",
 				"channel_id", c.channelID, "send_err", sendErr, "err", err)
-			return sendOutcome{PostResult: PostResult{Delivered: true, Presumed: true}}
+			return sendOutcome{PostResult: PostResult{Outcome: PostPresumed}}
 		}
 		logger.For("delivery").Warn("could not verify unknown "+c.policy.label+", treating as not delivered",
 			"channel_id", c.channelID, "send_err", sendErr, "err", err)
-		return sendOutcome{PostResult: PostResult{Err: sendErr}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 	}
 	if id, ok := c.policy.match(recent, c.d.BotUserID(), webhook, msg); ok {
-		return sendOutcome{PostResult: PostResult{Delivered: true, MessageID: id}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
 	}
-	return sendOutcome{PostResult: PostResult{Err: sendErr}}
+	return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 }
 
 // logUnrecognisedRejection warns about a Rejected error that callers have no terminal handling for.

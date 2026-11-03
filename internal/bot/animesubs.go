@@ -479,16 +479,11 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 		}
 
 		emb := buildEpisodeEmbed(show)
-		if globalSendLimiter != nil {
-			if acqErr := globalSendLimiter.Acquire(ctx, PriorityAnimeSubs); acqErr != nil {
-				return acqErr
-			}
-		}
-		res := senders.open("", dmID, dmPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
-		if !res.Delivered {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		res := senders.open("", dmID, episodeDMPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+		switch res.Outcome {
+		case PostCancelled:
+			return ctx.Err()
+		case PostRejected, PostMissing:
 			args := append(discord.RESTAttrs(res.Err), "user_id", userID, "err", res.Err)
 			logger.For("animesubs").Warn("sendEpisodeNotification failed", args...)
 			continue
@@ -508,7 +503,7 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 			"title", show.Name,
 			"air_time_unix", show.AirTimeUnix,
 			"episode_key", epKey,
-			"presumed", res.Presumed,
+			"presumed", res.Outcome == PostPresumed,
 		)
 
 		if !throttleTimer.Stop() {
@@ -748,14 +743,10 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if i == 0 && roleID != "" {
 			content = "<@&" + roleID + ">"
 		}
-		if globalSendLimiter != nil {
-			if err := globalSendLimiter.Acquire(ctx, PriorityAnimeSubs); err != nil {
-				return
-			}
-		}
 		// After a rejected webhook the sender sends later chunks through the bot account.
 		res := sender.post(ctx, OutgoingMessage{Content: content, Embeds: embeds})
-		if res.Delivered {
+		switch res.Outcome {
+		case PostDelivered, PostPresumed:
 			// A batch we cannot confirm as recorded would be resent next run, so record it right away
 			// on a context that survives shutdown.
 			markErr := detachedWrite(ctx, func(wctx context.Context) error {
@@ -767,20 +758,18 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 			}
 			logger.For("animesubs").Debug("new-episodes batch sent", "guild_id", guildID, "channel_id", channelID, "count", len(batch))
 			continue
+		case PostRejected:
+			handleNewEpisodesRejection(ctx, st, guildID, channelID, res.Terminal)
 		}
-		if ctx.Err() != nil {
-			return
-		}
-		handleNewEpisodesRejection(ctx, st, guildID, channelID, res.Err)
+		// Rejected, missing or cancelled: stop here, the next run sends what is still due.
 		return
 	}
 }
 
-// handleNewEpisodesRejection applies the terminal handling for an undelivered new-episodes batch: a deleted,
+// handleNewEpisodesRejection applies the terminal handling for a rejected new-episodes batch: a deleted,
 // inaccessible or non-text channel drops the channel's sent state and clears the autopost; anything else
 // (including missing permissions) leaves both in place.
-func handleNewEpisodesRejection(ctx context.Context, st SentState, guildID, channelID string, err error) {
-	reason := discord.ClassifyChannelTerminal(err)
+func handleNewEpisodesRejection(ctx context.Context, st SentState, guildID, channelID string, reason discord.ChannelTerminalReason) {
 	switch reason {
 	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
 	default:

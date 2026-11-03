@@ -59,6 +59,57 @@ func TestDailyScheduleDelivery(t *testing.T) {
 	}
 }
 
+// The daily schedule run retries a missing post once and never retries a rejected or cancelled one.
+func TestDailyScheduleRetriesOnlyMissingPosts(t *testing.T) {
+	t.Run("missing is retried once", func(t *testing.T) {
+		h := newScheduleHarness(timeoutWithoutDelivery(), timeoutWithoutDelivery(), timeoutWithoutDelivery())
+		_ = h.run(context.Background())
+		if h.fd.SendCalls != 2 {
+			t.Errorf("send calls = %d, want 2", h.fd.SendCalls)
+		}
+	})
+	t.Run("rejected is never retried", func(t *testing.T) {
+		for _, code := range []int{discordgo.ErrCodeMissingPermissions, discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeInvalidFormBody} {
+			h := newScheduleHarness(rejectWith(code))
+			if err := h.run(context.Background()); err != nil {
+				t.Fatalf("code %d: run: %v", code, err)
+			}
+			if h.fd.SendCalls != 1 {
+				t.Errorf("code %d: send calls = %d, want 1", code, h.fd.SendCalls)
+			}
+		}
+	})
+	t.Run("cancelled is never retried", func(t *testing.T) {
+		// The limiter stops while the context is alive, so the post is cancelled without shutdown. A wrongly retried
+		// post would wait for a second token, which the shutdown case below cannot show (a retry there stops at the
+		// cancelled context before any wait).
+		h := newScheduleHarness(succeed())
+		lim := &recordingLimiter{err: errors.New("send limiter stopped")}
+		senders, _, _ := newTestSendersWithLimiter(h.d, lim)
+		err := processDailyScheduleForGuild(context.Background(), h.d, senders, h.st, "g1", int(h.now.Weekday()), h.fn, h.now)
+		if err != nil {
+			t.Errorf("run = %v, want nil (context alive)", err)
+		}
+		if got := lim.Priorities(); len(got) != 1 {
+			t.Errorf("waits = %v, want exactly one", got)
+		}
+		if h.fd.SendCalls != 0 {
+			t.Errorf("send calls = %d, want 0", h.fd.SendCalls)
+		}
+	})
+	t.Run("cancelled by shutdown is never retried", func(t *testing.T) {
+		h := newScheduleHarness(timeoutWithoutDelivery(), succeed())
+		ctx, cancel := context.WithCancel(context.Background())
+		h.d = cancelDuringSend{fakeDiscord: h.fd, cancel: cancel}
+		if err := h.run(ctx); !errors.Is(err, context.Canceled) {
+			t.Errorf("run = %v, want context.Canceled", err)
+		}
+		if h.fd.SendCalls != 1 {
+			t.Errorf("send calls = %d, want 1", h.fd.SendCalls)
+		}
+	})
+}
+
 func TestDailyScheduleRerunSameDayPostsNothing(t *testing.T) {
 	h := newScheduleHarness()
 	_ = h.run(context.Background())
