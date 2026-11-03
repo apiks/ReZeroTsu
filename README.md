@@ -34,7 +34,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Reddit feeds:** `/add-reddit-feed`, `/remove-reddit-feed`, `/reddit-feeds`.
 
-**Reaction roles:** `/add-react-autorole`, `/remove-react-autorole`, `/reacts-autorole`.
+**Reaction roles:** right-click a message for **Add reaction role** or **Remove reaction roles**, and `/reactrole list` to see and remove them.
 
 **Raffles:** `/raffle create`, `/raffle draw`, `/raffle remove`, `/raffle list`, `/raffle post`.
 

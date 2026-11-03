@@ -163,15 +163,12 @@ func bindings(t *testing.T, st *fakeStore, messageID string) []map[string][]stri
 	return e.RoleEmojiMap
 }
 
-func TestTheTwoRightClickCommandsAreModGuildCommandsAndTheOldOnesRemain(t *testing.T) {
+func TestTheTwoRightClickCommandsAreModGuildCommands(t *testing.T) {
 	for _, name := range []string{"Add reaction role", "Remove reaction roles"} {
 		c := command(t, name)
 		if c.Kind != commands.KindMessage || c.Permission != commands.PermMod || c.Context != commands.ContextGuildOnly || c.Visibility != commands.Private {
 			t.Errorf("%s = kind %v perm %v context %v visibility %v", name, c.Kind, c.Permission, c.Context, c.Visibility)
 		}
-	}
-	for _, name := range []string{"add-react-autorole", "remove-react-autorole", "reacts-autorole"} {
-		command(t, name) // removed by ticket #64, not by this one
 	}
 }
 
