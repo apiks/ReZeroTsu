@@ -29,17 +29,29 @@ type fakeStore struct {
 	autoposts        map[string]*guilds.Autopost
 	deletedSentState []string
 	failAutopost     error
+	guildReads       int
 }
 
-func (f *fakeStore) GetAutopostByType(_ context.Context, _, postType string) (*guilds.Autopost, error) {
+// GetGuild is the one read behind a panel: the settings and the stored autoposts together.
+func (f *fakeStore) GetGuild(_ context.Context, _ string) (*guilds.Guild, error) {
+	f.guildReads++
 	if f.failGet != nil {
 		return nil, f.failGet
 	}
-	if ap := f.autoposts[postType]; ap != nil {
-		c := *ap
-		return &c, nil
+	g := &guilds.Guild{}
+	if f.gs != nil {
+		c := *f.gs
+		g.GuildSettings = &c
 	}
-	return nil, nil
+	for _, postType := range []string{postTypeNewEpisodes, postTypeDailySchedule} {
+		if ap := f.autoposts[postType]; ap != nil {
+			g.Autoposts = append(g.Autoposts, *ap)
+		}
+	}
+	if f.afterGet != nil {
+		f.afterGet()
+	}
+	return g, nil
 }
 
 func (f *fakeStore) SetAutopost(_ context.Context, _, postType string, ap *guilds.Autopost) error {
@@ -412,6 +424,23 @@ func TestEditPingMessageOpensPrefilledForm(t *testing.T) {
 	}
 }
 
+func TestEditPingMessageRefusesStoredTextTooLongForTheForm(t *testing.T) {
+	gs := stored()
+	gs.PingMessage = strings.Repeat("x", maxPingMessageLength+1)
+	useStore(t, &fakeStore{gs: gs})
+	fake := &interactiontest.Fake{}
+	if err := click(t, fake, moderator, idPingEdit); err != nil {
+		t.Fatal(err)
+	}
+	call := lastCall(t, fake)
+	if call.Op == "OpenForm" {
+		t.Fatal("a form that Discord would reject was opened")
+	}
+	if call.Visibility != interaction.Private || !strings.Contains(call.Response.Content, "over 4000 characters") {
+		t.Errorf("last call = %s %q %v, want a private refusal naming the limit", call.Op, call.Response.Content, call.Visibility)
+	}
+}
+
 func TestSavingPingMessageChangesOnlyIt(t *testing.T) {
 	st := &fakeStore{gs: stored()}
 	useStore(t, st)
@@ -590,5 +619,17 @@ func TestPanelSaveKeepsAWriteMadeAfterItsRead(t *testing.T) {
 				t.Errorf("a role added during the press was lost: %+v", st.gs.CommandRoles)
 			}
 		})
+	}
+}
+
+func TestAPanelPressReadsTheGuildOncePerRender(t *testing.T) {
+	st := &fakeStore{gs: stored()}
+	useStore(t, st)
+	if err := click(t, &interactiontest.Fake{}, moderator, idDonghua); err != nil {
+		t.Fatal(err)
+	}
+	// One read before the change and one for the fresh panel; the moderator check reads settings separately.
+	if st.guildReads != 2 {
+		t.Errorf("guild reads = %d, want 2", st.guildReads)
 	}
 }

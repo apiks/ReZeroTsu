@@ -30,7 +30,7 @@ const (
 	warningText   = warningMarker + " the new-episodes ping role is not mentionable and the bot cannot mention everyone there, so pings will not arrive. Make the role mentionable or give the bot Mention Everyone."
 
 	// warningLookupTimeout bounds the guild read behind the mentionable warning, which must not hold up a panel.
-	warningLookupTimeout = 2 * time.Second
+	warningLookupTimeout = time.Second
 )
 
 // dbStore is the settings store backed by the database: the guild repository plus the repository that holds the
@@ -54,21 +54,31 @@ type panelData struct {
 	dailySchedule *guilds.Autopost
 }
 
-// readPanel reads the stored settings and autoposts. Each is a copy the caller may change.
+// readPanel reads the stored settings and autoposts with one read of the guild document. Each is a copy the
+// caller may change. A missing guild or missing settings show the defaults.
 func readPanel(ctx context.Context, store settingsStore, guildID string) (*panelData, error) {
-	gs, err := store.GetGuildSettings(ctx, guildID)
-	if err != nil || gs == nil {
-		return nil, err
-	}
-	newEp, err := store.GetAutopostByType(ctx, guildID, postTypeNewEpisodes)
+	g, err := store.GetGuild(ctx, guildID)
 	if err != nil {
 		return nil, err
 	}
-	daily, err := store.GetAutopostByType(ctx, guildID, postTypeDailySchedule)
-	if err != nil {
-		return nil, err
+	gs := guilds.DefaultGuildSettings()
+	d := &panelData{gs: gs}
+	if g == nil {
+		return d, nil
 	}
-	return &panelData{gs: gs, newEpisodes: activeAutopost(newEp), dailySchedule: activeAutopost(daily)}, nil
+	if g.GuildSettings != nil {
+		c := *g.GuildSettings
+		d.gs = &c
+	}
+	for i := range g.Autoposts {
+		switch g.Autoposts[i].PostType {
+		case postTypeNewEpisodes:
+			d.newEpisodes = activeAutopost(&g.Autoposts[i])
+		case postTypeDailySchedule:
+			d.dailySchedule = activeAutopost(&g.Autoposts[i])
+		}
+	}
+	return d, nil
 }
 
 // activeAutopost is the autopost, or nil when it is absent or has no channel.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -46,7 +47,8 @@ type settingsStore interface {
 	SetBotLog(ctx context.Context, guildID string, ref *guilds.ChannelRef) error
 	SetDonghua(ctx context.Context, guildID string, on bool) error
 	SetPingMessage(ctx context.Context, guildID, text string) error
-	GetAutopostByType(ctx context.Context, guildID, postType string) (*guilds.Autopost, error)
+	// GetGuild is the single read behind a panel render: settings and autoposts together.
+	GetGuild(ctx context.Context, guildID string) (*guilds.Guild, error)
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
 	DeleteSentState(ctx context.Context, id string) error
 }
@@ -253,9 +255,15 @@ func openPingForm(ic *interaction.Context, store settingsStore) error {
 	if err != nil || gs == nil {
 		return failedLoad(ic, err)
 	}
+	current := pingMessageOf(gs)
+	if utf8.RuneCountInString(current) > maxPingMessageLength {
+		// The old /ping-message option took up to 6000 characters; Discord rejects a longer prefill, and clipping
+		// it silently would change the text.
+		return ic.Refuse("The current ping message is over 4000 characters, too long for the form. It is left as it is; ask the bot owner to shorten it.")
+	}
 	box := interaction.TextBox(idPingText, labelPingMessage, discordgo.TextInputParagraph, true)
 	input := box.Component.(discordgo.TextInput)
-	input.Value, input.MaxLength = pingMessageOf(gs), maxPingMessageLength
+	input.Value, input.MaxLength = current, maxPingMessageLength
 	box.Component = input
 	return ic.OpenForm(interaction.Form{
 		CustomID:   idPingForm,
