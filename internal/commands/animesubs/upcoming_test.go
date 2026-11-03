@@ -62,7 +62,7 @@ func TestAddSuggestionsApplyTheTypeFilterToUpcomingShows(t *testing.T) {
 	}
 }
 
-func TestAddSuggestionsLabelAFollowedUpcomingShow(t *testing.T) {
+func TestAddSuggestionsLabelASubscribedUpcomingShow(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Dated Show", Route: "dated-show", Premiere: time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)}})
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Old Name", Route: "dated-show"}}

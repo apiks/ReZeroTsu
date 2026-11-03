@@ -42,7 +42,7 @@ func (f *fakeStore) GetByID(_ context.Context, id string) (*anime_subs.AnimeSubs
 func (f *fakeStore) AddShowIfAbsent(_ context.Context, id string, sub *anime_subs.ShowSub) (bool, error) {
 	f.calls = append(f.calls, "add")
 	for _, s := range f.docs[id] {
-		if strings.EqualFold(s.Show, sub.Show) {
+		if s.Matches(sub.Route, sub.Show) {
 			return false, nil
 		}
 	}
@@ -288,7 +288,7 @@ func TestAiredTodayEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e, ok := airedTodayEntry(today, tt.show, now)
+			e, ok := airedTodayEntry(today, "", tt.show, now)
 			if ok != tt.ok || (ok && e.AirTimeUnix != tt.wantUnix) {
 				t.Errorf("airedTodayEntry(%q) = %d, %v; want %d, %v", tt.show, e.AirTimeUnix, ok, tt.wantUnix, tt.ok)
 			}

@@ -188,13 +188,13 @@ func TestRemoveTellsAMemberWhoIsNotSubscribed(t *testing.T) {
 	}
 }
 
-func TestRemoveOfAShowNotFollowedPointsToTheListCommand(t *testing.T) {
+func TestRemoveOfAShowNotSubscribedPointsToTheListCommand(t *testing.T) {
 	commands.SetCommandIDs([]*discordgo.ApplicationCommand{{ID: "123", Name: "subscription", Type: discordgo.ChatApplicationCommand}})
 	t.Cleanup(func() { commands.SetCommandIDs(nil) })
 	st := newFakeStore().with("user", "Dandadan")
 	useStore(t, st)
 	got := text(reply(t, invoke(t, "remove", animeOption("Frieren")...)))
-	if !strings.Contains(got, "See </subscription list:123> for the shows you follow.") {
+	if !strings.Contains(got, "See </subscription list:123> for your subscriptions.") {
 		t.Errorf("reply %q lacks the list pointer with a command mention", got)
 	}
 }
@@ -481,7 +481,7 @@ func TestClearAsksBeforeRemovingAnything(t *testing.T) {
 func TestClearAsksAboutOneSubscriptionToo(t *testing.T) {
 	useStore(t, newFakeStore().with("user", "A"))
 	r := reply(t, invoke(t, "clear"))
-	if !strings.Contains(text(r), "Remove all 1 subscriptions?") || len(buttons(r)) != 2 {
+	if !strings.Contains(text(r), "Remove your subscription?") || len(buttons(r)) != 2 {
 		t.Errorf("reply %q", text(r))
 	}
 }

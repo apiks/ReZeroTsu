@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/httpclient"
 	"ReZeroTsu/internal/logger"
 )
@@ -255,6 +256,55 @@ func AiringShows() []ShowEntry {
 				continue
 			}
 			seen[key] = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// showID identifies a show among entries: its route, or its title's match key when it has none.
+func showID(e ShowEntry) string {
+	if e.Route != "" {
+		return e.Route
+	}
+	return anime_subs.MatchKey(e.Name)
+}
+
+// OnBreak returns, from last week's entries, the latest entry of each show whose latest entry there was not its
+// final episode: such a show may be on a break and is kept by the daily cleanup.
+func OnBreak(last []ShowEntry) []ShowEntry {
+	latest := map[string]ShowEntry{}
+	var order []string
+	for _, e := range last {
+		id := showID(e)
+		cur, ok := latest[id]
+		if !ok {
+			order = append(order, id)
+		}
+		if !ok || e.AirTimeUnix >= cur.AirTimeUnix {
+			latest[id] = e
+		}
+	}
+	var out []ShowEntry
+	for _, id := range order {
+		if e := latest[id]; !e.Final {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// LoadedShows returns the shows of the three loaded weeks that the daily cleanup would keep: AiringShows, then the
+// shows OnBreak from last week that are not already among them.
+func LoadedShows() []ShowEntry {
+	out := AiringShows()
+	seen := make(map[string]bool, len(out))
+	for _, e := range out {
+		seen[showID(e)] = true
+	}
+	for _, e := range OnBreak(SnapshotWeeks().Last) {
+		if !seen[showID(e)] {
+			seen[showID(e)] = true
 			out = append(out, e)
 		}
 	}
