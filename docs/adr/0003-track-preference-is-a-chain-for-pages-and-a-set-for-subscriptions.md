@@ -1,0 +1,11 @@
+# Track preference is a chain for pages and a set for subscriptions
+
+AnimeSchedule lists a show's airings per track: raw, sub and dub. The bot used to collapse them into one row per airing, sub else raw, never dub. Now a server, or one run of `/schedule`, names a preferred track (Sub, Dub or Raw), and every page and autopost still shows one row per airing, chosen down a fixed chain: Sub falls back to raw and never shows dub; Dub falls back to sub, then raw; Raw shows raw only. "Has a higher track" is judged per show per week, as the old raw fallback was. A subscription instead holds a set of tracks (Sub, Dub, Raw, Sub and Dub, or every track) and sends one DM per airing of each track in the set, with Sub keeping its raw fallback inside the set.
+
+We chose a chain for pages because the one thing every reader of a page wants is one line per show: a dub server does not want the sub line of a show it has a dub for, and a sub server did not see dub lines before and must not start seeing them at deploy. We chose a set for subscriptions because a member can want the sub and the dub of one show, and a chain cannot express that. There is no "All" value anywhere: on a page it would be the Sub chain under another name, and in a subscription "every track" says what it means.
+
+We rejected the site's own model, a set of tracks with "skip raw when sub exists" rules per track, because it needs a settings page; a Discord slash option holds one fixed choice and the `/settings` panel has no free component row. We rejected one subscription entry per (show, track) because the list, the 100-subscription limit and "already subscribed" all count shows, and because a member holding Raw and Sub on a show without a sub track would get the same raw row twice.
+
+## Consequences
+
+The stored subscription gains a track set and per-track notified memory; an entry without one reads as Sub with its existing memory, so nothing changes for existing members. The new-episodes autopost's sent state must identify an airing by show, track and episode, not by show name. Pages cannot show two tracks of one show in one week, by design: a server that wants both audiences served picks one and members subscribe to the rest. A track preference value is one of three words, and adding a fourth is a change to this decision.

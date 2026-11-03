@@ -27,8 +27,16 @@ _Avoid_: mod role, command role, moderator role
 ### Anime
 
 **Subscription**:
-A user's request for a DM whenever a new episode of one show airs.
+A user's request for a DM whenever a new episode of one show airs on any of its subscription tracks.
 _Avoid_: sub, guild subscription, channel subscription
+
+**Subscription tracks**:
+The tracks a subscription alerts for: Sub, Dub, Raw, Sub and Dub, or every track. Sub is the default. Inside the set, Sub means the sub track, or the raw track in a week the show has no sub airing; Dub and Raw mean exactly that track.
+_Avoid_: track filter, subscription type, language option
+
+**Preferred track**:
+The one track a server, or one run of the schedule command, wants shown: Sub, Dub or Raw. Sub is the default. Each show appears once per airing, as its preferred track when it has one that week, else down the chain: Sub falls back to raw and never shows dub; Dub falls back to sub, then raw; Raw shows raw only.
+_Avoid_: track choice, track setting, air-type preference, "All"
 
 **Timetable**:
 AnimeSchedule's week-by-week list of episode air times. The bot holds last week's, this week's and next week's, with days counted in UTC.
@@ -41,6 +49,10 @@ _Avoid_: unaired show, announced anime
 **Donghua**:
 Chinese animation. A server can hide it from its schedule pages.
 _Avoid_: Chinese anime, ONA (Chinese)
+
+**Track**:
+An independent airing stream of a show: raw, sub or dub. A timetable entry belongs to one track. A show always has a raw track; a sub or dub track exists only when AnimeSchedule lists it, and a show can have one without an announced premiere for it.
+_Avoid_: air type, airing type, version, language
 
 **Daily-schedule autopost**:
 A server's standing order to post each UTC day's timetable page to one channel at the start of that day.
