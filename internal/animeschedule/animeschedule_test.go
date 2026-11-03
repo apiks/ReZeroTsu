@@ -2,6 +2,7 @@ package animeschedule
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -33,6 +34,44 @@ func TestProcessTimetableBucketsByUTCWeekday(t *testing.T) {
 				t.Fatalf("expected entry under weekday %d, got %v", tc.wantDay, got)
 			}
 		})
+	}
+}
+
+func TestTimetableDecodesAllFourNames(t *testing.T) {
+	body := `[{"title":"Sousou no Frieren","romaji":"Sousou no Frieren","english":"Frieren: Beyond Journey's End","native":"葬送のフリーレン","route":"frieren","airType":"sub","episodeDate":"2025-01-06T12:00:00Z"}]`
+	var list []TimetableAnime
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatal(err)
+	}
+	got := processTimetable(list)[int(time.Monday)]
+	if len(got) != 1 {
+		t.Fatalf("entries = %v", got)
+	}
+	e := got[0]
+	if e.Name != "Sousou no Frieren" || e.Romaji != "Sousou no Frieren" || e.English != "Frieren: Beyond Journey's End" || e.Native != "葬送のフリーレン" {
+		t.Errorf("entry = %+v", e)
+	}
+}
+
+func TestAllNamesIgnoresEmptyAndRepeatedNames(t *testing.T) {
+	e := ShowEntry{Name: "Show", Romaji: " ", English: "Show", Native: "ショー"}
+	if got := strings.Join(e.AllNames(), "|"); got != "Show|ショー" {
+		t.Errorf("AllNames = %q", got)
+	}
+}
+
+func TestAiringShowsListsEachShowOnceAcrossTheWeek(t *testing.T) {
+	restore := Seed(map[int][]ShowEntry{
+		1: {{Name: "A", Route: "a"}, {Name: "B", Route: "b"}},
+		4: {{Name: "A", Route: "a"}},
+	})
+	defer restore()
+	var names []string
+	for _, e := range AiringShows() {
+		names = append(names, e.Name)
+	}
+	if strings.Join(names, ",") != "A,B" {
+		t.Errorf("AiringShows = %v", names)
 	}
 }
 
