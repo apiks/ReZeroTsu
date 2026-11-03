@@ -16,7 +16,7 @@
 
 * **Voice channel roles.** Automatically assign roles when users join a voice channel and remove them when they leave. Multiple roles per channel and multiple channels per role.
 
-* **Say / Embed / Edit.** Mods can send or edit messages and embeds as the bot in a channel (e.g. for announcements the whole team can edit).
+* **Say and Edit message.** Mods post a message or embed as the bot with the `/say` form, and fix one it posted with the **Edit message** right-click (e.g. for announcements the whole team can edit).
 
 * **RemindMe.** Get a DM at a time you set, with your chosen message.
 
@@ -38,7 +38,7 @@ The bot uses **slash commands** (`/`). Use `/help` in the bot to browse commands
 
 **Raffles:** `/raffle create`, `/raffle draw`, `/raffle remove`, `/raffle list`, `/raffle post`.
 
-**Posting and channels:** `/say`, `/edit`, `/edit-embed`, `/prune`.
+**Posting and channels:** `/say` (opens a form for text or an embed), the right-click message command **Edit message**, and `/prune`.
 
 ## Support
 

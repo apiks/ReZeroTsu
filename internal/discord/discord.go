@@ -12,6 +12,7 @@ const (
 	UnknownChannelCode      = 10003 // Channel was deleted; ID is unrecoverable
 	UnknownMessageCode      = 10008 // Message was deleted or never existed
 	UnknownRoleCode         = 10011 // Role was deleted; ID is unrecoverable
+	UnknownEmojiCode        = 10014 // Emoji does not exist or is not usable
 	UnknownUserCode         = 10013 // User does not exist (deleted account)
 	MissingAccessCode       = 50001 // Bot not in server or no channel access; recoverable
 	CannotDMUserCode        = 50007 // Cannot send messages to this user (DMs disabled or blocked)
@@ -19,6 +20,7 @@ const (
 	MissingPermissionsCode  = 50013 // Bot lacks permission for the action (e.g. Send Messages in channel)
 	UnknownWebhookCode      = 10015 // Webhook was deleted
 	InvalidWebhookTokenCode = 50027 // Webhook token is no longer valid
+	MaxReactionsCode        = 30010 // The message already has the maximum number of different reactions
 )
 
 // IsUserUndeliverable reports whether err means the user can never be DMed: DMs closed or blocked (50007) or
@@ -58,6 +60,12 @@ func IsUnknownChannel(err error) bool { return hasCode(err, UnknownChannelCode) 
 
 // IsUnknownMessage reports whether err is message-deleted or unknown (10008).
 func IsUnknownMessage(err error) bool { return hasCode(err, UnknownMessageCode) }
+
+// IsUnknownEmoji reports whether err says the emoji does not exist or cannot be used (10014).
+func IsUnknownEmoji(err error) bool { return hasCode(err, UnknownEmojiCode) }
+
+// IsMaxReactions reports whether the message already has Discord's maximum number of different reactions (30010).
+func IsMaxReactions(err error) bool { return hasCode(err, MaxReactionsCode) }
 
 // IsUnknownRole reports whether err is role-deleted (10011).
 func IsUnknownRole(err error) bool { return hasCode(err, UnknownRoleCode) }

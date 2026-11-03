@@ -1,7 +1,6 @@
 package say
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -25,6 +24,7 @@ const (
 	maxEmbedLength = 4000
 
 	msgNoMessage    = "Please provide a message."
+	msgFormStale    = "That form is no longer valid. Run /say again."
 	msgNotOpener    = "Only the member who opened this form can submit it."
 	msgTooLongPlain = "That message is too long. A message can hold up to 2000 characters."
 	msgTooLongEmbed = "That message is too long. An embed can hold up to 4000 characters."
@@ -122,7 +122,7 @@ func runSay(ic *interaction.Context) error {
 func submitForm(ic *interaction.Context, _ *discordgo.Session) error {
 	channelID, embed, openerID, ok := parseFormID(ic.CustomID)
 	if !ok {
-		return fmt.Errorf("say: unrecognised form ID %q", ic.CustomID)
+		return ic.Refuse(msgFormStale)
 	}
 	if ic.Invoker == nil || ic.Invoker.ID != openerID {
 		return ic.Refuse(msgNotOpener)
@@ -152,6 +152,6 @@ func submitForm(ic *interaction.Context, _ *discordgo.Session) error {
 	if err != nil {
 		return ic.Fail(err, interaction.ErrorContext{ChannelID: channelID, Needs: needs})
 	}
-	link := fmt.Sprintf("https://discord.com/channels/%s/%s/%s", ic.GuildID, msg.ChannelID, msg.ID)
+	link := commands.MessageLink(ic.GuildID, msg.ChannelID, msg.ID)
 	return ic.EditReply(interaction.Response{Content: "Posted in " + commands.ChannelMention(msg.ChannelID) + ": " + link})
 }

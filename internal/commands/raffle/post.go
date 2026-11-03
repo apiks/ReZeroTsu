@@ -81,7 +81,7 @@ func runPost(ic *interaction.Context) error {
 		}
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
-	link := messageLink(ic.GuildID, msg.ChannelID, msg.ID)
+	link := commands.MessageLink(ic.GuildID, msg.ChannelID, msg.ID)
 	reply := "Raffle **" + raffle.Name + "** is posted: " + link
 	if raffle.MessageID != "" {
 		if err := ic.EditMessage(raffle.ChannelID, raffle.MessageID, movedMessage(raffle, link)); err != nil {

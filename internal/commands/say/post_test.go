@@ -261,13 +261,26 @@ func TestSubmittingAsSomeoneWhoDidNotOpenTheFormPostsNothing(t *testing.T) {
 	}
 }
 
-func TestAMalformedFormIDIsAnError(t *testing.T) {
+func TestAMalformedFormIDIsRefusedAsStale(t *testing.T) {
 	fake := &interactiontest.Fake{}
 	i := &discordgo.Interaction{Type: discordgo.InteractionModalSubmit, GuildID: "g", ChannelID: "c",
 		Data:   discordgo.ModalSubmitInteractionData{CustomID: "say:oops"},
 		Member: &discordgo.Member{User: &discordgo.User{ID: "user"}}}
-	if err := submitForm(interaction.NewContext(fake, i, nil, interaction.Private, interaction.Direct), nil); err == nil {
-		t.Error("want an error for an ID that is not ours")
+	if err := submitForm(interaction.NewContext(fake, i, nil, interaction.Private, interaction.Direct), nil); err != nil {
+		t.Errorf("want a refusal, got error %v", err)
+	}
+	if r := onlyCall(t, fake, "Reply"); r.Visibility != interaction.Private || r.Response.Content != msgFormStale {
+		t.Errorf("reply = %+v", r)
+	}
+	edit := &discordgo.Interaction{Type: discordgo.InteractionModalSubmit, GuildID: "g", ChannelID: "c",
+		Data:   discordgo.ModalSubmitInteractionData{CustomID: "sayedit:oops"},
+		Member: &discordgo.Member{User: &discordgo.User{ID: "user"}}}
+	fake2 := &interactiontest.Fake{}
+	if err := submitEditForm(interaction.NewContext(fake2, edit, nil, interaction.Private, interaction.Direct), nil); err != nil {
+		t.Errorf("want a refusal, got error %v", err)
+	}
+	if r := onlyCall(t, fake2, "Reply"); r.Response.Content != msgEditFormStale {
+		t.Errorf("edit reply = %+v", r)
 	}
 	if slices.Contains(fake.Ops(), "PostMessage") {
 		t.Error("posted from a malformed ID")

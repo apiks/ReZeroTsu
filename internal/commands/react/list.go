@@ -2,11 +2,11 @@ package react
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -87,10 +87,10 @@ func runList(ic *interaction.Context) error {
 }
 
 // entryValue is the field text of one message: its link or bare ID, then one "emoji → role" line per binding.
-func entryValue(guildID, messageID string, entry *guilds.ReactJoin) string {
+func entryValue(guildID, messageID string, entry *guilds.ReactJoin, limit int) string {
 	var b strings.Builder
 	if entry.ChannelID != "" {
-		b.WriteString(messageLink(guildID, entry.ChannelID, messageID))
+		b.WriteString(commands.MessageLink(guildID, entry.ChannelID, messageID))
 	} else {
 		b.WriteString("`" + messageID + "`")
 	}
@@ -98,16 +98,16 @@ func entryValue(guildID, messageID string, entry *guilds.ReactJoin) string {
 	for _, p := range pairs {
 		b.WriteString("\n" + p)
 	}
-	return truncateRunes(b.String(), discord.MaxEmbedFieldValueLength)
+	return commands.TruncateRunes(b.String(), limit)
 }
 
-func truncateRunes(s string, limit int) string {
-	r := []rune(s)
-	if len(r) <= limit {
-		return s
-	}
-	return string(r[:limit-1]) + "…"
-}
+const (
+	// maxEmbedTotal is Discord's limit on all the text of one embed together.
+	maxEmbedTotal = 6000
+	// embedMargin is left unused in the total, so counting differences cannot push a page over.
+	embedMargin = 100
+	footerList  = "Pick a message below to remove all its reaction roles."
+)
 
 // renderPage builds one page: the embed, Previous/Next when there is more than one page, and the Remove picker for
 // the messages on this page. page is clamped to the list.
@@ -124,10 +124,18 @@ func renderPage(m map[string]*guilds.ReactJoin, ids []string, page int, authorID
 		components = append(components, commands.PaginationComponents(pageKey, page, n, authorID)...)
 		desc = fmt.Sprintf("Page %d of %d. Showing %d-%d of %d messages.", page+1, totalPages, start+1, end, n)
 	}
+	// Discord caps the whole embed at 6000 characters, so each field's value gets an even share of what the title,
+	// description, footer and field names leave, up to the 1024 a value may hold.
+	spent := utf8.RuneCountInString(embedTitleList) + utf8.RuneCountInString(desc) + utf8.RuneCountInString(footerList) + embedMargin
+	for _, id := range ids[start:end] {
+		spent += utf8.RuneCountInString("Message ID: " + id)
+	}
+	share := min((maxEmbedTotal-spent)/max(end-start, 1), discord.MaxEmbedFieldValueLength)
+	share = max(share, 1)
 	fields := make([]*discordgo.MessageEmbedField, 0, end-start)
 	options := make([]discordgo.SelectMenuOption, 0, end-start)
 	for _, id := range ids[start:end] {
-		fields = append(fields, &discordgo.MessageEmbedField{Name: "Message ID: " + id, Value: entryValue(guildID, id, m[id])})
+		fields = append(fields, &discordgo.MessageEmbedField{Name: "Message ID: " + id, Value: entryValue(guildID, id, m[id], share)})
 		options = append(options, discordgo.SelectMenuOption{Label: id, Value: id})
 	}
 	components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
@@ -136,7 +144,7 @@ func renderPage(m map[string]*guilds.ReactJoin, ids []string, page int, authorID
 		Placeholder: "Remove a message's reaction roles",
 		Options:     options,
 	}}})
-	emb := commands.NewEmbedWithFields(nil, embedTitleList, desc, fields, "Pick a message below to remove all its reaction roles.")
+	emb := commands.NewEmbedWithFields(nil, embedTitleList, desc, fields, footerList)
 	return interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}
 }
 
@@ -147,7 +155,7 @@ func RenderReactrolePage(ctx context.Context, db *database.Client, _ *discordgo.
 	m, err := bindStoreOf(db).GetReactJoinMap(ctx, i.GuildID)
 	if err != nil {
 		logger.For("react").Error("reactrole list page failed", "guild_id", i.GuildID, "err", err)
-		return commands.Page{Refusal: "Could not load react joins."}
+		return commands.Page{Refusal: "Could not load the reaction roles. Run /reactrole list again."}
 	}
 	ids := boundMessages(m)
 	if len(ids) == 0 {
@@ -181,6 +189,7 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		return ic.Fail(err, interaction.ErrorContext{})
 	}
 	messageID := ic.Values[0]
+	failure := ""
 	if entry := m[messageID]; entry != nil {
 		emojis, _ := entryEmojis(entry)
 		if err := store.DeleteReactJoinEntry(ic.Context(), ic.GuildID, messageID); err != nil {
@@ -188,28 +197,29 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		}
 		delete(m, messageID)
 		if entry.ChannelID != "" {
-			for _, e := range emojis {
-				if err := ic.RemoveOwnReaction(entry.ChannelID, messageID, e); err != nil {
-					if !messageGone(err) {
-						logger.For("react").Error("reaction removal failed", "guild_id", ic.GuildID, "channel_id", entry.ChannelID, "message_id", messageID, "err", err)
-					}
-					break
-				}
+			var err error
+			failure, err = takeReactionsOff(ic, entry.ChannelID, messageID, emojis)
+			// A message or channel that is gone has no reactions left to explain.
+			if discord.IsUnknownMessage(err) || discord.IsUnknownChannel(err) {
+				failure = ""
 			}
 		}
 	}
 	ids := boundMessages(m)
+	var shown interaction.Response
 	if len(ids) == 0 {
-		return ic.UpdateMessage(emptyList())
+		shown = emptyList()
+	} else {
+		shown = renderPage(m, ids, page, authorID, ic.GuildID)
 	}
-	return ic.UpdateMessage(renderPage(m, ids, page, authorID, ic.GuildID))
-}
-
-// messageGone reports whether err says the message or its channel no longer exists.
-func messageGone(err error) bool {
-	var rest *discordgo.RESTError
-	if !errors.As(err, &rest) || rest.Message == nil {
-		return false
+	if err := ic.UpdateMessage(shown); err != nil {
+		return err
 	}
-	return rest.Message.Code == discordgo.ErrCodeUnknownMessage || rest.Message.Code == discordgo.ErrCodeUnknownChannel
+	if failure != "" {
+		return ic.FollowUp(interaction.Response{
+			Content:    "Removed the reaction roles, but I couldn't take my reactions off the message: " + failure,
+			Visibility: interaction.Private,
+		})
+	}
+	return nil
 }

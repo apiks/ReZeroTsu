@@ -57,15 +57,6 @@ func participantContains(ids []string, userID string) bool {
 	return false
 }
 
-// truncate cuts s to at most limit runes, ending in an ellipsis when it was cut.
-func truncate(s string, limit int) string {
-	r := []rune(s)
-	if len(r) <= limit {
-		return s
-	}
-	return string(r[:limit-1]) + "…"
-}
-
 // embedTitle is a raffle name cut to Discord's embed title limit. A legacy name can be longer, because the old
 // /create-raffle had no length limit.
-func embedTitle(name string) string { return truncate(name, discord.MaxEmbedTitleLength) }
+func embedTitle(name string) string { return commands.TruncateRunes(name, discord.MaxEmbedTitleLength) }

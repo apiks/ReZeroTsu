@@ -246,3 +246,20 @@ func TargetChannelID(data discordgo.ApplicationCommandInteractionData, s *discor
 	}
 	return i.ChannelID
 }
+
+// MessageLink is the URL of a message in a server.
+func MessageLink(guildID, channelID, messageID string) string {
+	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
+}
+
+// TruncateRunes cuts s to at most limit runes, ending in an ellipsis when it was cut.
+func TruncateRunes(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	if limit < 1 {
+		return ""
+	}
+	return string(r[:limit-1]) + "…"
+}
