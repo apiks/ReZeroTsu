@@ -255,6 +255,8 @@ func runAddForm(ic *interaction.Context) error {
 //     Discord rejects is never stored; a failed save takes the new reaction back down;
 //   - the bot's own reaction: AddReaction below, on the message's own channel instead of the channel the command
 //     ran in, and a failure is now shown instead of only logged.
+//
+// New: commands.CanHandOutRole refuses a role at or above the moderator's own highest role, before anything is reacted or stored.
 func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 	parts := strings.Split(strings.TrimPrefix(ic.CustomID, formPrefix), ":")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -280,6 +282,9 @@ func handleAddForm(ic *interaction.Context, _ *discordgo.Session) error {
 	role := findRole(roles, roleID)
 	if role == nil {
 		return ic.Refuse(msgRoleGone)
+	}
+	if !commands.CanHandOutRole(ic, roles, role) {
+		return ic.Refuse(commands.RoleAboveInvoker(roleID, "a reaction role"))
 	}
 
 	store := bindStoreOf(ic.DB)
