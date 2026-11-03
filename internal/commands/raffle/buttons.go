@@ -65,6 +65,8 @@ func init() {
 				},
 				Run: runCreate,
 			},
+			listSubcommand(),
+			postSubcommand(),
 		},
 	})
 	commands.AddComponent(buttonPrefix, handleButton)
