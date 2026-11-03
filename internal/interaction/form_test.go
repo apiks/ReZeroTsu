@@ -38,7 +38,7 @@ func TestFormValueReadsASubmittedTextBox(t *testing.T) {
 		CustomID: "f:1",
 		Components: []discordgo.MessageComponent{
 			&discordgo.ActionsRow{Components: []discordgo.MessageComponent{&discordgo.TextInput{CustomID: "body", Value: "hello"}}},
-			&interaction.Label{Label: "Other", Component: &discordgo.TextInput{CustomID: "other", Value: "x"}},
+			&discordgo.Label{Label: "Other", Component: &discordgo.TextInput{CustomID: "other", Value: "x"}},
 		},
 	}}
 	ic := interaction.NewContext(nil, i, nil, interaction.Private, interaction.Direct)

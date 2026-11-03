@@ -259,7 +259,7 @@ func TestAFormOpensFromACommandAndItsSubmissionReachesItsHandler(t *testing.T) {
 	}
 
 	submit := componentInteraction(discordgo.ModalSubmitInteractionData{CustomID: "t-say-form:1", Components: []discordgo.MessageComponent{
-		&interaction.Label{Label: "Message", Component: &discordgo.TextInput{CustomID: "body", Value: "hello"}}}}, "g", "u", nil)
+		&discordgo.Label{Label: "Message", Component: &discordgo.TextInput{CustomID: "body", Value: "hello"}}}}, "g", "u", nil)
 	submit.Interaction.Type = discordgo.InteractionModalSubmit
 	fake = &interactiontest.Fake{}
 	dispatchPress(t, fake, submit)
