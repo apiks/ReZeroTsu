@@ -71,11 +71,11 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 			if !animeschedule.APIKeyConfigured() || !animeschedule.HasData() {
 				continue
 			}
-			airing := animeschedule.GetAiringShowNames()
-			if len(airing) == 0 {
+			keep, ready := buildKeepRoster()
+			if !ready {
 				continue
 			}
-			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), airing)
+			updated, err := cleanupFinishedShows(ctx, db.AnimeSubs(), keep)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.For("animesubs").Error("finished cleanup IterateUserSubs failed", "err", err)
 			}
@@ -98,16 +98,78 @@ type userSubsStore interface {
 	CollapseDuplicateShows(ctx context.Context, id string) (bool, error)
 }
 
+// keepRoster is the set of shows whose subscriptions the cleanup keeps: shows on this week's or next week's
+// timetable, on the upcoming list, or with a non-final entry last week (a break). Shows are held by route and by
+// anime_subs.MatchKey of their title.
+type keepRoster struct {
+	routes map[string]struct{}
+	keys   map[string]struct{}
+}
+
+// keeps matches a subscription by its route when it has one, otherwise by its title's match key (ADR-0002).
+func (r keepRoster) keeps(sub *anime_subs.ShowSub) bool {
+	if sub.Route != "" {
+		_, ok := r.routes[sub.Route]
+		return ok
+	}
+	_, ok := r.keys[anime_subs.MatchKey(sub.Show)]
+	return ok
+}
+
+func (r keepRoster) add(route, title string) {
+	if route != "" {
+		r.routes[route] = struct{}{}
+	}
+	if key := anime_subs.MatchKey(title); key != "" {
+		r.keys[key] = struct{}{}
+	}
+}
+
+// buildKeepRoster reads the loaded timetable weeks and the upcoming list. It reports false, and the cleanup must
+// delete nothing, while the upcoming list has not loaded or no timetable entries are loaded.
+func buildKeepRoster() (keepRoster, bool) {
+	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+	if !animeschedule.UpcomingLoaded() {
+		return r, false
+	}
+	monday := animeschedule.DateInWeek(time.Monday)
+	for offset := 0; offset < 14; offset++ {
+		for _, e := range animeschedule.GetDayShows(monday.AddDate(0, 0, offset), true) {
+			r.add(e.Route, e.Name)
+		}
+	}
+	// Last week: a show whose latest entry there was not its final episode may be on a break.
+	latest := map[string]animeschedule.ShowEntry{}
+	for offset := -7; offset < 0; offset++ {
+		for _, e := range animeschedule.GetDayShows(monday.AddDate(0, 0, offset), true) {
+			id := e.Route
+			if id == "" {
+				id = anime_subs.MatchKey(e.Name)
+			}
+			if cur, ok := latest[id]; !ok || e.AirTimeUnix >= cur.AirTimeUnix {
+				latest[id] = e
+			}
+		}
+	}
+	for _, e := range latest {
+		if !e.Final {
+			r.add(e.Route, e.Name)
+		}
+	}
+	for _, u := range animeschedule.UpcomingShows() {
+		r.add(u.Route, u.Name)
+	}
+	if len(r.routes) == 0 && len(r.keys) == 0 {
+		return r, false
+	}
+	return r, true
+}
+
 // cleanupFinishedShows removes, per user document, the shows that are no longer airing, then collapses legacy
 // duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
 // returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
-// airing holds the airing schedule names in any case-folded form (GetAiringShowNames lowercases them); they are
-// re-keyed with anime_subs.MatchKey so a show counts as airing exactly when the notifier can match it.
-func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[string]struct{}) (int, error) {
-	airingKeys := make(map[string]struct{}, len(airing))
-	for name := range airing {
-		airingKeys[anime_subs.MatchKey(name)] = struct{}{}
-	}
+// keep says which subscriptions survive (see keepRoster).
+func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster) (int, error) {
 	var updated int
 	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
 		if doc == nil {
@@ -127,7 +189,7 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, airing map[stri
 				needsCollapse = true
 				continue
 			}
-			if _, ok := airingKeys[anime_subs.MatchKey(sub.Show)]; !ok {
+			if !keep.keeps(sub) {
 				finished = append(finished, sub.Show)
 				continue
 			}

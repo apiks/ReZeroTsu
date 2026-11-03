@@ -5,6 +5,7 @@ Newest first. Each release lists the steps the bot owner does around the deploy,
 ## Timetable alerts (spec #77)
 
 - Movie alerts (#84): the episode DM and the new-episodes autopost read "**Title** is out, subbed!" (or raw) for a movie instead of "Ep 1 subbed is out!". Other media types keep the episode wording.
+- Daily cleanup (#87): subscriptions are kept through breaks and before premieres. A subscription is removed only when its show is on neither this week's nor next week's timetable, is not on the upcoming list, and either aired its final episode last week or was not on last week's timetable either. The cleanup waits until the upcoming list has loaded.
 
 ## Reddit settings UX (spec #80, tickets #96 to #100)
 
