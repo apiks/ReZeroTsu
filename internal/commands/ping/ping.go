@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
@@ -24,18 +23,6 @@ func init() {
 		Module:     "general",
 		Installs:   commands.BothInstalls(),
 		Run:        func(ic *interaction.Context) error { return runPing(ic, ic.DB.Guilds()) },
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "ping",
-		Aliases:    []string{"pingme"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc := guilds.DefaultGuildSettings().PingMessage
-			title := fmt.Sprintf(":ping_pong: %s", s.HeartbeatLatency().Truncate(time.Millisecond).String())
-			emb := commands.NewEmbed(s, title, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
 	})
 }
 

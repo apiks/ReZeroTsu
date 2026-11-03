@@ -11,7 +11,6 @@ import (
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
-	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -19,88 +18,7 @@ import (
 const (
 	embedTitleAnimeSubs  = "Anime subscriptions"
 	maxUserSubscriptions = 100
-	hintUnsub            = "Use /subscription remove to unsubscribe."
 )
-
-func init() {
-	commands.RegisterPaginationRenderer("subs", RenderSubsPage)
-
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "clearsubs",
-		Aliases:    []string{"clearanimesubs", "subsclear", "unsuball"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := clearsubsCore(ctx, db.AnimeSubs(), m.Author.ID)
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "sub",
-		Aliases:    []string{"subscribe", "subs", "animesub", "subanime", "addsub"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := subCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "unsub",
-		Aliases:    []string{"unsubscribe", "unsubs", "unanimesub", "unsubanime", "removesub", "killsub", "stopsub"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			desc, logErr := unsubCore(ctx, db.AnimeSubs(), m.Author.ID, strings.TrimSpace(args))
-			if logErr != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] %v", logErr))
-			}
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc)
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "subs",
-		Aliases:    []string{"subscriptions", "animesubs", "showsubs", "showsubscriptions", "viewsubs", "viewsubscriptions"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			uid := m.Author.ID
-			doc, err := db.AnimeSubs().GetByID(ctx, uid)
-			if err != nil {
-				commands.LogToBotLog(ctx, db, s, m.GuildID, fmt.Sprintf("[animesubs] GetByID %s: %v", uid, err))
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "Could not load your subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			if doc == nil || len(doc.Shows) == 0 {
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			list := docToSubList(doc)
-			if len(list) == 0 {
-				emb := commands.NewEmbed(s, embedTitleAnimeSubs, "You have no active anime subscriptions.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			desc, components := subsFirstPageContent(list, uid)
-			emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc, hintUnsub)
-			_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
-				Embeds:     []*discordgo.MessageEmbed{emb},
-				Components: components,
-			})
-		},
-	})
-}
 
 func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
 	var b strings.Builder
@@ -131,19 +49,6 @@ func docToSubList(doc *anime_subs.AnimeSubs) []*anime_subs.ShowSub {
 		}
 	}
 	return list
-}
-
-func subsFirstPageContent(list []*anime_subs.ShowSub, uid string) (desc string, components []discordgo.MessageComponent) {
-	if len(list) == 0 {
-		return "", nil
-	}
-	n := len(list)
-	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
-	desc = subsDescriptionForPage(list, 0, 0, totalPages, n)
-	if n > discord.MaxEmbedFields {
-		components = commands.PaginationComponents("subs", 0, n, uid)
-	}
-	return desc, components
 }
 
 // findShowIn returns the show whose display title matches input under anime_subs.MatchKey (case-insensitive and
@@ -296,42 +201,6 @@ func clearsubsCore(ctx context.Context, store subsStore, uid string) (responseDe
 		return "Could not clear subscriptions.", err
 	}
 	return "Success! All your anime subscriptions have been cleared.", nil
-}
-
-// RenderSubsPage renders one page of anime subscriptions for pagination.
-func RenderSubsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
-	if authorID == "" {
-		return commands.Page{Refusal: "Could not load subscriptions."}
-	}
-	doc, err := db.AnimeSubs().GetByID(ctx, authorID)
-	if err != nil {
-		return commands.Page{Refusal: "Could not load your subscriptions."}
-	}
-	if doc == nil || len(doc.Shows) == 0 {
-		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
-	}
-	var list []*anime_subs.ShowSub
-	for _, sub := range doc.Shows {
-		if sub != nil {
-			list = append(list, sub)
-		}
-	}
-	if len(list) == 0 {
-		return commands.Page{Refusal: "You have no active anime subscriptions. Run **/subs** again."}
-	}
-	n := len(list)
-	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
-	if page >= totalPages {
-		page = totalPages - 1
-	}
-	if page < 0 {
-		page = 0
-	}
-	start := page * discord.MaxEmbedFields
-	desc := subsDescriptionForPage(list, start, page, totalPages, n)
-	components := commands.PaginationComponents("subs", page, n, authorID)
-	emb := commands.NewEmbed(s, embedTitleAnimeSubs, desc, hintUnsub)
-	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }
 
 // airedTodayEntry returns today's entry for the named show if it has already aired at nowUnix. Names are matched

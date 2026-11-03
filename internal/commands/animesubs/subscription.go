@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	// pageKey names the subscription list's page renderer. The DM prefix list keeps its own "subs" renderer until
-	// the prefix commands retire (ticket 3.7).
+	// pageKey names the subscription list's page renderer.
 	pageKey = "subscription"
 	// pickerPrefix starts the custom ID of the Remove picker: sub-rm:<authorID>:<page>.
 	pickerPrefix = "sub-rm:"

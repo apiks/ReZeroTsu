@@ -1,17 +1,12 @@
 package avatar
 
 import (
-	"context"
-
 	"ReZeroTsu/internal/commands"
-	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-const embedTitleAvatar = "Avatar"
 
 func init() {
 	commands.Add(&commands.Command{
@@ -41,34 +36,6 @@ func init() {
 		Module:     "general",
 		Installs:   commands.BothInstalls(),
 		Run:        runShowAvatar,
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "avatar",
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			user := m.Author
-			if len(m.Mentions) > 0 {
-				user = m.Mentions[0]
-			}
-			if user == nil {
-				emb := commands.NewEmbed(s, embedTitleAvatar, "Could not determine the user.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			avatarURL := user.AvatarURL("1024")
-			if avatarURL == "" {
-				emb := commands.NewEmbed(s, embedTitleAvatar, "This user has no avatar.")
-				_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-				return
-			}
-			emb := &discordgo.MessageEmbed{
-				Title: user.Username + "'s avatar",
-				Color: discord.EmbedColor,
-				Image: &discordgo.MessageEmbedImage{URL: avatarURL},
-			}
-			_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-		},
 	})
 }
 

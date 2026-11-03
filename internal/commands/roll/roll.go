@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/rand"
 	"strconv"
-	"strings"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -12,8 +11,6 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 )
-
-const embedTitleRoll = "Roll"
 
 // rollChoices are dice options for autocomplete (d2..d100).
 var rollChoices = []int{2, 4, 6, 8, 10, 12, 20, 100}
@@ -38,26 +35,6 @@ func init() {
 		},
 		Run:                run,
 		AutocompleteOption: autocompleteRollNumber,
-	})
-	commands.AddMessageCommand(&commands.MessageCommand{
-		Name:       "roll",
-		Aliases:    []string{"rol", "r"},
-		Permission: commands.PermEveryone,
-		Context:    commands.ContextDMOnly,
-		MessageHandler: func(ctx context.Context, db *database.Client, s *discordgo.Session, m *discordgo.MessageCreate, args string, runtime commands.BotRuntime) {
-			max := 100
-			if f := strings.Fields(strings.TrimSpace(args)); len(f) > 0 {
-				if n, err := strconv.Atoi(f[0]); err == nil && n >= 1 {
-					max = n
-				} else {
-					emb := commands.NewEmbed(s, embedTitleRoll, "Invalid number. Please use a positive number.")
-					_, _ = s.ChannelMessageSendEmbed(m.ChannelID, emb)
-					return
-				}
-			}
-			result := rand.Intn(max) + 1
-			_, _ = s.ChannelMessageSend(m.ChannelID, "**Rolled:** "+strconv.Itoa(result))
-		},
 	})
 }
 
