@@ -1,16 +1,15 @@
+// Package feeds holds /reddit: add, remove and list a server's Reddit feeds. The delivery side is in
+// internal/bot/feeds.go.
 package feeds
 
 import (
 	"context"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/guilds"
-	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
 	"ReZeroTsu/internal/reddit"
@@ -19,62 +18,85 @@ import (
 )
 
 const (
-	embedTitleReddit = "Reddit feeds"
-	hintRemoveReddit = "Use /remove-reddit-feed to remove a feed."
+	embedTitle = "Reddit feeds"
+
+	optChannel   = "channel"
+	optSubreddit = "subreddit"
+	optPostType  = "post-type"
+	optAuthor    = "author"
+	optTitle     = "title"
+	optPin       = "pin"
+
+	maxChoiceLength = 100
 )
 
 var postTypeChoices = []string{"hot", "rising", "new"}
 
+var feedChannelTypes = []discordgo.ChannelType{discordgo.ChannelTypeGuildText, discordgo.ChannelTypeGuildPublicThread, discordgo.ChannelTypeGuildPrivateThread}
+
+// store is the part of the data layer /reddit uses: the guild's feed list and the delivery records of a feed.
+type store interface {
+	GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error)
+	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
+	RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error)
+	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
+	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
+	// DeleteChecks forgets what was delivered for a feed (the feed check records).
+	DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error
+}
+
+type dbStore struct{ db *database.Client }
+
+func (s dbStore) GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error) {
+	return s.db.Guilds().GetFeeds(ctx, guildID)
+}
+
+func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error {
+	return s.db.Guilds().AddFeed(ctx, guildID, feed)
+}
+
+func (s dbStore) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) (int64, error) {
+	return s.db.Guilds().RemoveFeed(ctx, guildID, channelID, subreddit, postType, author, title)
+}
+
+func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
+	return s.db.Guilds().RemoveExactFeed(ctx, guildID, feed)
+}
+
+func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error {
+	_, err := s.db.FeedChecks().DeleteByFeed(ctx, guildID, channelID, subreddit, postType, author, title)
+	return err
+}
+
+// storeOf picks the store of a database client; tests replace it.
+var storeOf = func(db *database.Client) store { return dbStore{db} }
+
+// checkFeed asks Reddit whether a subreddit's feed of that type can be read; tests replace it so they do not use
+// the network.
+var checkFeed = func(ctx context.Context, subreddit, postType string) error {
+	_, err := reddit.FetchWithRetry(ctx, subreddit, postType)
+	return err
+}
+
 func init() {
 	commands.Add(&commands.Command{
-		Visibility: commands.Public,
+		Name:       "reddit",
+		Desc:       "Add, remove and list Reddit feeds.",
+		Visibility: commands.Private,
 		Response:   commands.Deferred,
-		Name:       "add-reddit-feed",
-		Desc:       "Adds a Reddit RSS feed to a channel.",
+		// Guard home: the bot-side moderator check, until spec 7 moves it to Discord's per-command permissions.
 		Permission: commands.PermMod,
 		Context:    commands.ContextGuildOnly,
 		Module:     "reddit",
-		Options: []*discordgo.ApplicationCommandOption{
-			{Type: discordgo.ApplicationCommandOptionChannel, Name: "channel", Description: "The channel to add the feed to.", Required: true, ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText, discordgo.ChannelTypeGuildPublicThread, discordgo.ChannelTypeGuildPrivateThread}},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "subreddit", Description: "The subreddit (e.g. r/anime or anime).", Required: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "post-type", Description: "Feed sort: hot, rising, or new. Default: hot.", Required: false, Autocomplete: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "author", Description: "Filter to posts from this user (optional).", Required: false},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "title", Description: "Filter to posts starting with this title (optional).", Required: false},
-			{Type: discordgo.ApplicationCommandOptionBoolean, Name: "pin", Description: "Auto-pin the latest post. Default: false.", Required: false},
+		Subcommands: []*commands.Subcommand{
+			addSubcommand(),
+			removeSubcommand(),
+			listSubcommand(),
 		},
-		Handler:            handleAddRedditFeed,
-		AutocompleteOption: autocompletePostType,
 	})
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "remove-reddit-feed",
-		Desc:       "Removes a Reddit RSS feed from a channel.",
-		Permission: commands.PermMod,
-		Context:    commands.ContextGuildOnly,
-		Module:     "reddit",
-		Options: []*discordgo.ApplicationCommandOption{
-			{Type: discordgo.ApplicationCommandOptionChannel, Name: "channel", Description: "The channel to remove the feed from.", Required: true, ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText, discordgo.ChannelTypeGuildPublicThread, discordgo.ChannelTypeGuildPrivateThread}, Autocomplete: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "subreddit", Description: "The subreddit to remove.", Required: true, Autocomplete: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "post-type", Description: "Post type: hot, rising, or new. Omit to remove all three.", Required: false, Autocomplete: true},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "author", Description: "Author filter of the feed (optional).", Required: false},
-			{Type: discordgo.ApplicationCommandOptionString, Name: "title", Description: "Title filter of the feed (optional).", Required: false},
-		},
-		Handler:            handleRemoveRedditFeed,
-		AutocompleteOption: autocompleteRemoveRedditFeed,
-	})
-	commands.Add(&commands.Command{
-		Visibility: commands.Public,
-		Response:   commands.Deferred,
-		Name:       "reddit-feeds",
-		Desc:       "Lists all Reddit RSS feeds for this server.",
-		Permission: commands.PermMod,
-		Context:    commands.ContextGuildOnly,
-		Module:     "reddit",
-		Options:    nil,
-		Handler:    handleRedditFeeds,
-	})
-	commands.RegisterPaginationRenderer("reddit-feeds", RenderRedditFeedsPage)
+	// Restricted: the list and its picker belong to the moderator who ran it.
+	commands.RegisterPaginationRenderer(pageKey, RenderFeedsPage)
+	commands.AddComponent(pickerPrefix, handleRemovePicker)
 }
 
 func normalizeSubreddit(s string) string {
@@ -91,352 +113,71 @@ func normalizeAuthor(s string) string {
 	return s
 }
 
-func autocompletePostType(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
+func stringOption(ic *interaction.Context, name string) string {
+	if o := commands.ParseOption(ic.Command.Options, name); o != nil {
+		return o.StringValue()
+	}
+	return ""
+}
+
+// channelOption is the ID of the channel option, "" when it is missing.
+func channelOption(ic *interaction.Context) string {
+	o := commands.ParseOption(ic.Command.Options, optChannel)
+	if o == nil {
+		return ""
+	}
+	if ch := o.ChannelValue(nil); ch != nil {
+		return ch.ID
+	}
+	return ""
+}
+
+// clip cuts text to at most n characters.
+func clip(text string) string {
+	const n = maxChoiceLength
+	r := []rune(text)
+	if len(r) <= n {
+		return text
+	}
+	return string(r[:n])
+}
+
+// ellipsize cuts text to at most n characters, ending in an ellipsis when it was cut.
+func ellipsize(text string, n int) string {
+	r := []rune(text)
+	if len(r) <= n {
+		return text
+	}
+	return string(r[:n-1]) + "…"
+}
+
+func answer(ic *interaction.Context, text string) error {
+	return ic.EditReply(interaction.Response{Embeds: []*discordgo.MessageEmbed{commands.NewEmbed(nil, embedTitle, text)}})
+}
+
+func logStoreFailure(ic *interaction.Context, what string, err error) {
+	logger.For("commands").Error(what, "guild_id", ic.GuildID, "err", err)
+}
+
+// postTypeOption reads the post-type option. A missing or blank one gives def; an unknown one is not ok.
+func postTypeOption(ic *interaction.Context, def string) (postType string, ok bool) {
+	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optPostType)))
+	if raw == "" {
+		return def, true
+	}
+	return raw, slices.Contains(postTypeChoices, raw)
+}
+
+const msgInvalidPostType = "Invalid post type. Use one of: hot, rising, new."
+
+func autocompletePostType(_ context.Context, _ *database.Client, _ *discordgo.Session, _ *discordgo.InteractionCreate, _, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
 	names := commands.MatchAnywhere(postTypeChoices, focusedValue, func(n string) []string { return []string{n} })
 	if len(names) == 0 {
 		names = postTypeChoices
 	}
-	var choices []*discordgo.ApplicationCommandOptionChoice
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(names))
 	for _, name := range names {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: name, Value: name})
 	}
 	return choices
-}
-
-func autocompleteRemoveRedditFeed(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	switch optionName {
-	case "post-type":
-		return autocompletePostType(ctx, db, s, i, optionName, focusedValue)
-	case "subreddit":
-		return autocompleteRemoveSubreddit(ctx, db, s, i, focusedValue)
-	case "channel":
-		return autocompleteRemoveChannel(ctx, db, s, i, focusedValue)
-	default:
-		return nil
-	}
-}
-
-func autocompleteRemoveSubreddit(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	if i.GuildID == "" {
-		return nil
-	}
-	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
-	if err != nil || len(feeds) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	for _, f := range feeds {
-		sub := normalizeSubreddit(f.Subreddit)
-		if sub != "" {
-			seen[sub] = struct{}{}
-		}
-	}
-	var subs []string
-	for sub := range seen {
-		subs = append(subs, sub)
-	}
-	sort.Strings(subs)
-	subs = commands.MatchAnywhere(subs, focusedValue, func(sub string) []string { return []string{sub, "r/" + sub} })
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(subs))
-	for j, sub := range subs {
-		name := "r/" + sub
-		if len(name) > 100 {
-			name = name[:100]
-		}
-		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: name, Value: sub}
-	}
-	return choices
-}
-
-func autocompleteRemoveChannel(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	if i.GuildID == "" {
-		return nil
-	}
-	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
-	if err != nil || len(feeds) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	for _, f := range feeds {
-		if f.ChannelID != "" {
-			seen[f.ChannelID] = struct{}{}
-		}
-	}
-	type channelChoice struct {
-		id   string
-		name string
-	}
-	var list []channelChoice
-	for channelID := range seen {
-		display := channelID
-		ch, err := s.Channel(channelID)
-		if err == nil && ch != nil && ch.Name != "" {
-			display = "#" + ch.Name
-		} else {
-			display = "#" + channelID
-		}
-		list = append(list, channelChoice{id: channelID, name: display})
-	}
-	sort.Slice(list, func(a, b int) bool { return list[a].name < list[b].name })
-	list = commands.MatchAnywhere(list, focusedValue, func(c channelChoice) []string {
-		return []string{c.name, strings.TrimPrefix(c.name, "#"), c.id}
-	})
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(list))
-	for j, c := range list {
-		name := c.name
-		if len(name) > 100 {
-			name = name[:100]
-		}
-		choices[j] = &discordgo.ApplicationCommandOptionChoice{Name: name, Value: c.id}
-	}
-	return choices
-}
-
-func handleAddRedditFeed(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.GuildID == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "This command can only be used in a server.")
-		return
-	}
-	data := i.ApplicationCommandData()
-	optChannel := commands.ParseOption(data.Options, "channel")
-	optSubreddit := commands.ParseOption(data.Options, "subreddit")
-	if optChannel == nil || optSubreddit == nil || optSubreddit.StringValue() == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Channel and subreddit are required.")
-		return
-	}
-	ch := optChannel.ChannelValue(s)
-	if ch == nil || ch.ID == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Invalid or missing channel.")
-		return
-	}
-	channelID := ch.ID
-	subreddit := normalizeSubreddit(optSubreddit.StringValue())
-	if subreddit == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Please provide a valid subreddit (e.g. r/anime or anime).")
-		return
-	}
-	if err := reddit.ValidateSubreddit(subreddit); err != nil {
-		commands.RespondEmbed(s, i, embedTitleReddit, err.Error())
-		return
-	}
-	postType := "hot"
-	if opt := commands.ParseOption(data.Options, "post-type"); opt != nil && opt.StringValue() != "" {
-		postType = strings.ToLower(strings.TrimSpace(opt.StringValue()))
-	}
-	if !slices.Contains(postTypeChoices, postType) {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Invalid post type. Use one of: "+strings.Join(postTypeChoices, ", ")+".")
-		return
-	}
-	author := ""
-	if opt := commands.ParseOption(data.Options, "author"); opt != nil {
-		author = strings.ToLower(normalizeAuthor(opt.StringValue()))
-	}
-	title := ""
-	if opt := commands.ParseOption(data.Options, "title"); opt != nil {
-		title = strings.ToLower(strings.TrimSpace(opt.StringValue()))
-	}
-	pin := false
-	if opt := commands.ParseOption(data.Options, "pin"); opt != nil {
-		pin = opt.BoolValue()
-	}
-	_, err := reddit.FetchWithRetry(ctx, subreddit, postType)
-	if err != nil {
-		if reddit.IsPermanent(err) {
-			commands.RespondEmbed(s, i, embedTitleReddit, "That subreddit or feed is unavailable (private, removed, or not found).")
-			return
-		}
-		if reddit.IsGlobalCooldown(err) {
-			commands.RespondEmbed(s, i, embedTitleReddit, "Reddit is rate-limited right now. Please try again in about a minute.")
-			return
-		}
-		commands.RespondEmbed(s, i, embedTitleReddit, "Could not verify the feed. Please try again.")
-		return
-	}
-	feed := guilds.FeedEntry{
-		Subreddit: subreddit,
-		Title:     title,
-		Author:    author,
-		Pin:       pin,
-		PostType:  postType,
-		ChannelID: channelID,
-	}
-	if err := db.Guilds().AddFeed(ctx, i.GuildID, feed); err != nil {
-		logger.For("commands").Error("reddit AddFeed failed", "guild_id", i.GuildID, "err", err)
-		commands.RespondEmbed(s, i, embedTitleReddit, "Could not save the feed.")
-		commands.LogToBotLog(ctx, db, s, i.GuildID, "add-reddit-feed error: "+err.Error())
-		return
-	}
-	content := "Success! This Reddit feed has been added. If there are valid posts they will start appearing shortly."
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &content}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("reddit edit failed", args...)
-	}
-}
-
-func handleRemoveRedditFeed(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.GuildID == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "This command can only be used in a server.")
-		return
-	}
-	data := i.ApplicationCommandData()
-	optChannel := commands.ParseOption(data.Options, "channel")
-	optSubreddit := commands.ParseOption(data.Options, "subreddit")
-	if optChannel == nil || optSubreddit == nil || optSubreddit.StringValue() == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Channel and subreddit are required.")
-		return
-	}
-	ch := optChannel.ChannelValue(s)
-	if ch == nil || ch.ID == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Invalid or missing channel.")
-		return
-	}
-	channelID := ch.ID
-	subreddit := normalizeSubreddit(optSubreddit.StringValue())
-	if subreddit == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "Please provide a valid subreddit.")
-		return
-	}
-	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
-	if err != nil {
-		logger.For("commands").Error("reddit GetFeeds failed", "guild_id", i.GuildID, "err", err)
-		commands.RespondEmbed(s, i, embedTitleReddit, "Could not load feeds.")
-		return
-	}
-	if len(feeds) == 0 {
-		commands.RespondEmbed(s, i, embedTitleReddit, "There are no set Reddit feeds.")
-		return
-	}
-	postTypes := postTypeChoices
-	if opt := commands.ParseOption(data.Options, "post-type"); opt != nil && opt.StringValue() != "" {
-		pt := strings.ToLower(strings.TrimSpace(opt.StringValue()))
-		if !slices.Contains(postTypeChoices, pt) {
-			commands.RespondEmbed(s, i, embedTitleReddit, "Invalid post type. Use one of: "+strings.Join(postTypeChoices, ", ")+".")
-			return
-		}
-		postTypes = []string{pt}
-	}
-	author := ""
-	if opt := commands.ParseOption(data.Options, "author"); opt != nil {
-		author = strings.ToLower(normalizeAuthor(opt.StringValue()))
-	}
-	title := ""
-	if opt := commands.ParseOption(data.Options, "title"); opt != nil {
-		title = strings.ToLower(strings.TrimSpace(opt.StringValue()))
-	}
-	var removed int64
-	for _, pt := range postTypes {
-		n, err := db.Guilds().RemoveFeed(ctx, i.GuildID, channelID, subreddit, pt, author, title)
-		if err != nil {
-			logger.For("commands").Error("reddit RemoveFeed failed", "guild_id", i.GuildID, "err", err)
-			commands.RespondEmbed(s, i, embedTitleReddit, "Could not remove the feed.")
-			return
-		}
-		removed += n
-		_, _ = db.FeedChecks().DeleteByFeed(ctx, i.GuildID, channelID, subreddit, pt, author, title)
-	}
-	var msg string
-	if removed == 0 {
-		msg = "No matching feed found. Check channel, subreddit, and if you used author/title, that they match exactly."
-	} else {
-		msg = "Success! This Reddit feed has been removed."
-		if len(postTypes) == 3 {
-			msg = "Success! This Reddit feed has been removed for all types (hot, rising, new) if it existed."
-		}
-	}
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg}); err != nil {
-		args := append(discord.RESTAttrs(err), "guild_id", i.GuildID, "channel_id", i.ChannelID, "err", err)
-		logger.For("commands").Error("reddit edit failed", args...)
-	}
-}
-
-func feedFieldsForPage(feeds []guilds.FeedEntry, start int, s *discordgo.Session, guildID string) []*discordgo.MessageEmbedField {
-	fields := make([]*discordgo.MessageEmbedField, 0, discord.MaxEmbedFields)
-	end := min(start+discord.MaxEmbedFields, len(feeds))
-	for j := start; j < end; j++ {
-		f := feeds[j]
-		name := "r/" + f.Subreddit
-		if guildID != "" && s != nil {
-			ch, err := s.Channel(f.ChannelID)
-			if err == nil && ch != nil && ch.Name != "" {
-				name = "#" + ch.Name + " • r/" + f.Subreddit
-			}
-		}
-		if len(name) > discord.MaxEmbedFieldNameLength {
-			name = name[:discord.MaxEmbedFieldNameLength-1] + "…"
-		}
-		value := f.PostType
-		if f.Author != "" {
-			value += " | u/" + f.Author
-		}
-		if f.Title != "" {
-			title := f.Title
-			if len(title) > 80 {
-				title = title[:77] + "…"
-			}
-			value += " | " + title
-		}
-		if f.Pin {
-			value += " | Pinned"
-		}
-		if len(value) > discord.MaxEmbedFieldValueLength {
-			value = value[:discord.MaxEmbedFieldValueLength-1] + "…"
-		}
-		fields = append(fields, &discordgo.MessageEmbedField{Name: name, Value: value})
-	}
-	return fields
-}
-
-func handleRedditFeeds(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.GuildID == "" {
-		commands.RespondEmbed(s, i, embedTitleReddit, "This command can only be used in a server.")
-		return
-	}
-	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
-	if err != nil {
-		logger.For("commands").Error("reddit GetFeeds failed", "guild_id", i.GuildID, "err", err)
-		commands.RespondEmbed(s, i, embedTitleReddit, "Could not load feeds.")
-		return
-	}
-	if len(feeds) == 0 {
-		commands.RespondEmbed(s, i, embedTitleReddit, "There are no set Reddit feeds.")
-		return
-	}
-	n := len(feeds)
-	fields := feedFieldsForPage(feeds, 0, s, i.GuildID)
-	description := ""
-	var components []discordgo.MessageComponent
-	if n > discord.MaxEmbedFields {
-		totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
-		description = "Page 1 of " + strconv.Itoa(totalPages) + ". Showing 1–" + strconv.Itoa(min(discord.MaxEmbedFields, n)) + " of " + strconv.Itoa(n) + "."
-		components = commands.PaginationComponents("reddit-feeds", 0, n, commands.UserID(i))
-	}
-	if len(components) > 0 {
-		commands.RespondEmbedWithFieldsAndComponents(s, i, embedTitleReddit, description, fields, components, hintRemoveReddit)
-	} else {
-		commands.RespondEmbedWithFields(s, i, embedTitleReddit, description, fields, hintRemoveReddit)
-	}
-}
-
-// RenderRedditFeedsPage renders one page of reddit-feeds for pagination.
-func RenderRedditFeedsPage(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, page, total int, authorID string) commands.Page {
-	feeds, err := db.Guilds().GetFeeds(ctx, i.GuildID)
-	if err != nil {
-		logger.For("commands").Error("reddit GetFeeds page failed", "guild_id", i.GuildID, "err", err)
-		return commands.Page{Refusal: "Could not load feeds."}
-	}
-	n := len(feeds)
-	if n == 0 {
-		return commands.Page{Refusal: "There are no set Reddit feeds."}
-	}
-	totalPages := (n + discord.MaxEmbedFields - 1) / discord.MaxEmbedFields
-	if page >= totalPages {
-		page = totalPages - 1
-	}
-	start := page * discord.MaxEmbedFields
-	fields := feedFieldsForPage(feeds, start, s, i.GuildID)
-	end := start + len(fields)
-	description := "Page " + strconv.Itoa(page+1) + " of " + strconv.Itoa(totalPages) + ". Showing " + strconv.Itoa(start+1) + "–" + strconv.Itoa(end) + " of " + strconv.Itoa(n) + "."
-	components := commands.PaginationComponents("reddit-feeds", page, n, authorID)
-	emb := commands.NewEmbedWithFields(s, embedTitleReddit, description, fields, hintRemoveReddit)
-	return commands.Page{Response: interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}}
 }

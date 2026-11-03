@@ -38,6 +38,9 @@ type Fake struct {
 	// Bot is the bot's own account and HeartbeatLatency the gateway latency, answered by BotUser and Latency.
 	Bot              *discordgo.User
 	HeartbeatLatency time.Duration
+	// BotPerms is the bot's permission bits per channel, answered by BotChannelPermissions; a channel with no
+	// entry is an error.
+	BotPerms map[string]int64
 	// Fail makes the named operation return the error instead of recording success.
 	Fail map[string]error
 	// StallGuild makes Guild block until its context ends, as a REST fetch that never answers would.
@@ -193,6 +196,16 @@ func (f *Fake) Roles(guildID string) ([]*discordgo.Role, error) {
 		return nil, err
 	}
 	return f.RoleSets[guildID], nil
+}
+
+func (f *Fake) BotChannelPermissions(channelID string) (int64, error) {
+	if err := f.record(Call{Op: "BotChannelPermissions", ChannelID: channelID}); err != nil {
+		return 0, err
+	}
+	if p, ok := f.BotPerms[channelID]; ok {
+		return p, nil
+	}
+	return 0, fmt.Errorf("no permissions for channel %s", channelID)
 }
 
 func (f *Fake) BotUser() *discordgo.User { return f.Bot }

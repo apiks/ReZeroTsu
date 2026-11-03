@@ -187,6 +187,49 @@ func (r *Repo) SetGuildSettings(ctx context.Context, guildID string, settings *G
 	return nil
 }
 
+// setSettingsField sets one guild_settings field and nothing else, so a write that lands between a read and this
+// call is not lost. The guild document is created with default settings when missing.
+func (r *Repo) setSettingsField(ctx context.Context, guildID, field string, value any) error {
+	if err := r.EnsureGuild(ctx, guildID); err != nil {
+		return err
+	}
+	// A legacy document without guild_settings gets the defaults first, so the one field does not stand alone.
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID, "guild_settings": bson.M{"$exists": false}},
+		bson.M{"$set": bson.M{"guild_settings": DefaultGuildSettings()}}); err != nil {
+		return err
+	}
+	_, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, bson.M{"$set": bson.M{"guild_settings." + field: value}})
+	return err
+}
+
+// SetBotLog sets guild_settings.bot_log_id alone; nil clears it.
+func (r *Repo) SetBotLog(ctx context.Context, guildID string, ref *ChannelRef) error {
+	var value any = ref
+	if ref == nil {
+		value = nil
+	}
+	if err := r.setSettingsField(ctx, guildID, "bot_log_id", value); err != nil {
+		return fmt.Errorf("SetBotLog: %w", err)
+	}
+	return nil
+}
+
+// SetDonghua sets guild_settings.donghua alone.
+func (r *Repo) SetDonghua(ctx context.Context, guildID string, on bool) error {
+	if err := r.setSettingsField(ctx, guildID, "donghua", on); err != nil {
+		return fmt.Errorf("SetDonghua: %w", err)
+	}
+	return nil
+}
+
+// SetPingMessage sets guild_settings.ping_message alone.
+func (r *Repo) SetPingMessage(ctx context.Context, guildID, text string) error {
+	if err := r.setSettingsField(ctx, guildID, "ping_message", text); err != nil {
+		return fmt.Errorf("SetPingMessage: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) ClearBotLog(ctx context.Context, guildID string) error {
 	settings, err := r.GetGuildSettings(ctx, guildID)
 	if err != nil {
@@ -374,6 +417,30 @@ func (r *Repo) RemoveFeed(ctx context.Context, guildID, channelID, subreddit, po
 	res, err := r.coll.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return 0, fmt.Errorf("RemoveFeed: %w", err)
+	}
+	return res.ModifiedCount, nil
+}
+
+// RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and post type match, and author and
+// title match their value, or a missing field when empty (nil matches an omitted omitempty field). Unlike
+// RemoveFeed, an empty author or title does not widen the match to its filtered siblings.
+func (r *Repo) RemoveExactFeed(ctx context.Context, guildID string, feed FeedEntry) (int64, error) {
+	pull := bson.M{
+		"subreddit":  feed.Subreddit,
+		"channel_id": feed.ChannelID,
+		"post_type":  feed.PostType,
+		"author":     nil,
+		"title":      nil,
+	}
+	if feed.Author != "" {
+		pull["author"] = feed.Author
+	}
+	if feed.Title != "" {
+		pull["title"] = feed.Title
+	}
+	res, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, bson.M{"$pull": bson.M{"feeds": pull}})
+	if err != nil {
+		return 0, fmt.Errorf("RemoveExactFeed: %w", err)
 	}
 	return res.ModifiedCount, nil
 }

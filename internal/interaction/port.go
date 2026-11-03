@@ -86,6 +86,10 @@ type Port interface {
 	// Channel reads a channel's state.
 	Channel(channelID string) (*discordgo.Channel, error)
 
+	// BotChannelPermissions is the permission bits the bot has in a channel, its overwrites included. For a
+	// thread they are the parent channel's, since a thread has no overwrites of its own.
+	BotChannelPermissions(channelID string) (int64, error)
+
 	// BotUser is the bot's own account, for commands that show its name, avatar or invite link.
 	BotUser() *discordgo.User
 	// Latency is the gateway heartbeat latency.

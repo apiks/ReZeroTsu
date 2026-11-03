@@ -15,7 +15,6 @@ import (
 	"ReZeroTsu/internal/commands"
 	_ "ReZeroTsu/internal/commands/about"
 	_ "ReZeroTsu/internal/commands/animesubs"
-	_ "ReZeroTsu/internal/commands/autopost"
 	_ "ReZeroTsu/internal/commands/avatar"
 	_ "ReZeroTsu/internal/commands/feeds"
 	_ "ReZeroTsu/internal/commands/help"
