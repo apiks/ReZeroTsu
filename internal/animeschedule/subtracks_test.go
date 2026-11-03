@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// selectDay lists "name:track:episode[members]" of the rows SelectRows returns for one 2026-11 day.
+// selectDay lists "name:track:episode[tracks]" of the rows SelectRows returns for one 2026-11 day.
 func selectDay(day int, set SubscriptionTracks) string {
 	var out []string
 	for _, r := range SelectRows(time.Date(2026, 11, day, 0, 0, 0, 0, time.UTC), set) {
 		var ms []string
-		for _, m := range r.Members {
+		for _, m := range r.Tracks {
 			ms = append(ms, string(m))
 		}
 		out = append(out, fmt.Sprintf("%s:%s:%s[%s]", r.Name, r.Track, r.Episode, strings.Join(ms, "+")))
@@ -63,6 +63,25 @@ func TestSelectRowsSubFallsBackToRawPerWeekAndEveryTrackReturnsARawOnlyRowOnce(t
 	}
 }
 
+// A show without a route is told apart by its title's match key, so the Sub chain still picks its sub row over its
+// raw row, and falls back to raw only in a week it has no sub row.
+func TestSelectRowsHandlesShowsWithoutARoute(t *testing.T) {
+	t.Cleanup(Seed(map[string][]ShowEntry{
+		"2026-11-03": {row("Routeless", "", TrackRaw, "Ep 1", 1), row("Other", "", TrackRaw, "Ep 1", 2)},
+		"2026-11-04": {row("routeless ", "", TrackSub, "Ep 1", 3)},
+		"2026-11-10": {row("Routeless", "", TrackRaw, "Ep 2", 4)},
+	}))
+	if got, want := selectDay(3, SubscribeSub), "Other:raw:Ep 1[sub]"; got != want {
+		t.Errorf("Sub in a week the routeless show has a sub row = %q, want its raw row dropped: %q", got, want)
+	}
+	if got, want := selectDay(4, SubscribeSub), "routeless :sub:Ep 1[sub]"; got != want {
+		t.Errorf("Sub on the sub row day = %q, want %q", got, want)
+	}
+	if got, want := selectDay(10, SubscribeSub), "Routeless:raw:Ep 2[sub]"; got != want {
+		t.Errorf("Sub in a week without a sub row = %q, want the raw fallback %q", got, want)
+	}
+}
+
 func TestSubscriptionTracksStoredFormReadsBack(t *testing.T) {
 	if got, ok := ParseSubscriptionTracks(""); !ok || got != SubscribeSub {
 		t.Errorf("empty = %v %v, want Sub", got, ok)
@@ -70,6 +89,17 @@ func TestSubscriptionTracksStoredFormReadsBack(t *testing.T) {
 	for _, s := range []SubscriptionTracks{SubscribeSub, SubscribeDub, SubscribeRaw, SubscribeSubDub, SubscribeEvery} {
 		if got, ok := ParseSubscriptionTracks(s.String()); !ok || got != s {
 			t.Errorf("%v does not round-trip: %v %v", s, got, ok)
+		}
+		if got, ok := ParseSubscriptionTracks(s.Stored()); !ok || got != s {
+			t.Errorf("%v stored as %q does not read back: %v %v", s, s.Stored(), got, ok)
+		}
+	}
+}
+
+func TestSubscriptionTracksStoreSubAsEmptyAndTheRestByName(t *testing.T) {
+	for set, want := range map[SubscriptionTracks]string{SubscribeSub: "", SubscribeDub: "dub", SubscribeRaw: "raw", SubscribeSubDub: "sub_dub", SubscribeEvery: "every"} {
+		if got := set.Stored(); got != want {
+			t.Errorf("%v stored = %q, want %q", set, got, want)
 		}
 	}
 }

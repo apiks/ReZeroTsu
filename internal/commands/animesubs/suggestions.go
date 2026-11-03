@@ -58,10 +58,11 @@ type candidate struct {
 	Premiere string
 }
 
-// candidateSources list where suggestions come from, in the order they are offered: timetable shows, then
-// upcoming shows.
-// A source labels upcoming shows with the premiere of the chosen tracks, or raw's when none are chosen (nil).
-var candidateSources = []func(chosen *animeschedule.SubscriptionTracks) []candidate{timetableCandidates, upcomingCandidates}
+// candidateSources are where suggestions come from, in the order they are offered: timetable shows, then upcoming
+// shows. The upcoming shows are labelled with the premiere of the chosen tracks, or raw's when none are chosen (nil).
+func candidateSources(chosen *animeschedule.SubscriptionTracks) [][]candidate {
+	return [][]candidate{timetableCandidates(), upcomingCandidates(chosen)}
+}
 
 // upcomingEntry is an upcoming show as a ShowEntry: its air time is the premiere, 0 while AnimeSchedule has no date.
 func upcomingEntry(u animeschedule.UpcomingShow) animeschedule.ShowEntry {
@@ -119,7 +120,7 @@ func choiceValue(c candidate) string {
 }
 
 // timetableCandidates are the shows of the three loaded weeks that the daily cleanup keeps (animeschedule.LoadedShows).
-func timetableCandidates(*animeschedule.SubscriptionTracks) []candidate {
+func timetableCandidates() []candidate {
 	var out []candidate
 	for _, e := range animeschedule.LoadedShows() {
 		out = append(out, candidate{ShowEntry: e})
@@ -130,8 +131,8 @@ func timetableCandidates(*animeschedule.SubscriptionTracks) []candidate {
 // candidates are all the sources' shows in offer order, narrowed to one media type when only is set.
 func candidates(only *animeschedule.MediaType) []candidate {
 	var out []candidate
-	for _, src := range candidateSources {
-		for _, c := range src(nil) {
+	for _, source := range candidateSources(nil) {
+		for _, c := range source {
 			if only == nil || c.MediaType == *only {
 				out = append(out, c)
 			}
@@ -159,15 +160,15 @@ func typeFilter(opts []*discordgo.ApplicationCommandInteractionDataOption) *anim
 	return nil
 }
 
-// trackFilter reads the `track` option from the interaction's options the way typeFilter reads `type`; nil when it
+// chosenTracks reads the `track` option from the interaction's options the way typeFilter reads `type`; nil when it
 // is unset or unknown.
-func trackFilter(opts []*discordgo.ApplicationCommandInteractionDataOption) *animeschedule.SubscriptionTracks {
+func chosenTracks(opts []*discordgo.ApplicationCommandInteractionDataOption) *animeschedule.SubscriptionTracks {
 	for _, o := range opts {
 		if o == nil {
 			continue
 		}
 		if o.Type == discordgo.ApplicationCommandOptionSubCommand {
-			return trackFilter(o.Options)
+			return chosenTracks(o.Options)
 		}
 		if o.Name == optTrack {
 			if set, ok := animeschedule.ParseSubscriptionTracks(o.StringValue()); ok && o.StringValue() != "" {
@@ -206,15 +207,15 @@ func labelledName(c candidate, subscribed bool) string {
 // choice's value is the show's route, or its title when it has none. The invoker's subscriptions are read once.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	only := typeFilter(i.ApplicationCommandData().Options)
-	chosen := trackFilter(i.ApplicationCommandData().Options)
+	chosen := chosenTracks(i.ApplicationCommandData().Options)
 	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 	}
 	var rest, subscribed []*discordgo.ApplicationCommandOptionChoice
-	for _, src := range candidateSources {
+	for _, source := range candidateSources(chosen) {
 		var shows []candidate
-		for _, c := range src(chosen) {
+		for _, c := range source {
 			if only == nil || c.MediaType == *only {
 				shows = append(shows, c)
 			}

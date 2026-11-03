@@ -73,8 +73,11 @@ func (f *fakeStore) SetShowTracks(_ context.Context, id, showName, tracks string
 	for _, s := range f.docs[id] {
 		if s.Show == showName {
 			s.Tracks = tracks
+			// Like Mongo, only a mark with an air time sets notified; a zero mark just clears the memory.
 			for _, m := range marks {
+				notified := s.Notified || m.AirUnix != 0
 				s.Remember(m)
+				s.Notified = notified
 			}
 		}
 	}
