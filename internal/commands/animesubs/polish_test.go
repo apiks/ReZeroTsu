@@ -15,8 +15,6 @@ import (
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
-
-	"github.com/bwmarrin/discordgo"
 )
 
 // Timetable shows come before upcoming shows however the typed text matches them: ranking happens within each
@@ -24,7 +22,7 @@ import (
 func TestAddSuggestionsRankWithinEachSourceThenListTimetableShowsFirst(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Kaiju No. 9", Route: "kaiju"}},
 		entry("Shikanoko", "shikanoko", "Ep 2", at(time.Hour)))
-	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "ka", "")), "|")
+	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "ka")), "|")
 	if want := "Shikanoko|Kaiju No. 9 · premiere date TBA"; got != want {
 		t.Errorf("names = %q, want %q", got, want)
 	}
@@ -43,7 +41,7 @@ func TestAddSuggestionsCapAfterTheFinalOrdering(t *testing.T) {
 		}
 	}
 	seedEntries(t, entries...)
-	got := names(suggestions(t, st, "user", "", ""))
+	got := names(suggestions(t, st, "user", ""))
 	if len(got) != 25 || got[0] != "Show 20" || got[24] != "Show 44" {
 		t.Errorf("got %d choices from %q to %q, want 25 unsubscribed shows Show 20 to Show 44", len(got), got[0], got[len(got)-1])
 	}
@@ -98,17 +96,12 @@ func TestAddSaysAnUpcomingShowAlreadyPremieredInThePastTense(t *testing.T) {
 	}
 }
 
-func TestAddNotFoundReplyCoversUpcomingShowsAndNamesTheTypeFilter(t *testing.T) {
+func TestAddNotFoundReplyCoversUpcomingShows(t *testing.T) {
 	seedTypes(t)
 	useStore(t, newFakeStore())
 	plain := text(reply(t, invoke(t, "add", animeOption("Nothing Like It")...)))
 	if !strings.Contains(plain, "airing or upcoming") || strings.Contains(plain, "this week") || strings.Contains(plain, "type filter") {
 		t.Errorf("reply %q", plain)
-	}
-	typeOpt := &discordgo.ApplicationCommandInteractionDataOption{Name: "type", Type: discordgo.ApplicationCommandOptionString, Value: "movie"}
-	filtered := text(reply(t, invoke(t, "add", append(animeOption("Plain Tv"), typeOpt)...)))
-	if !strings.Contains(filtered, "type filter may be hiding it") {
-		t.Errorf("reply %q, want the filter named", filtered)
 	}
 }
 

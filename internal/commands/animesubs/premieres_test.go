@@ -50,7 +50,7 @@ func suggestionsWithTrack(t *testing.T, typed, track string) []string {
 
 func TestAddSuggestionsWithoutATrackKeepRawsPremiereLabel(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{frierenUpcoming()})
-	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "", "")), "|")
+	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|")
 	if want := "Frieren · premieres " + premiereIn(10*24*time.Hour).Format("2 Jan"); got != want {
 		t.Errorf("names = %q, want %q", got, want)
 	}
