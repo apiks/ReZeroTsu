@@ -140,9 +140,9 @@ func chosenTracks(opts []*discordgo.ApplicationCommandInteractionDataOption) *an
 	return nil
 }
 
-// labelledName is "Title (English)" then, in order, the premiere, the media type and "subscribed". The title is
-// cut so the labels survive within Discord's limit.
-func labelledName(c candidate, subscribed bool) string {
+// labelledName is the show's suggestion name under pref (suggestionName) then, in order, the premiere, the media
+// type and "subscribed". The name is cut so the labels survive within Discord's limit.
+func labelledName(c candidate, subscribed bool, pref animeschedule.PreferredName) string {
 	var labels []string
 	if c.Premiere != "" {
 		labels = append(labels, c.Premiere)
@@ -157,18 +157,19 @@ func labelledName(c candidate, subscribed bool) string {
 	if len(labels) > 0 {
 		suffix = " · " + strings.Join(labels, " · ")
 	}
-	title := []rune(titleName(c.ShowEntry))
+	name := []rune(suggestionName(c.ShowEntry, pref))
 	room := max(maxChoiceLength-len([]rune(suffix)), 0)
-	return string(title[:min(room, len(title))]) + suffix
+	return string(name[:min(room, len(name))]) + suffix
 }
 
 // autocompleteAdd offers the candidate shows matched anywhere in any of their four names, with the invoker's
 // subscribed shows labelled and last. Each source ranks its own matches (prefix before substring), timetable shows
 // come before upcoming shows, and the 25-choice cap applies to that final order. A choice's value is the show's
-// route, or its title when it has none. The invoker's subscriptions are read once.
+// route, or its title when it has none. The invoker's subscriptions and preferred name are read once; a failed read
+// names shows under Title.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	chosen := chosenTracks(i.ApplicationCommandData().Options)
-	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
+	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 	}
@@ -176,7 +177,7 @@ func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Sess
 	for _, source := range candidateSources(chosen, donghuaHidden(ctx, db, i.Interaction)) {
 		for _, c := range commands.MatchAnywhereAll(source, typed, func(c candidate) []string { return c.AllNames() }) {
 			isSubscribed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return s.Matches(c.Route, c.Name) })
-			choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isSubscribed), Value: choiceValue(c)}
+			choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isSubscribed, pref), Value: choiceValue(c)}
 			if isSubscribed {
 				subscribed = append(subscribed, choice)
 			} else {

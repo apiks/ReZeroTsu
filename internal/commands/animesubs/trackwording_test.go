@@ -198,7 +198,7 @@ func TestWorstCasePageOfListLinesKeepsItsFooter(t *testing.T) {
 		list = append(list, &anime_subs.ShowSub{Show: name, Route: fmt.Sprint("r", i), Tracks: "every"})
 	}
 	seedEntries(t, rows...)
-	got := subsDescriptionForPage(list, 0, 0, 4, 100)
+	got := subsDescriptionForPage(list, memberNames{}, 0, 0, 4, 100)
 	if !strings.Contains(got, " · TV Short · Donghua · Every track · Ep 100-101F (sub) aired <t:") {
 		t.Fatalf("description lacks the worst-case status: %q", got)
 	}
@@ -263,7 +263,7 @@ func TestEveryPageOfEveryStatusKeepsItsFooter(t *testing.T) {
 					t.Cleanup(animeschedule.SeedUpcoming(upcoming, true))
 					for _, start := range []int{0, total - 25} {
 						page := start / 25
-						got := subsDescriptionForPage(list, start, page, total/25, total)
+						got := subsDescriptionForPage(list, memberNames{}, start, page, total/25, total)
 						footer := fmt.Sprintf("Page %d of %d. Showing %d–%d of %d.", page+1, total/25, start+1, start+25, total)
 						if n := utf16Len(got); n > 4096 || !strings.Contains(got, footer) {
 							t.Fatalf("%v donghua=%v set=%q %s page %d: %d UTF-16 units, footer kept = %v; line: %q",
@@ -291,7 +291,7 @@ func TestPageOf25EveryTrackLinesStaysUnderTheEmbedLimit(t *testing.T) {
 		list = append(list, &anime_subs.ShowSub{Show: name, Route: fmt.Sprint("r", i), Tracks: "every"})
 	}
 	seedEntries(t, rows...)
-	got := subsDescriptionForPage(list, 0, 0, 2, 30)
+	got := subsDescriptionForPage(list, memberNames{}, 0, 0, 2, 30)
 	if n := len(utf16.Encode([]rune(got))); n > 4096 {
 		t.Errorf("description is %d UTF-16 units, want at most 4096", n)
 	}

@@ -39,7 +39,36 @@ func clipListTitle(title string) string {
 	return title
 }
 
-func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages, n int) string {
+// memberNames calls a member's subscriptions by their shown names. A subscription stores only its title and route,
+// so its show's other names come from the names on hand: every row of the loaded weeks, then the upcoming shows. The
+// zero value is Title with no names on hand, which calls every subscription by its stored title.
+type memberNames struct {
+	pref   animeschedule.PreferredName
+	onHand []animeschedule.ShowEntry
+}
+
+// namesFor reads the names on hand for a member who prefers pref.
+func namesFor(pref animeschedule.PreferredName) memberNames {
+	onHand := animeschedule.LoadedTrackRows()
+	for _, u := range animeschedule.UpcomingShows() {
+		onHand = append(onHand, upcomingEntry(u))
+	}
+	return memberNames{pref: pref, onHand: onHand}
+}
+
+// of is the shown name of sub: the first show on hand that sub is subscribed to (sameShow, ADR-0002), called by
+// the member's preferred name with the stored title as its title. A show not on hand is called by its stored title.
+func (m memberNames) of(sub *anime_subs.ShowSub) string {
+	for _, e := range m.onHand {
+		if sameShow(e, sub.Route, sub.Show) {
+			e.Name = sub.Show
+			return e.ShownName(m.pref)
+		}
+	}
+	return sub.Show
+}
+
+func subsDescriptionForPage(list []*anime_subs.ShowSub, names memberNames, start, page, totalPages, n int) string {
 	var b strings.Builder
 	end := min(start+discord.MaxEmbedFields, len(list))
 	upcoming, now := animeschedule.UpcomingShows(), animeschedule.Now()
@@ -47,7 +76,7 @@ func subsDescriptionForPage(list []*anime_subs.ShowSub, start, page, totalPages,
 		if list[j] == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(list[j].Show), findNextEpisode(loadTimetable(subscriptionTracks(list[j])), upcoming, list[j].Route, list[j].Show, subscriptionTracks(list[j]), now).listStatus())
+		fmt.Fprintf(&b, "%d. %s%s\n", j+1, clipListTitle(names.of(list[j])), findNextEpisode(loadTimetable(subscriptionTracks(list[j])), upcoming, list[j].Route, list[j].Show, subscriptionTracks(list[j]), now).listStatus())
 	}
 	endShow := min(start+discord.MaxEmbedFields, n)
 	b.WriteString("\n")
@@ -113,10 +142,18 @@ func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	return findShowIn(shows, name)
 }
 
-// titleName is "Title (English)" when the English name differs from the title, else the title.
-func titleName(e animeschedule.ShowEntry) string {
-	if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
-		return fmt.Sprintf("%s (%s)", e.Name, en)
+// suggestionName is how an add suggestion names a show under pref: "Shown name (Title)" when the shown name differs
+// from the title under anime_subs.MatchKey, else the title. Title keeps "Title (English)" when the English name
+// differs.
+func suggestionName(e animeschedule.ShowEntry, pref animeschedule.PreferredName) string {
+	if pref == animeschedule.PreferTitle {
+		if en := strings.TrimSpace(e.English); en != "" && anime_subs.MatchKey(en) != anime_subs.MatchKey(e.Name) {
+			return fmt.Sprintf("%s (%s)", e.Name, en)
+		}
+		return e.Name
+	}
+	if shown := e.ShownName(pref); anime_subs.MatchKey(shown) != anime_subs.MatchKey(e.Name) {
+		return fmt.Sprintf("%s (%s)", shown, e.Name)
 	}
 	return e.Name
 }
@@ -156,19 +193,21 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, set a
 	if err != nil {
 		return "Could not load your subscriptions.", false, err
 	}
+	// Replies call the show by the member's own preferred name; what is stored and matched stays the title.
+	shown := show.ShownName(animeschedule.MemberPreferredName(doc))
 	if hideDonghua && show.Donghua {
 		// The server hides this donghua. A member who follows it is told how to change its tracks; one who does not is
 		// told where to follow it. Nothing is changed.
 		mention := commands.CommandMention("subscription", "add")
 		if doc != nil && slices.ContainsFunc(doc.Shows, func(sub *anime_subs.ShowSub) bool { return sub != nil && sub.Matches(show.Route, showName) }) {
-			return fmt.Sprintf("You already follow `%s`. This server hides donghua, so run %s in a DM with ZeroTsu to change its tracks.", showName, mention), false, nil
+			return fmt.Sprintf("You already follow `%s`. This server hides donghua, so run %s in a DM with ZeroTsu to change its tracks.", shown, mention), false, nil
 		}
 		return msgShowNotFound + fmt.Sprintf(" This server hides donghua. Run %s in a DM with ZeroTsu to follow it.", mention), false, nil
 	}
 	if doc != nil {
 		for _, sub := range doc.Shows {
 			if sub != nil && sub.Matches(show.Route, showName) {
-				return replaceTracks(ctx, store, uid, sub, showName, set, animeschedule.Now())
+				return replaceTracks(ctx, store, uid, sub, shown, set, animeschedule.Now())
 			}
 		}
 	}
@@ -184,11 +223,11 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, set a
 		return "Could not save subscription.", false, err
 	}
 	if !added {
-		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
+		return fmt.Sprintf("You are already subscribed to `%s`.", shown), true, nil
 	}
-	desc := fmt.Sprintf("Subscribed to **%s**.", showName)
+	desc := fmt.Sprintf("Subscribed to **%s**.", shown)
 	if set != animeschedule.SubscribeSub {
-		desc = fmt.Sprintf("Subscribed to **%s** (%s).", showName, set.Title())
+		desc = fmt.Sprintf("Subscribed to **%s** (%s).", shown, set.Title())
 	}
 	if line := findNextEpisode(loadTimetable(set), animeschedule.UpcomingShows(), show.Route, showName, set, now).confirmationLine(); line != "" {
 		desc += "\n" + line
@@ -199,11 +238,12 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, set a
 // replaceTracks answers a re-add of a show the member already follows. The same set is already subscribed; a
 // different set replaces the stored one in a single statement. Tracks kept from the old set keep their memory;
 // each track new to the set is seeded from its own row that aired today (or cleared, if none), so switching
-// never DMs something that aired earlier today. It never counts against the subscription limit.
-func replaceTracks(ctx context.Context, store subsStore, uid string, existing *anime_subs.ShowSub, showName string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
+// never DMs something that aired earlier today. It never counts against the subscription limit. The replies call
+// the show shown.
+func replaceTracks(ctx context.Context, store subsStore, uid string, existing *anime_subs.ShowSub, shown string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
 	old, _ := animeschedule.ParseSubscriptionTracks(existing.Tracks)
 	if old == set {
-		return fmt.Sprintf("You are already subscribed to `%s`.", showName), true, nil
+		return fmt.Sprintf("You are already subscribed to `%s`.", shown), true, nil
 	}
 	seeded := &anime_subs.ShowSub{Show: existing.Show, Route: existing.Route}
 	seedMemory(seeded, set, now)
@@ -218,7 +258,7 @@ func replaceTracks(ctx context.Context, store subsStore, uid string, existing *a
 	if err := store.SetShowTracks(ctx, uid, existing.Show, set.Stored(), marks); err != nil {
 		return "Could not save subscription.", false, err
 	}
-	return fmt.Sprintf("**%s** now alerts for %s.", showName, set.Title()), true, nil
+	return fmt.Sprintf("**%s** now alerts for %s.", shown, set.Title()), true, nil
 }
 
 // notSubscribed is the reply for removing a show the member is not subscribed to, pointing at the list.
@@ -239,18 +279,20 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 		return notSubscribed(animeInput), nil
 	}
 
-	// Resolve the stored titles (exact case) the input names, then remove exactly those.
+	// Resolve the stored titles (exact case) the input names, then remove exactly those. last is the subscription
+	// that named the final one.
 	var stored []string
+	var last *anime_subs.ShowSub
 	for _, sub := range doc.Shows {
 		if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(animeInput) {
-			stored = append(stored, sub.Show)
+			stored, last = append(stored, sub.Show), sub
 		}
 	}
 	if len(stored) == 0 {
 		// An autocomplete choice carries the title cut to Discord's limit, as the Remove picker does.
 		for _, sub := range doc.Shows {
 			if sub != nil && anime_subs.MatchKey(clip(sub.Show)) == anime_subs.MatchKey(animeInput) {
-				stored = append(stored, sub.Show)
+				stored, last = append(stored, sub.Show), sub
 			}
 		}
 		if len(stored) > 1 {
@@ -264,7 +306,15 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	if err := store.RemoveShows(ctx, uid, stored); err != nil {
 		return "Could not update subscriptions.", err
 	}
-	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", animeInput), nil
+	removed := animeInput
+	if len(stored) == 1 {
+		// One subscription removed: called by the member's shown name when that is not its stored title. Otherwise
+		// the typed input, as under Title.
+		if shown := namesFor(animeschedule.MemberPreferredName(doc)).of(last); shown != last.Show {
+			removed = shown
+		}
+	}
+	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", removed), nil
 }
 
 // seedMemory marks, for each track of the set, the row of that track that already aired today as sent, so
