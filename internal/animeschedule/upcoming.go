@@ -24,8 +24,12 @@ type UpcomingShow struct {
 	English string
 	Native  string
 	// Premiere is the zero time when AnimeSchedule has no premiere date.
-	Premiere  time.Time
-	MediaType MediaType
+	Premiere time.Time
+	// SubPremiere and DubPremiere are the zero time when AnimeSchedule has none. JPNTime, SubTime and DubTime are
+	// the tracks' air clocks, the zero time when unset; only their UTC hour and minute mean anything.
+	SubPremiere, DubPremiere  time.Time
+	JPNTime, SubTime, DubTime time.Time
+	MediaType                 MediaType
 }
 
 type upcomingItem struct {
@@ -37,6 +41,11 @@ type upcomingItem struct {
 		Native  string `json:"native"`
 	} `json:"names"`
 	Premier    time.Time      `json:"premier"`
+	SubPremier time.Time      `json:"subPremier"`
+	DubPremier time.Time      `json:"dubPremier"`
+	JPNTime    time.Time      `json:"jpnTime"`
+	SubTime    time.Time      `json:"subTime"`
+	DubTime    time.Time      `json:"dubTime"`
 	MediaTypes []MediaTypeRef `json:"mediaTypes"`
 }
 
@@ -47,13 +56,18 @@ type upcomingPage struct {
 
 func (i upcomingItem) show() UpcomingShow {
 	return UpcomingShow{
-		Name:      strings.TrimSpace(i.Title),
-		Route:     i.Route,
-		Romaji:    strings.TrimSpace(i.Names.Romaji),
-		English:   strings.TrimSpace(i.Names.English),
-		Native:    strings.TrimSpace(i.Names.Native),
-		Premiere:  i.Premier,
-		MediaType: decodeMediaType(i.MediaTypes),
+		Name:        strings.TrimSpace(i.Title),
+		Route:       i.Route,
+		Romaji:      strings.TrimSpace(i.Names.Romaji),
+		English:     strings.TrimSpace(i.Names.English),
+		Native:      strings.TrimSpace(i.Names.Native),
+		Premiere:    i.Premier,
+		SubPremiere: i.SubPremier,
+		DubPremiere: i.DubPremier,
+		JPNTime:     i.JPNTime,
+		SubTime:     i.SubTime,
+		DubTime:     i.DubTime,
+		MediaType:   decodeMediaType(i.MediaTypes),
 	}
 }
 

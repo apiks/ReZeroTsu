@@ -9,7 +9,7 @@ import (
 
 // Fake side of the ticket #7 SentState additions.
 
-func (f *fakeSentState) MarkUserShowNotified(_ context.Context, id, showName string, airUnix int64, episodeKey string) error {
+func (f *fakeSentState) MarkUserShowNotified(_ context.Context, id, showName string, marks []anime_subs.Mark) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	d, ok := f.AnimeSubs[id]
@@ -19,9 +19,9 @@ func (f *fakeSentState) MarkUserShowNotified(_ context.Context, id, showName str
 	// Exact name match, like the production array filter.
 	for _, s := range d.Shows {
 		if s != nil && s.Show == showName {
-			s.Notified = true
-			s.LastNotifiedAirUnix = airUnix
-			s.LastNotifiedEpisode = episodeKey
+			for _, m := range marks {
+				s.Remember(m)
+			}
 		}
 	}
 	return nil

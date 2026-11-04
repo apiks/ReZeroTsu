@@ -104,9 +104,9 @@ func TestKeepRosterNotReadyUnlessThisAndNextWeekAreLoaded(t *testing.T) {
 
 // namesRoster keeps the shows with these names (by match key), for the tests of the removal mechanics.
 func namesRoster(airing map[string]struct{}) keepRoster {
-	r := keepRoster{routes: map[string]struct{}{}, keys: map[string]struct{}{}}
+	r := keepRoster{chain: newShowSet()}
 	for name := range airing {
-		r.keys[anime_subs.MatchKey(name)] = struct{}{}
+		r.chain.keys[anime_subs.MatchKey(name)] = struct{}{}
 	}
 	return r
 }
