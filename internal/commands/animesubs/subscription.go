@@ -62,11 +62,6 @@ func init() {
 					Autocomplete: true,
 				}, {
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        optType,
-					Description: "Only this kind of release: TV, TV Short, ONA, Donghua, OVA, Special or Movie",
-					Choices:     typeChoices,
-				}, {
-					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        optTrack,
 					Description: "Which airings alert you: Sub (default, raw when a week has no sub), Dub, Raw, or several",
 					Choices:     trackOptionChoices,
@@ -111,11 +106,6 @@ func finish(ic *interaction.Context, desc string, logErr error) error {
 	return answer(ic, desc)
 }
 
-// typeArg is the `type` filter the invoker set, or nil.
-func typeArg(ic *interaction.Context) *animeschedule.MediaType {
-	return typeFilter(ic.Command.Options)
-}
-
 // tracksArg is the subscription tracks the invoker chose; Sub when the option is unset.
 func tracksArg(ic *interaction.Context) animeschedule.SubscriptionTracks {
 	if opt := commands.ParseOption(ic.Command.Options, optTrack); opt != nil {
@@ -136,7 +126,7 @@ func animeArg(ic *interaction.Context) string {
 // runAdd keeps today's rules through subCore: the show must be on the loaded weeks or the upcoming list, one
 // subscription per show (ADR-0002), the subscription limit, and seeding from today's aired entry.
 func runAdd(ic *interaction.Context) error {
-	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic), typeArg(ic), tracksArg(ic))
+	desc, confirmed, logErr := subCore(ic.Context(), storeOf(ic.DB), ic.Invoker.ID, animeArg(ic), tracksArg(ic))
 	if !confirmed {
 		return finish(ic, desc, logErr)
 	}

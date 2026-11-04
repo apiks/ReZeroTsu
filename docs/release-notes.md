@@ -2,6 +2,10 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Subscription add (spec #125)
+
+- Type option dropped (#126): `/subscription add` no longer has a `type` option, so it takes only `anime` and `track`. The suggestions still label TV Short, ONA, Donghua, OVA, Special and Movie shows, in the same order and with the same matching, and a lookup covers every media type. A reply for a show that was not found no longer says "The type filter may be hiding it".
+
 ## Subscription tracks (spec #109)
 
 - Subscribe to tracks (#114): `/subscription add` takes an optional `track` option with the choices Sub (the default), Dub, Raw, Sub and Dub, and Every track. A subscription alerts once for each airing of each chosen track: Dub means dubbed episodes only, Raw means raw only, and Sub keeps its raw alert in a week the show has no sub. An airing two chosen tracks both cover, such as the raw of a show with no sub under Every track, is one DM. The bot remembers what it sent for each track, so a dub Ep 2 is still sent after a sub Ep 5, and the other way round. Subscribing after today's airing of a chosen track does not DM it. A plain Sub confirmation reads as before; any other choice names its tracks after the title: "Subscribed to **Frieren** (Sub and Dub)." Existing subscriptions keep working as Sub, with nothing resent or skipped at the release. You still have one subscription per show and up to 100.

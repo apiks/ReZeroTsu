@@ -101,9 +101,9 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 
 // findShowByName returns the candidate show (loaded weeks or upcoming) matching name by any of its four names, or
 // the zero value and false.
-func findShowByName(name string, only *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
+func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	var shows []animeschedule.ShowEntry
-	for _, c := range candidates(only) {
+	for _, c := range candidates() {
 		shows = append(shows, c.ShowEntry)
 	}
 	return findShowIn(shows, name)
@@ -131,18 +131,15 @@ type subsStore interface {
 var showLookup = findShowByName
 
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
-// already held), which is when the DMs footer applies. only narrows the lookup to one media type.
-func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType, set animeschedule.SubscriptionTracks) (responseDesc string, confirmed bool, logErr error) {
+// already held), which is when the DMs footer applies.
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
 	}
-	show, ok := showLookup(animeInput, only)
+	show, ok := showLookup(animeInput)
 	if !ok {
 		msg := "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
-		if only != nil {
-			msg += " The type filter may be hiding it; try again without it."
-		}
 		return msg, false, nil
 	}
 	showName := show.Name
