@@ -3,7 +3,7 @@ package animesubs
 import (
 	"context"
 	"errors"
-	"os"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,21 +11,12 @@ import (
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
-	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/interaction/interactiontest"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-// TestMain keeps every test off the database: a server that is not under test shows donghua, as an unset server does.
-func TestMain(m *testing.M) {
-	guildSettings = func(context.Context, *database.Client, string) (*guilds.GuildSettings, error) {
-		return &guilds.GuildSettings{Donghua: true}, nil
-	}
-	os.Exit(m.Run())
-}
 
 // where is how /subscription add is invoked: in a server the bot is a member of, in a DM, or from a user install in a
 // server the bot has not joined.
@@ -169,15 +160,111 @@ func TestTypedNameResolvesNoDonghuaInAServerThatHidesDonghua(t *testing.T) {
 		t.Run(typed, func(t *testing.T) {
 			seedDonghua(t)
 			serverDonghua(t, false, nil)
-			st := newFakeStore().with("user", "Soul Land")
+			st := newFakeStore().with("user", "Airing Plain")
 			useStore(t, st)
-			before := len(st.docs["user"])
 			got := addAt(t, inServer, typed)
 			if !strings.Contains(got, "I could not find that airing or upcoming show") || !strings.Contains(got, pointer) {
 				t.Errorf("reply %q lacks the not-found message and %q", got, pointer)
 			}
-			if len(st.docs["user"]) != before || len(st.calls) != 0 {
-				t.Errorf("a hidden donghua changed the store: docs=%v calls=%v", st.names("user"), st.calls)
+			if names := strings.Join(st.names("user"), ","); names != "Airing Plain" || len(st.calls) != 0 {
+				t.Errorf("a hidden donghua changed the store: docs=%v calls=%v", names, st.calls)
+			}
+		})
+	}
+}
+
+// A member who follows a hidden donghua is told so, with the way to change its tracks, not that it does not exist.
+func TestTypedNameOfAFollowedHiddenDonghuaSaysSoAndChangesNothing(t *testing.T) {
+	commands.SetCommandIDs([]*discordgo.ApplicationCommand{{ID: "123", Name: "subscription", Type: discordgo.ChatApplicationCommand}})
+	t.Cleanup(func() { commands.SetCommandIDs(nil) })
+	const want = "You already follow `Soul Land`. This server hides donghua, so run </subscription add:123> in a DM with ZeroTsu to change its tracks."
+	for _, typed := range []string{"Soul Land", "soul-land"} {
+		t.Run(typed, func(t *testing.T) {
+			seedDonghua(t)
+			serverDonghua(t, false, nil)
+			st := newFakeStore().with("user", "Soul Land")
+			useStore(t, st)
+			got := addAt(t, inServer, typed)
+			if !strings.Contains(got, want) || strings.Contains(got, "could not find") {
+				t.Errorf("reply %q, want it to contain %q", got, want)
+			}
+			if len(st.calls) != 0 || strings.Join(st.names("user"), ",") != "Soul Land" {
+				t.Errorf("a followed hidden donghua changed the store: docs=%v calls=%v", st.names("user"), st.calls)
+			}
+		})
+	}
+	// A hidden donghua the member does not follow keeps the not-found reply and the pointer.
+	seedDonghua(t)
+	serverDonghua(t, false, nil)
+	useStore(t, newFakeStore().with("user", "Airing Plain"))
+	if got := addAt(t, inServer, "Soul Land"); strings.Contains(got, "You already follow") || !strings.Contains(got, "could not find") || !strings.Contains(got, "hides donghua") {
+		t.Errorf("an unfollowed hidden donghua: reply %q", got)
+	}
+}
+
+// The typed name is resolved against every show first, with the usual precedence. A hidden donghua that wins gets the
+// pointer and no subscription, even when a lower-precedence match is a shown show; a shown show that wins subscribes.
+func TestTypedNameResolvesAgainstEveryShowBeforeDonghuaIsHidden(t *testing.T) {
+	commands.SetCommandIDs([]*discordgo.ApplicationCommand{{ID: "123", Name: "subscription", Type: discordgo.ChatApplicationCommand}})
+	t.Cleanup(func() { commands.SetCommandIDs(nil) })
+	long := strings.Repeat("Long Title ", 11) // 121 characters, so the choice text is cut to 100
+	typedLong := clip(long)
+	if len([]rune(long)) <= maxChoiceLength || typedLong == long {
+		t.Fatalf("test title must exceed %d characters", maxChoiceLength)
+	}
+	for _, tc := range []struct {
+		name      string
+		donghua   animeschedule.ShowEntry // the hidden donghua
+		plain     animeschedule.ShowEntry // the shown show
+		typed     string
+		plainWins bool
+	}{
+		{"donghua title beats the shown show's English name", animeschedule.ShowEntry{Name: "Clash"}, animeschedule.ShowEntry{Name: "Plain A", English: "Clash"}, "Clash", false},
+		{"donghua title beats the shown show's romaji name", animeschedule.ShowEntry{Name: "Clash"}, animeschedule.ShowEntry{Name: "Plain A", Romaji: "Clash"}, "clash", false},
+		{"donghua title cut to 100 characters beats the shown show's English name", animeschedule.ShowEntry{Name: long}, animeschedule.ShowEntry{Name: "Plain A", English: typedLong}, typedLong, false},
+		{"shown show's title beats the donghua's English name", animeschedule.ShowEntry{Name: "Dong", English: "Clash"}, animeschedule.ShowEntry{Name: "Clash"}, "Clash", true},
+	} {
+		for _, donghuaFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/donghua listed first=%v", tc.name, donghuaFirst), func(t *testing.T) {
+				d, p := tc.donghua, tc.plain
+				d.Route, d.Donghua, d.Episode, d.AirTimeUnix = "dong-route", true, "Ep 1", at(time.Hour)
+				p.Route, p.Episode, p.AirTimeUnix = "plain-route", "Ep 1", at(2*time.Hour)
+				if donghuaFirst {
+					seedUpcoming(t, nil, d, p)
+				} else {
+					seedUpcoming(t, nil, p, d)
+				}
+				serverDonghua(t, false, nil)
+				st := newFakeStore()
+				useStore(t, st)
+				got := addAt(t, inServer, tc.typed)
+				if tc.plainWins {
+					if !strings.Contains(got, "Subscribed to **"+p.Name+"**") {
+						t.Errorf("reply %q, want a subscription to %s", got, p.Name)
+					}
+					return
+				}
+				if !strings.Contains(got, "could not find") || !strings.Contains(got, "</subscription add:123> in a DM") {
+					t.Errorf("reply %q, want the not-found message and the DM pointer", got)
+				}
+				if len(st.calls) != 0 || len(st.docs["user"]) != 0 {
+					t.Errorf("the lower-precedence shown show was subscribed: docs=%v calls=%v", st.names("user"), st.calls)
+				}
+			})
+		}
+	}
+}
+
+// /subscription add reads the server settings once per run in a server, and never in a DM or an unjoined user install.
+func TestAddReadsTheServerSettingsOncePerRun(t *testing.T) {
+	for w, want := range map[where]int{inServer: 1, inDM: 0, inUnjoinedServer: 0} {
+		t.Run(w.String(), func(t *testing.T) {
+			seedDonghua(t)
+			reads := serverDonghua(t, false, nil)
+			useStore(t, newFakeStore())
+			addAt(t, w, "Soul Land")
+			if *reads != want {
+				t.Errorf("settings read %d times, want %d", *reads, want)
 			}
 		})
 	}
@@ -234,10 +321,27 @@ func TestFollowedDonghuaStaysManageableInAServerThatHidesDonghua(t *testing.T) {
 	if got := text(reply(t, invoke(t, "list"))); !strings.Contains(got, "Soul Land") {
 		t.Errorf("list reply %q lacks the followed donghua", got)
 	}
-	picker := removePicker(docToSubList(&anime_subs.AnimeSubs{Shows: st.docs["user"]}), 0, "user")
-	if opts := picker.(discordgo.ActionsRow).Components[0].(discordgo.SelectMenu).Options; len(opts) != 2 || opts[0].Value != "Soul Land" {
+	// The Remove picker comes from the list command and is driven through its component handler.
+	page := reply(t, invoke(t, "list"))
+	if opts := pickerOptions(page); len(opts) != 2 || opts[0].Value != "Soul Land" {
 		t.Errorf("Remove picker options = %+v, want both followed shows", opts)
 	}
+	var pickerCustomID string
+	for _, row := range page.Components {
+		for _, c := range row.(discordgo.ActionsRow).Components {
+			if m, ok := c.(discordgo.SelectMenu); ok {
+				pickerCustomID = m.CustomID
+			}
+		}
+	}
+	chosen := pick("user", pickerCustomID, "Soul Land")
+	if err := handleRemovePicker(chosen, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(st.names("user"), ","); got != "Airing Plain" {
+		t.Errorf("after choosing the donghua in the picker: %q, want it removed", got)
+	}
+	st.with("user", "Soul Land")
 	if got := text(reply(t, invoke(t, "remove", animeOption("Soul Land")...))); !strings.Contains(got, "unsubscribed from `Soul Land`") {
 		t.Errorf("remove reply %q", got)
 	}

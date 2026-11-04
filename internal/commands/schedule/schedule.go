@@ -226,11 +226,6 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// serverSettings reads whether the server shows donghua and its preferred track, by the rule in commands.ServerSettings.
-func serverSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction) (donghua bool, pref animeschedule.PreferredTrack) {
-	return commands.ServerSettings(ctx, db, i, guildSettings)
-}
-
 // trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.
 func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
@@ -244,7 +239,7 @@ func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 // dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
 // and returns the track used.
 func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack) {
-	donghua, pref := serverSettings(ic.Context(), ic.DB, ic.Interaction)
+	donghua, pref := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings)
 	if chosen != nil {
 		pref = *chosen
 	}

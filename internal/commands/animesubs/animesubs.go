@@ -100,10 +100,11 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 }
 
 // findShowByName returns the candidate show (loaded weeks or upcoming) matching name by any of its four names, or
-// the zero value and false.
-func findShowByName(name string, hideDonghua bool) (animeschedule.ShowEntry, bool) {
+// the zero value and false. It looks at every show, donghua included: whether a donghua may be subscribed is subCore's
+// decision, made after the name has resolved.
+func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	var shows []animeschedule.ShowEntry
-	for _, c := range candidates(hideDonghua) {
+	for _, c := range candidates() {
 		shows = append(shows, c.ShowEntry)
 	}
 	return findShowIn(shows, name)
@@ -130,6 +131,8 @@ type subsStore interface {
 // showLookup resolves user input to a loaded-week or upcoming show; replaced in tests.
 var showLookup = findShowByName
 
+const msgShowNotFound = "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
+
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
 // already held), which is when the DMs footer applies.
 func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks, hideDonghua bool) (responseDesc string, confirmed bool, logErr error) {
@@ -137,22 +140,26 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, set a
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
 	}
-	show, ok := showLookup(animeInput, hideDonghua)
+	// The name resolves against every show first, with the usual precedence, so a hidden donghua is never skipped for a
+	// lower-precedence match among the shown shows.
+	show, ok := showLookup(animeInput)
 	if !ok {
-		msg := "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
-		// A name that matches only a hidden donghua is told where to follow it, not that it does not exist.
-		if hideDonghua {
-			if hidden, found := showLookup(animeInput, false); found && hidden.Donghua {
-				msg += fmt.Sprintf(" This server hides donghua. Run %s in a DM with ZeroTsu to follow it.", commands.CommandMention("subscription", "add"))
-			}
-		}
-		return msg, false, nil
+		return msgShowNotFound, false, nil
 	}
 	showName := show.Name
 
 	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", false, err
+	}
+	if hideDonghua && show.Donghua {
+		// The server hides this donghua. A member who follows it is told how to change its tracks; one who does not is
+		// told where to follow it. Nothing is changed.
+		mention := commands.CommandMention("subscription", "add")
+		if doc != nil && slices.ContainsFunc(doc.Shows, func(sub *anime_subs.ShowSub) bool { return sub != nil && sub.Matches(show.Route, showName) }) {
+			return fmt.Sprintf("You already follow `%s`. This server hides donghua, so run %s in a DM with ZeroTsu to change its tracks.", showName, mention), false, nil
+		}
+		return msgShowNotFound + fmt.Sprintf(" This server hides donghua. Run %s in a DM with ZeroTsu to follow it.", mention), false, nil
 	}
 	if doc != nil {
 		for _, sub := range doc.Shows {

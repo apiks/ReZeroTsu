@@ -14,7 +14,7 @@ import (
 func lookupAs(t *testing.T, show animeschedule.ShowEntry) {
 	t.Helper()
 	old := showLookup
-	showLookup = func(string, bool) (animeschedule.ShowEntry, bool) { return show, true }
+	showLookup = func(string) (animeschedule.ShowEntry, bool) { return show, true }
 	t.Cleanup(func() { showLookup = old })
 }
 

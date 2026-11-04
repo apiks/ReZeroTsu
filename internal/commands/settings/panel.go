@@ -147,7 +147,7 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 		"\n**New episodes channel:** " + off(autopostChannelID(data.newEpisodes), "Off", commands.ChannelMention) +
 		"\n**New episodes ping role:** " + off(autopostRoleID(data.newEpisodes), "None", commands.RoleMention) +
 		"\n**Daily schedule channel:** " + off(autopostChannelID(data.dailySchedule), "Off", commands.ChannelMention) +
-		"\n**Donghua in the schedule:** " + donghua +
+		"\n**Donghua in the schedule and new subscriptions:** " + donghua +
 		"\n**Preferred track:** " + gs.Preferred().Title() + " " + trackFallback(gs.Preferred()) + " Used by /schedule and both autoposts."
 	if w := mentionWarning(ic, data.newEpisodes); w != "" {
 		desc += "\n\n" + w
