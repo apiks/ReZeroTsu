@@ -131,9 +131,10 @@ func parseDay(s string) int {
 	}
 }
 
-// scheduleLine renders one entry; onToday adds the live relative time.
-func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
-	line := fmt.Sprintf("**%s** — %s %s", e.Name, e.Episode, e.Track.Label())
+// scheduleLine renders one entry, calling the show by its shown name under name; onToday adds the live relative
+// time.
+func scheduleLine(e animeschedule.ShowEntry, name animeschedule.PreferredName, onToday bool) string {
+	line := fmt.Sprintf("**%s** — %s %s", e.ShownName(name), e.Episode, e.Track.Label())
 	if e.Delayed != "" {
 		line += " " + e.Delayed
 	}
@@ -181,10 +182,10 @@ func utf16Len(s string) int {
 	return n
 }
 
-// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list, read under pref. Both
-// /schedule and the daily-schedule autopost use it. now is the instant the caller works at: the page of now's UTC
-// day adds live relative times. The footer names a Dub or Raw preference.
-func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pref animeschedule.PreferredTrack) *discordgo.MessageEmbed {
+// BuildScheduleEmbed builds the schedule page body for a UTC date and its show list, read under pref, calling each
+// show by its shown name under name. Both /schedule and the daily-schedule autopost use it. now is the instant the
+// caller works at: the page of now's UTC day adds live relative times. The footer names a Dub or Raw preference.
+func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pref animeschedule.PreferredTrack, name animeschedule.PreferredName) *discordgo.MessageEmbed {
 	date = date.UTC()
 	titleWithDate := fmt.Sprintf("%s, %s", dayNames[date.Weekday()], date.Format("2 Jan 2006"))
 
@@ -194,7 +195,7 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 	if len(shows) > 0 {
 		lines := make([]string, len(shows))
 		for i, e := range shows {
-			lines[i] = scheduleLine(e, onToday)
+			lines[i] = scheduleLine(e, name, onToday)
 		}
 		description = scheduleDescription(lines)
 	}
@@ -237,13 +238,13 @@ func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 }
 
 // dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
-// and returns the track used.
-func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack) {
-	donghua, pref := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings)
+// and returns the track used and the preferred name the page calls shows by.
+func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack, animeschedule.PreferredName) {
+	donghua, pref, name := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings)
 	if chosen != nil {
 		pref = *chosen
 	}
-	return animeschedule.GetDayShows(date, donghua, pref), pref
+	return animeschedule.GetDayShows(date, donghua, pref), pref, name
 }
 
 // handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.
@@ -268,9 +269,9 @@ func handleSchedule(ic *interaction.Context) error {
 		date = resolved
 	}
 
-	shows, pref := dayShows(ic, date, trackOption(ic))
+	shows, pref, name := dayShows(ic, date, trackOption(ic))
 	return ic.EditReply(interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref, name)},
 		Components: pageComponents(v, date, ic.Invoker.ID, pref),
 	})
 }

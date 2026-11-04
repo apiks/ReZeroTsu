@@ -144,8 +144,10 @@ type GuildSettings struct {
 	Donghua   bool        `bson:"donghua,omitempty"`
 	// PreferredTrack is "sub", "dub" or "raw"; missing reads as Sub (see Preferred).
 	PreferredTrack string `bson:"preferred_track,omitempty"`
-	PingMessage    string `bson:"ping_message,omitempty"`
-	Premium        bool   `bson:"premium,omitempty"`
+	// PreferredName is "title", "romaji", "english" or "native"; missing reads as Title (see PreferredShowName).
+	PreferredName string `bson:"preferred_name,omitempty"`
+	PingMessage   string `bson:"ping_message,omitempty"`
+	Premium       bool   `bson:"premium,omitempty"`
 }
 
 // Guild is a guild document; _id is the guild ID.
@@ -273,6 +275,28 @@ func (r *Repo) SetPreferredTrack(ctx context.Context, guildID string, pref anime
 // preferredTrackValue is what is stored for pref: the lower-case value ParsePreferredTrack reads.
 func preferredTrackValue(pref animeschedule.PreferredTrack) string {
 	return pref.String()
+}
+
+// preferredNameField is the guild_settings key of GuildSettings.PreferredName.
+const preferredNameField = "preferred_name"
+
+// PreferredShowName is the server's preferred name; a missing or unknown value is Title.
+func (g *GuildSettings) PreferredShowName() animeschedule.PreferredName {
+	name, _ := animeschedule.ParsePreferredName(g.PreferredName)
+	return name
+}
+
+// SetPreferredName sets guild_settings.preferred_name alone.
+func (r *Repo) SetPreferredName(ctx context.Context, guildID string, name animeschedule.PreferredName) error {
+	if err := r.setSettingsField(ctx, guildID, preferredNameField, preferredNameValue(name)); err != nil {
+		return fmt.Errorf("SetPreferredName: %w", err)
+	}
+	return nil
+}
+
+// preferredNameValue is what is stored for name: the lower-case value ParsePreferredName reads.
+func preferredNameValue(name animeschedule.PreferredName) string {
+	return name.String()
 }
 
 // SetPingMessage sets guild_settings.ping_message alone.

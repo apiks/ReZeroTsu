@@ -158,7 +158,7 @@ func TestScheduleOverlongPageOfMultiByteTitlesCutsByCharactersNotBytes(t *testin
 	lines := make([]string, len(shows))
 	for i := range shows {
 		shows[i] = animeschedule.ShowEntry{Name: fmt.Sprintf("魔法少女まどか☆マギカ 第%03d話 — 特別編", i), Episode: "Episode 1", Track: "sub", AirTimeUnix: 1700000000}
-		lines[i] = scheduleLine(shows[i], false)
+		lines[i] = scheduleLine(shows[i], animeschedule.PreferTitle, false)
 	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": shows})
 	if n := u16(emb.Description); n > discord.MaxEmbedDescriptionLength {
@@ -184,7 +184,7 @@ func TestScheduleDescriptionWhenNotEvenTheFirstLineFitsHasNoLeadingNewline(t *te
 }
 
 func TestScheduleEmptyDayTextIsTrueWhereThereAreNoButtons(t *testing.T) {
-	emb := BuildScheduleEmbed(mustDate("2026-11-05"), mustDate("2026-11-04"), nil, animeschedule.PreferSub)
+	emb := BuildScheduleEmbed(mustDate("2026-11-05"), mustDate("2026-11-04"), nil, animeschedule.PreferSub, animeschedule.PreferTitle)
 	if strings.Contains(emb.Description, "buttons") || !strings.Contains(emb.Description, "/schedule") {
 		t.Errorf("description = %q, want a pointer to /schedule instead of the buttons", emb.Description)
 	}

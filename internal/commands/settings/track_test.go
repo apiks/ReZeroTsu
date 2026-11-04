@@ -34,8 +34,8 @@ func TestPanelShowsThePreferredTrackOnItsButtonAndInItsText(t *testing.T) {
 		if !strings.Contains(desc, line) {
 			t.Errorf("stored %q: panel %q lacks the line %q", have, desc, line)
 		}
-		if len(buttons) != 3 || buttons[0].Label == "" || buttons[1].Label != "Preferred track: "+name || buttons[2].Label != "Edit ping message" {
-			t.Errorf("stored %q: buttons = %+v, want Donghua, Preferred track: %s, Edit ping message", have, buttons, name)
+		if len(buttons) != 4 || buttons[0].Label == "" || buttons[1].Label != "Preferred track: "+name || buttons[2].Label != "Edit ping message" {
+			t.Errorf("stored %q: buttons = %+v, want Donghua, Preferred track: %s, Edit ping message, Preferred name", have, buttons, name)
 		}
 	}
 }

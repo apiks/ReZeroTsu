@@ -33,7 +33,7 @@ func TestEpisodeEmbedWording(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := buildEpisodeEmbed(tc.show).Description; got != tc.want {
+			if got := buildEpisodeEmbed(tc.show, animeschedule.PreferTitle).Description; got != tc.want {
 				t.Errorf("description = %q, want %q", got, tc.want)
 			}
 		})
@@ -63,7 +63,7 @@ func TestDonghuaMovieTimetableRowDecodesToMovieAlertWording(t *testing.T) {
 		if len(shows) != 1 {
 			t.Fatalf("%v: shows = %+v, want one", pref, shows)
 		}
-		if got := buildEpisodeEmbed(shows[0]).Description; got != want {
+		if got := buildEpisodeEmbed(shows[0], animeschedule.PreferTitle).Description; got != want {
 			t.Errorf("%v: description = %q, want %q", pref, got, want)
 		}
 	}

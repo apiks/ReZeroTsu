@@ -2,6 +2,10 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Preferred name (spec #131)
+
+- Server preferred name (#132): moderators choose which of a show's names the server sees with the new "Preferred name: Title" button, the fourth on the last row of `/settings`. Each press cycles Title, Romaji, English, Native, then Title again and saves only that setting; the panel text gains "**Preferred name:** English (else the title). Used by /schedule and both autoposts." (Title reads "**Preferred name:** Title."). `/schedule` in the server, its Previous, Next and day picker, the daily-schedule autopost and the new-episodes autopost (the embed title, and a movie's "**Name** is out, subbed!" line) call each show by that name. A show that lacks it is called by its title, never by another of its names. In DMs, and in a server the bot has not joined, `/schedule` shows titles. A server that changes nothing stays on Title and sees no difference. Changing the preferred name never reposts or skips an episode, and subscriptions are untouched.
+
 ## Subscription add (spec #125)
 
 - Type option dropped (#126): `/subscription add` no longer has a `type` option, so it takes only `anime` and `track`. The suggestions still label TV Short, ONA, Donghua, OVA, Special and Movie shows, in the same order and with the same matching, and a lookup covers every media type. A reply for a show that was not found no longer says "The type filter may be hiding it".
