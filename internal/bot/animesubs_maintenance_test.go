@@ -112,7 +112,7 @@ func namesRoster(airing map[string]struct{}) keepRoster {
 }
 
 // fakeUserSubs is an in-memory userSubsStore (ticket #8). It has no whole-document rewrite.
-type fakeUserSubs struct {
+type fakeUserSubscriptions struct {
 	docs    []*anime_subs.AnimeSubs
 	removed map[string][]string
 	// collapsed lists the IDs CollapseDuplicateShows was called for; ops is "remove:id" / "collapse:id" in order.
@@ -122,17 +122,17 @@ type fakeUserSubs struct {
 	collapseNoop bool
 }
 
-func (f *fakeUserSubs) CollapseDuplicateShows(_ context.Context, id string) (bool, error) {
+func (f *fakeUserSubscriptions) CollapseDuplicateShows(_ context.Context, id string) (bool, error) {
 	f.collapsed = append(f.collapsed, id)
 	f.ops = append(f.ops, "collapse:"+id)
 	return !f.collapseNoop, nil
 }
 
-func newFakeUserSubs(docs ...*anime_subs.AnimeSubs) *fakeUserSubs {
-	return &fakeUserSubs{docs: docs, removed: map[string][]string{}}
+func newFakeUserSubscriptions(docs ...*anime_subs.AnimeSubs) *fakeUserSubscriptions {
+	return &fakeUserSubscriptions{docs: docs, removed: map[string][]string{}}
 }
 
-func (f *fakeUserSubs) IterateUserSubs(_ context.Context, fn func(*anime_subs.AnimeSubs) error) error {
+func (f *fakeUserSubscriptions) IterateUserSubscriptions(_ context.Context, fn func(*anime_subs.AnimeSubs) error) error {
 	for _, d := range f.docs {
 		if err := fn(d); err != nil {
 			return err
@@ -141,7 +141,7 @@ func (f *fakeUserSubs) IterateUserSubs(_ context.Context, fn func(*anime_subs.An
 	return nil
 }
 
-func (f *fakeUserSubs) RemoveShows(_ context.Context, id string, names []string) error {
+func (f *fakeUserSubscriptions) RemoveShows(_ context.Context, id string, names []string) error {
 	f.removed[id] = append(f.removed[id], names...)
 	f.ops = append(f.ops, "remove:"+id)
 	return nil
@@ -149,7 +149,7 @@ func (f *fakeUserSubs) RemoveShows(_ context.Context, id string, names []string)
 
 func TestCleanupFinishedShows(t *testing.T) {
 	airing := map[string]struct{}{"frieren": {}}
-	st := newFakeUserSubs(
+	st := newFakeUserSubscriptions(
 		&anime_subs.AnimeSubs{ID: "a", Shows: []*anime_subs.ShowSub{{Show: "Frieren"}, {Show: "Old Show"}, {Show: "Gone"}}},
 		&anime_subs.AnimeSubs{ID: "b", Shows: []*anime_subs.ShowSub{{Show: "Frieren"}}},
 	)
@@ -186,7 +186,7 @@ func TestCleanupFinishedShowsMatchesLikeTheNotifier(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			airing := map[string]struct{}{strings.ToLower(tc.airingName): {}}
-			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: tc.subName}}})
+			st := newFakeUserSubscriptions(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: tc.subName}}})
 			if _, err := cleanupFinishedShows(context.Background(), st, namesRoster(airing)); err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +234,7 @@ func TestCleanupCollapsesDuplicateAndNilEntries(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: tc.shows})
+			st := newFakeUserSubscriptions(&anime_subs.AnimeSubs{ID: "u", Shows: tc.shows})
 			st.collapseNoop = tc.collapseNoop
 			updated, err := cleanupFinishedShows(context.Background(), st, namesRoster(airing))
 			if err != nil {

@@ -26,10 +26,10 @@ func TestGuildShowNamesMatchUsesMatchKey(t *testing.T) {
 		return out
 	}
 	tests := []struct {
-		name string
-		day  []animeschedule.ShowEntry
-		subs []*anime_subs.ShowSub
-		want bool
+		name          string
+		day           []animeschedule.ShowEntry
+		subscriptions []*anime_subs.ShowSub
+		want          bool
 	}{
 		{"surrounding ASCII space on the schedule name", day("Frieren "), sub("Frieren"), true},
 		{"surrounding ASCII space on the stored name", day("Frieren"), sub(" frieren "), true},
@@ -37,7 +37,7 @@ func TestGuildShowNamesMatchUsesMatchKey(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := guildSentMatches(tc.day, tc.subs, tc.day); got != tc.want {
+			if got := guildSentMatches(tc.day, tc.subscriptions, tc.day); got != tc.want {
 				t.Errorf("guildSentMatches = %v, want %v", got, tc.want)
 			}
 		})

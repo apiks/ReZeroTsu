@@ -16,7 +16,7 @@ Read by an implementer subagent that builds one ticket. The prompt names the tic
 
 Done means all of these hold on the merged tree:
 
-- `scripts/check.sh` passes. It runs gofmt over tracked files, build, vet, `go test -count=1 ./...` and golangci-lint when installed (CI runs it).
+- `scripts/check.sh` passes. It runs gofmt over tracked files, build, vet, `go test -count=1 ./...` and golangci-lint when installed. No CI runs it, so this run is the only gate.
 - The ticket's user-visible change has its line in `docs/release-notes.md`, under its spec's section, saying what members or moderators do differently. `/help` text and the README say the same wherever they describe that command. A later ticket does not pick these up.
 
 ## Finish

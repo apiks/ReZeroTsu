@@ -32,9 +32,9 @@ func TestReaddWithADifferentSetReplacesTheTracks(t *testing.T) {
 	if !strings.Contains(got, "**Frieren** now alerts for Sub and Dub.") {
 		t.Errorf("reply = %q, want the now-alerts-for line", got)
 	}
-	subs := st.docs["user"]
-	if len(subs) != 1 || subs[0].Tracks != "sub_dub" {
-		t.Errorf("stored = %+v, want one subscription with sub_dub", subs)
+	subscriptions := st.docs["user"]
+	if len(subscriptions) != 1 || subscriptions[0].Tracks != "sub_dub" {
+		t.Errorf("stored = %+v, want one subscription with sub_dub", subscriptions)
 	}
 	if strings.Join(st.calls, ",") != "add,settracks" {
 		t.Errorf("store calls = %v, want add then a single settracks", st.calls)

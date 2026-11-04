@@ -85,7 +85,7 @@ func RunAnimeSubFinishedCleanupLoop(ctx context.Context, db *database.Client, in
 
 // cleanupWhenReady runs the finished-show cleanup once. ready is false, and nothing is removed, while the keep
 // roster is not ready.
-func cleanupWhenReady(ctx context.Context, st userSubsStore) (updated int, ready bool, err error) {
+func cleanupWhenReady(ctx context.Context, st userSubscriptionStore) (updated int, ready bool, err error) {
 	keep, ready := buildKeepRoster()
 	if !ready {
 		return 0, false, nil
@@ -96,8 +96,8 @@ func cleanupWhenReady(ctx context.Context, st userSubsStore) (updated int, ready
 
 // userSubsStore is the narrow persistence surface of the user-subscription maintenance jobs. It has no
 // whole-document rewrite: each change is a single-statement operation on named shows.
-type userSubsStore interface {
-	IterateUserSubs(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
+type userSubscriptionStore interface {
+	IterateUserSubscriptions(ctx context.Context, fn func(*anime_subs.AnimeSubs) error) error
 	RemoveShows(ctx context.Context, id string, showNames []string) error
 	// CollapseDuplicateShows drops null and nameless entries and keeps one entry per anime_subs.CollapseKey (the
 	// one with the latest last-notified air time, ties going to the later entry), in a single update statement.
@@ -228,9 +228,9 @@ func buildKeepRoster() (keepRoster, bool) {
 // duplicate entries (keeping the most recently notified one) and null or nameless entries among the rest. It
 // returns how many documents were changed. Each change is a single-statement update, so shows added or notified concurrently are not lost.
 // keep says which subscriptions survive (see keepRoster).
-func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster) (int, error) {
+func cleanupFinishedShows(ctx context.Context, st userSubscriptionStore, keep keepRoster) (int, error) {
 	var updated int
-	err := st.IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+	err := st.IterateUserSubscriptions(ctx, func(doc *anime_subs.AnimeSubs) error {
 		if doc == nil {
 			return nil
 		}
@@ -411,7 +411,7 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 			}()
 		}
 
-		err := db.AnimeSubs().IterateUserSubs(ctx, func(doc *anime_subs.AnimeSubs) error {
+		err := db.AnimeSubs().IterateUserSubscriptions(ctx, func(doc *anime_subs.AnimeSubs) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -766,11 +766,11 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		if existing == nil || existing.LastSeedDate != today {
 			// No document yet: start aired shows as notified (no repost on re-enable).
 			// Stale document: new UTC day, reset everything to not notified (catch-up is intentional).
-			showSubs := newGuildShowSubs(dayShows)
+			showSubscriptions := newGuildShowSubscriptions(dayShows)
 			if existing == nil {
-				showSubs = seedGuildShowSubs(dayShows, now)
+				showSubscriptions = seedGuildShowSubscriptions(dayShows, now)
 			}
-			if err := st.SeedAnimeSubs(ctx, ap.ID, true, showSubs, today); err != nil {
+			if err := st.SeedAnimeSubs(ctx, ap.ID, true, showSubscriptions, today); err != nil {
 				logger.For("animesubs").Error("Set guild channel reset failed", "channel_id", ap.ID, "err", err)
 			}
 			continue
@@ -846,24 +846,24 @@ func recordMissingRows(ctx context.Context, st SentState, channelID string, idx 
 }
 
 // newGuildShowSubs returns a guild show list with every row not yet notified.
-func newGuildShowSubs(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
-	subs := make([]*anime_subs.ShowSub, 0, len(dayShows))
+func newGuildShowSubscriptions(dayShows []animeschedule.ShowEntry) []*anime_subs.ShowSub {
+	subscriptions := make([]*anime_subs.ShowSub, 0, len(dayShows))
 	for _, show := range dayShows {
-		subs = append(subs, airingOf(show).entry(show.Name))
+		subscriptions = append(subscriptions, airingOf(show).entry(show.Name))
 	}
-	return subs
+	return subscriptions
 }
 
 // seedGuildShowSubs returns the show list for a newly created guild document: rows that have
 // already aired and are not delayed start as notified so enabling or moving the autopost does not repost them.
-func seedGuildShowSubs(dayShows []animeschedule.ShowEntry, now time.Time) []*anime_subs.ShowSub {
-	subs := newGuildShowSubs(dayShows)
+func seedGuildShowSubscriptions(dayShows []animeschedule.ShowEntry, now time.Time) []*anime_subs.ShowSub {
+	subscriptions := newGuildShowSubscriptions(dayShows)
 	for i, show := range dayShows {
 		if show.Delayed == "" && show.AirTimeUnix <= now.Unix() {
-			subs[i].Notified = true
+			subscriptions[i].Notified = true
 		}
 	}
-	return subs
+	return subscriptions
 }
 
 func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, shows dayShowsFunc, now time.Time) {
@@ -896,11 +896,11 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		return
 	}
 	if doc == nil || len(doc.Shows) == 0 {
-		showSubs := seedGuildShowSubs(todayShowsGuild, now)
-		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubs, animeschedule.DateKey(now)); err != nil {
+		showSubscriptions := seedGuildShowSubscriptions(todayShowsGuild, now)
+		if err := st.SeedAnimeSubs(ctx, channelID, true, showSubscriptions, animeschedule.DateKey(now)); err != nil {
 			logger.For("animesubs").Error("Set guild channel seed failed", "channel_id", channelID, "err", err)
 		}
-		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
+		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubscriptions}
 	}
 	subChain := subChainOf(shows, todayShowsGuild, settings.Donghua, settings.Track)
 	sent := newSentIndex(doc.Shows, subChain)

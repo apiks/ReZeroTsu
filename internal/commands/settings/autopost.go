@@ -37,14 +37,16 @@ const (
 // new-episodes sent-state record for a channel.
 type dbStore struct {
 	*guilds.Repo
-	subs *anime_subs.Repo
+	subscriptions *anime_subs.Repo
 }
 
-func newDBStore(db *database.Client) dbStore { return dbStore{Repo: db.Guilds(), subs: db.AnimeSubs()} }
+func newDBStore(db *database.Client) dbStore {
+	return dbStore{Repo: db.Guilds(), subscriptions: db.AnimeSubs()}
+}
 
 // DeleteSentState deletes the new-episodes sent-state record for a channel (stored by the older anime_subs package).
 func (s dbStore) DeleteSentState(ctx context.Context, id string) error {
-	return s.subs.DeleteByID(ctx, id)
+	return s.subscriptions.DeleteByID(ctx, id)
 }
 
 // panelData is everything the panel shows: the guild settings and the two autoposts, nil while off.

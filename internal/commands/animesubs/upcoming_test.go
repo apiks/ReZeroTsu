@@ -112,8 +112,8 @@ func TestAddSubscribesToAnUpcomingShowByTypedNameAndStoresItsTitleAndRoute(t *te
 		if got != want {
 			t.Errorf("typed %q: description = %q, want %q", typed, got, want)
 		}
-		if subs := st.docs["user"]; len(subs) != 1 || subs[0].Show != "Dated Show" || subs[0].Route != "dated-show" {
-			t.Errorf("typed %q: subscriptions = %+v", typed, subs)
+		if subscriptions := st.docs["user"]; len(subscriptions) != 1 || subscriptions[0].Show != "Dated Show" || subscriptions[0].Route != "dated-show" {
+			t.Errorf("typed %q: subscriptions = %+v", typed, subscriptions)
 		}
 	}
 }

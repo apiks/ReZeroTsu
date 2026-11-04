@@ -42,10 +42,10 @@ func seedTypes(t *testing.T) {
 }
 
 // suggestions asks /subscription add for suggestions as user.
-func suggestions(t *testing.T, st subsStore, user, typed string) []*discordgo.ApplicationCommandOptionChoice {
+func suggestions(t *testing.T, st subscriptionStore, user, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	t.Helper()
 	old := storeOf
-	storeOf = func(*database.Client) subsStore { return st }
+	storeOf = func(*database.Client) subscriptionStore { return st }
 	t.Cleanup(func() { storeOf = old })
 	sub := []*discordgo.ApplicationCommandInteractionDataOption{{Name: "anime", Type: discordgo.ApplicationCommandOptionString, Value: typed, Focused: true}}
 	i := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{Type: discordgo.InteractionApplicationCommandAutocomplete,

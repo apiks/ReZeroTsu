@@ -38,6 +38,15 @@ Create a GitHub issue.
 
 Read it as in **Read an issue** above.
 
+## Spec tickets
+
+Used by `/implement-spec` when a spec has no tickets. Copy the shape of an earlier spec's tickets (#126 to #128).
+
+- **Title**: `<spec>.<n> <outcome in the member's words>`, such as "125.2 Hidden donghua isn't offered for subscription".
+- **Body**: `## Parent` with `#<spec>`, `## What to build` in behaviour, ending with the spec's decisions it implements by their names, then `## Acceptance criteria` as checkboxes. The criteria name behaviour only; the implementer brief owns the checks.
+- **Links**: label `ready-for-agent`, `gh issue create --parent <spec>`, and a blocked-by edge (see **Blocking** below) from each ticket to the one it builds on.
+- **Tests**: a spec's Testing Decisions name the seams and the cases. How a test is shaped, such as a Mongo write's, comes from `CODING_STANDARDS.md`, so a spec points there and does not restate it.
+
 ## Wayfinding operations
 
 Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.

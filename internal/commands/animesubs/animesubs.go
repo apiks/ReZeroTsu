@@ -69,7 +69,7 @@ func (m memberNames) of(subscription *anime_subs.ShowSub) string {
 	return subscription.Show
 }
 
-func subsDescriptionForPage(list []*anime_subs.ShowSub, names memberNames, start, page, totalPages, n int) string {
+func subscriptionsDescriptionForPage(list []*anime_subs.ShowSub, names memberNames, start, page, totalPages, n int) string {
 	var b strings.Builder
 	end := min(start+discord.MaxEmbedFields, len(list))
 	upcoming, now := animeschedule.UpcomingShows(), animeschedule.Now()
@@ -161,7 +161,7 @@ func suggestionName(e animeschedule.ShowEntry, pref animeschedule.PreferredName)
 
 // subsStore is the narrow persistence surface of the subscription commands. It deliberately has no
 // whole-document rewrite: every change is a single-statement operation.
-type subsStore interface {
+type subscriptionStore interface {
 	GetByID(ctx context.Context, id string) (*anime_subs.AnimeSubs, error)
 	AddShowIfAbsent(ctx context.Context, id string, sub *anime_subs.ShowSub) (bool, error)
 	RemoveShows(ctx context.Context, id string, showNames []string) error
@@ -177,7 +177,7 @@ const msgShowNotFound = "I could not find that airing or upcoming show. Pick one
 
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
 // already held), which is when the DMs footer applies.
-func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks, hideDonghua bool) (responseDesc string, confirmed bool, logErr error) {
+func subCore(ctx context.Context, store subscriptionStore, uid, animeInput string, set animeschedule.SubscriptionTracks, hideDonghua bool) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
@@ -241,7 +241,7 @@ func subCore(ctx context.Context, store subsStore, uid, animeInput string, set a
 // each track new to the set is seeded from its own row that aired today (or cleared, if none), so switching
 // never DMs something that aired earlier today. It never counts against the subscription limit. The replies call
 // the show shown.
-func replaceTracks(ctx context.Context, store subsStore, uid string, existing *anime_subs.ShowSub, shown string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
+func replaceTracks(ctx context.Context, store subscriptionStore, uid string, existing *anime_subs.ShowSub, shown string, set animeschedule.SubscriptionTracks, now time.Time) (string, bool, error) {
 	old, _ := animeschedule.ParseSubscriptionTracks(existing.Tracks)
 	if old == set {
 		return fmt.Sprintf("You are already subscribed to `%s`.", shown), true, nil
@@ -267,7 +267,7 @@ func notSubscribed(input string) string {
 	return fmt.Sprintf("You are not subscribed to `%s`. See %s for your subscriptions.", input, commands.CommandMention("subscription", "list"))
 }
 
-func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (responseDesc string, logErr error) {
+func unsubCore(ctx context.Context, store subscriptionStore, uid, animeInput string) (responseDesc string, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name to unsubscribe from.", nil

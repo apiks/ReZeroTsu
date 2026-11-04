@@ -1,8 +1,8 @@
 #!/bin/sh
-# The repo's checks, run the same way by the pre-commit hook, CI and agents.
+# The repo's checks, run the same way by the pre-commit hook and agents.
 #   scripts/check.sh        gofmt, build, vet, tests, golangci-lint (when installed)
 #   scripts/check.sh fast   gofmt and vet only (the pre-commit hook)
-#   scripts/check.sh fmt    gofmt only (CI)
+#   scripts/check.sh fmt    gofmt only
 # gofmt reads tracked files only, so another worktree's unfinished files under .claude/ never fail this run.
 
 set -e
@@ -27,5 +27,5 @@ scripts/deadcode.sh
 if command -v golangci-lint >/dev/null 2>&1; then
   golangci-lint run ./...
 else
-  echo "golangci-lint not installed; CI runs it"
+  echo "golangci-lint not installed; skipped"
 fi
