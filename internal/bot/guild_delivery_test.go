@@ -35,7 +35,7 @@ func newGuildHarness(n int, script ...step) *guildHarness {
 	st := newFakeSentState()
 	st.Autoposts[apKey("g1", postTypeNewEpisodes)] = &guilds.Autopost{PostType: postTypeNewEpisodes, ID: "c1", RoleID: "r1"}
 	// An existing document with nothing notified yet (a freshly seeded doc would start aired shows as notified).
-	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, LastSeedDate: now.Format("2006-01-02"), Shows: newGuildShowSubs(shows)}
+	st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, LastSeedDate: now.Format("2006-01-02"), Shows: newGuildShowSubscriptions(shows)}
 	d := newFakeDiscord(script...)
 	d.Roles["r1"] = true
 	senders, clk := newTestSendersWithClock(d)

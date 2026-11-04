@@ -59,12 +59,12 @@ func TestAddStoresTheChosenSetAndOmittedMeansSub(t *testing.T) {
 			opts = append(opts, trackOption(tc.choice))
 		}
 		invoke(t, "add", opts...)
-		subs := st.docs["user"]
-		if len(subs) != 1 {
-			t.Fatalf("%q: subscriptions = %+v", tc.choice, subs)
+		subscriptions := st.docs["user"]
+		if len(subscriptions) != 1 {
+			t.Fatalf("%q: subscriptions = %+v", tc.choice, subscriptions)
 		}
-		if got, _ := animeschedule.ParseSubscriptionTracks(subs[0].Tracks); got != tc.want {
-			t.Errorf("%q stored %q, want %v", tc.choice, subs[0].Tracks, tc.want)
+		if got, _ := animeschedule.ParseSubscriptionTracks(subscriptions[0].Tracks); got != tc.want {
+			t.Errorf("%q stored %q, want %v", tc.choice, subscriptions[0].Tracks, tc.want)
 		}
 	}
 }

@@ -83,7 +83,7 @@ func TestCleanupRemovesNothingWhileTheRosterIsNotReady(t *testing.T) {
 				animeschedule.DateKey(monday.AddDate(0, 0, 7)): tc.next,
 			}))
 			t.Cleanup(animeschedule.SeedUpcoming(nil, tc.upcomingLoaded))
-			st := newFakeUserSubs(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: "A", Route: "a", Tracks: "dub"}}})
+			st := newFakeUserSubscriptions(&anime_subs.AnimeSubs{ID: "u", Shows: []*anime_subs.ShowSub{{Show: "A", Route: "a", Tracks: "dub"}}})
 			updated, ready, err := cleanupWhenReady(context.Background(), st)
 			if err != nil {
 				t.Fatal(err)

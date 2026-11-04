@@ -65,10 +65,10 @@ func serverDonghua(t *testing.T, shown bool, readErr error) *int {
 }
 
 // suggestionsAt asks /subscription add for suggestions as user at w.
-func suggestionsAt(t *testing.T, w where, st subsStore, typed string) []string {
+func suggestionsAt(t *testing.T, w where, st subscriptionStore, typed string) []string {
 	t.Helper()
 	old := storeOf
-	storeOf = func(*database.Client) subsStore { return st }
+	storeOf = func(*database.Client) subscriptionStore { return st }
 	t.Cleanup(func() { storeOf = old })
 	i := interactionAt(w)
 	i.Type = discordgo.InteractionApplicationCommandAutocomplete

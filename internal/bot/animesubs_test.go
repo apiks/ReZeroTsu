@@ -144,13 +144,13 @@ func TestProcessGuildNewEpisodes(t *testing.T) {
 			name: "dead webhook is not reused for later chunks",
 			run: func(t *testing.T, d *fakeDiscord, st *fakeSentState) {
 				var many []animeschedule.ShowEntry
-				var subs []*anime_subs.ShowSub
+				var subscriptions []*anime_subs.ShowSub
 				for i := 0; i < 11; i++ {
 					name := fmt.Sprintf("Show %d", i)
 					many = append(many, animeschedule.ShowEntry{Name: name, Route: fmt.Sprintf("show-%d", i), Episode: "Episode 1", AirTimeUnix: aired, Track: "sub"})
-					subs = append(subs, &anime_subs.ShowSub{Show: name, Guild: true})
+					subscriptions = append(subscriptions, &anime_subs.ShowSub{Show: name, Guild: true})
 				}
-				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subs}
+				st.AnimeSubs["c1"] = &anime_subs.AnimeSubs{ID: "c1", IsGuild: true, Shows: subscriptions}
 				d.Webhook = &WebhookTarget{ID: "wh", Token: "tok"}
 				d.script = []step{rejectWith(10015)}
 				processGuildNewEpisodes(context.Background(), d, newTestSenders(d), st, "g1", func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry { return many }, now)

@@ -38,7 +38,7 @@ const (
 )
 
 // storeOf is the subscription store behind the commands; tests replace it.
-var storeOf = func(db *database.Client) subsStore { return db.AnimeSubs() }
+var storeOf = func(db *database.Client) subscriptionStore { return db.AnimeSubs() }
 
 func init() {
 	commands.Add(&commands.Command{
@@ -195,7 +195,7 @@ func runList(ic *interaction.Context) error {
 
 // loadList reads the member's subscriptions and their own preferred name, never a server's; Title when they have no
 // document.
-func loadList(ctx context.Context, store subsStore, uid string) ([]*anime_subs.ShowSub, animeschedule.PreferredName, error) {
+func loadList(ctx context.Context, store subscriptionStore, uid string) ([]*anime_subs.ShowSub, animeschedule.PreferredName, error) {
 	doc, err := store.GetByID(ctx, uid)
 	if err != nil || doc == nil {
 		return nil, animeschedule.PreferTitle, err
@@ -253,7 +253,7 @@ func renderPage(list []*anime_subs.ShowSub, names memberNames, page int, authorI
 		components = append(components, commands.PaginationComponents(pageKey, page, n, authorID)...)
 	}
 	components = append(components, removePicker(list[start:end], names, page, authorID))
-	emb := commands.NewEmbed(nil, embedTitleAnimeSubs, subsDescriptionForPage(list, names, start, page, totalPages, n), "Pick a show below to unsubscribe from it.")
+	emb := commands.NewEmbed(nil, embedTitleAnimeSubs, subscriptionsDescriptionForPage(list, names, start, page, totalPages, n), "Pick a show below to unsubscribe from it.")
 	return interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}
 }
 

@@ -501,12 +501,12 @@ func TestOldReminderCommandsAreGoneAndReminderIsUserInstallable(t *testing.T) {
 	if reminder == nil {
 		t.Fatal("reminder is not registered")
 	}
-	var subs []string
+	var subcommands []string
 	for _, o := range reminder.Options {
-		subs = append(subs, o.Name)
+		subcommands = append(subcommands, o.Name)
 	}
-	if fmt.Sprint(subs) != "[set list remove]" {
-		t.Errorf("subcommands = %v", subs)
+	if fmt.Sprint(subcommands) != "[set list remove]" {
+		t.Errorf("subcommands = %v", subcommands)
 	}
 	installs := *reminder.IntegrationTypes
 	if len(installs) != 2 {

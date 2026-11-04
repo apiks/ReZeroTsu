@@ -19,7 +19,7 @@ import (
 func useStore(t *testing.T, st *fakeStore) {
 	t.Helper()
 	old := storeOf
-	storeOf = func(*database.Client) subsStore { return st }
+	storeOf = func(*database.Client) subscriptionStore { return st }
 	t.Cleanup(func() { storeOf = old })
 }
 
@@ -154,9 +154,9 @@ func TestAddSeedsFromTodaysAiredEntry(t *testing.T) {
 	st := newFakeStore()
 	useStore(t, st)
 	invoke(t, "add", animeOption("Frieren")...)
-	subs := st.docs["user"]
-	if len(subs) != 1 || !subs[0].Notified || subs[0].LastNotifiedAirUnix != aired {
-		t.Errorf("subscription = %+v, want notified at %d so today's episode is not DMed again", subs, aired)
+	subscriptions := st.docs["user"]
+	if len(subscriptions) != 1 || !subscriptions[0].Notified || subscriptions[0].LastNotifiedAirUnix != aired {
+		t.Errorf("subscription = %+v, want notified at %d so today's episode is not DMed again", subscriptions, aired)
 	}
 }
 

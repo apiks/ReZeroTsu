@@ -17,9 +17,9 @@ func TestProcessAnimeSubUser(t *testing.T) {
 		return animeschedule.ShowEntry{Name: name, Route: route, Episode: episode, AirTimeUnix: air, Track: "sub"}
 	}
 	const user = "u1"
-	newState := func(subs ...*anime_subs.ShowSub) *fakeSentState {
+	newState := func(subscriptions ...*anime_subs.ShowSub) *fakeSentState {
 		st := newFakeSentState()
-		st.AnimeSubs[user] = &anime_subs.AnimeSubs{ID: user, Shows: subs}
+		st.AnimeSubs[user] = &anime_subs.AnimeSubs{ID: user, Shows: subscriptions}
 		return st
 	}
 	run := func(ctx context.Context, d *fakeDiscord, st *fakeSentState, shows ...animeschedule.ShowEntry) error {

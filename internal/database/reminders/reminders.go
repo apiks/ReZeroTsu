@@ -154,9 +154,9 @@ func (r *Repo) RemoveByRefs(ctx context.Context, id string, refs []RemindRef) er
 func markFailingFilter(refs []RemindRef) bson.M {
 	conds := make([]bson.M, 0, len(refs))
 	for _, ref := range refs {
-		conds = append(conds, bson.M{"r.remind_id": ref.RemindID, "r.date": ref.Date})
+		conds = append(conds, bson.M{"r.remind_id": ref.RemindID, "r.date": ref.Date}) // archcheck:allow array filter, r is its identifier
 	}
-	return bson.M{"$or": conds, "r.failing_since": nil}
+	return bson.M{"$or": conds, "r.failing_since": nil} // archcheck:allow array filter, r is its identifier
 }
 
 // MarkFailingSince sets failing_since to since, in one update, on each reminder matching both remind_id and date

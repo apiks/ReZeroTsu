@@ -178,7 +178,7 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*AnimeSubs, error) {
 
 // IterateUserSubs streams anime_subs documents where is_guild is false, calling fn for each document.
 // Stops on first fn error or cursor error. Use for memory-efficient processing without loading all docs.
-func (r *Repo) IterateUserSubs(ctx context.Context, fn func(*AnimeSubs) error) error {
+func (r *Repo) IterateUserSubscriptions(ctx context.Context, fn func(*AnimeSubs) error) error {
 	cursor, err := r.coll.Find(ctx, bson.M{"is_guild": false})
 	if err != nil {
 		return fmt.Errorf("IterateUserSubs: %w", err)
@@ -445,12 +445,12 @@ func collapsedShowsExpr() bson.M {
 	airUnix := func(entry string) bson.M {
 		return bson.M{"$ifNull": bson.A{entry + ".last_notified_air_unix", 0}}
 	}
-	appendNew := bson.M{
+	appendNew := bson.M{ // archcheck:allow aggregation expression, keys and out are $reduce accumulator names
 		"keys": bson.M{"$concatArrays": bson.A{"$$value.keys", bson.A{"$$k"}}},
 		"out":  bson.M{"$concatArrays": bson.A{"$$value.out", bson.A{"$$this"}}},
 	}
 	// replaceAtI puts this entry in place of the kept duplicate at index i.
-	replaceAtI := bson.M{
+	replaceAtI := bson.M{ // archcheck:allow aggregation expression, same accumulator names
 		"keys": "$$value.keys",
 		"out": bson.M{"$map": bson.M{
 			"input": bson.M{"$range": bson.A{0, bson.M{"$size": "$$value.out"}}},

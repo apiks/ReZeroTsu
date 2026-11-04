@@ -53,9 +53,9 @@ func serverPrefers(t *testing.T, name string) {
 }
 
 // memberStore is a store where "user" prefers name and follows subs.
-func memberStore(name string, subs ...*anime_subs.ShowSub) *fakeStore {
+func memberStore(name string, subscriptions ...*anime_subs.ShowSub) *fakeStore {
 	st := newFakeStore()
-	st.docs["user"] = subs
+	st.docs["user"] = subscriptions
 	if name != "" {
 		st.preferred["user"] = name
 	}
@@ -162,12 +162,12 @@ func TestRemovePickerIsLabelledByTheShownNameAndRemovesTheStoredTitle(t *testing
 
 func TestALaterListPageUsesTheMembersPreferredName(t *testing.T) {
 	seedNames(t)
-	subs := make([]*anime_subs.ShowSub, 0, 26)
+	subscriptions := make([]*anime_subs.ShowSub, 0, 26)
 	for _, n := range shows(25) {
-		subs = append(subs, &anime_subs.ShowSub{Show: n})
+		subscriptions = append(subscriptions, &anime_subs.ShowSub{Show: n})
 	}
-	subs = append(subs, &anime_subs.ShowSub{Show: "Sousou no Frieren", Route: "frieren"})
-	useStore(t, memberStore("native", subs...))
+	subscriptions = append(subscriptions, &anime_subs.ShowSub{Show: "Sousou no Frieren", Route: "frieren"})
+	useStore(t, memberStore("native", subscriptions...))
 	p := RenderSubscriptionPage(t.Context(), nil, nil, nil, 1, 26, "user")
 	if p.Refusal != "" {
 		t.Fatal(p.Refusal)

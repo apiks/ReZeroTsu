@@ -497,6 +497,19 @@ func f(title string, fields []int) {
 // must quote an upstream or stored name, such as AnimeSchedule's "ONA (Chinese)" label.
 const allowMarker = "archcheck:allow"
 
+// allowedLines is the set of lines of file that carry allowMarker in a comment.
+func allowedLines(fset *token.FileSet, file *ast.File) map[int]bool {
+	allowed := map[int]bool{}
+	for _, g := range file.Comments {
+		for _, c := range g.List {
+			if strings.Contains(c.Text, allowMarker) {
+				allowed[fset.Position(c.End()).Line] = true
+			}
+		}
+	}
+	return allowed
+}
+
 // avoidPhrases returns a matcher for the multi-word `_Avoid_` terms in GLOSSARY.md ("post type", "ONA (Chinese)",
 // "episode feed"). The glossary stays the single source: add a term there and this check follows. A space in a term
 // also matches a hyphen, and a trailing "s" is allowed. Single words stay in avoidTerms and CODING_STANDARDS.md.

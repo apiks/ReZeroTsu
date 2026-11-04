@@ -71,7 +71,7 @@ func TestAddSaysNoDubIsListedYetInPlaceOfTheNextEpisodeWhenNoTrackIsListed(t *te
 	}
 }
 
-func TestAddNamesTheSubsNextEpisodeAndAddsTheDubSentenceWhenOnlyTheDubIsMissing(t *testing.T) {
+func TestAddNamesTheSubTracksNextEpisodeAndAddsTheDubSentenceWhenOnlyTheDubIsMissing(t *testing.T) {
 	seedEntries(t, trackRow("Frieren", "frieren", "Ep 6", animeschedule.TrackSub, at(24*time.Hour)))
 	want := "Subscribed to **Frieren** (Sub and Dub).\nNext episode: Ep 6 (sub), " + fullAndRelative(at(24*time.Hour)) + ".\n" + noDubSentence
 	if got := addWithTrack(t, "Frieren", "sub_dub"); got != want {
@@ -198,7 +198,7 @@ func TestWorstCasePageOfListLinesKeepsItsFooter(t *testing.T) {
 		list = append(list, &anime_subs.ShowSub{Show: name, Route: fmt.Sprint("r", i), Tracks: "every"})
 	}
 	seedEntries(t, rows...)
-	got := subsDescriptionForPage(list, memberNames{}, 0, 0, 4, 100)
+	got := subscriptionsDescriptionForPage(list, memberNames{}, 0, 0, 4, 100)
 	if !strings.Contains(got, " · TV Short · Donghua · Every track · Ep 100-101F (sub) aired <t:") {
 		t.Fatalf("description lacks the worst-case status: %q", got)
 	}
@@ -263,7 +263,7 @@ func TestEveryPageOfEveryStatusKeepsItsFooter(t *testing.T) {
 					t.Cleanup(animeschedule.SeedUpcoming(upcoming, true))
 					for _, start := range []int{0, total - 25} {
 						page := start / 25
-						got := subsDescriptionForPage(list, memberNames{}, start, page, total/25, total)
+						got := subscriptionsDescriptionForPage(list, memberNames{}, start, page, total/25, total)
 						footer := fmt.Sprintf("Page %d of %d. Showing %d–%d of %d.", page+1, total/25, start+1, start+25, total)
 						if n := utf16Len(got); n > 4096 || !strings.Contains(got, footer) {
 							t.Fatalf("%v donghua=%v set=%q %s page %d: %d UTF-16 units, footer kept = %v; line: %q",
@@ -291,7 +291,7 @@ func TestPageOf25EveryTrackLinesStaysUnderTheEmbedLimit(t *testing.T) {
 		list = append(list, &anime_subs.ShowSub{Show: name, Route: fmt.Sprint("r", i), Tracks: "every"})
 	}
 	seedEntries(t, rows...)
-	got := subsDescriptionForPage(list, memberNames{}, 0, 0, 2, 30)
+	got := subscriptionsDescriptionForPage(list, memberNames{}, 0, 0, 2, 30)
 	if n := len(utf16.Encode([]rune(got))); n > 4096 {
 		t.Errorf("description is %d UTF-16 units, want at most 4096", n)
 	}

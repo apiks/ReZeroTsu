@@ -35,7 +35,7 @@ func suggestionsWithTrack(t *testing.T, typed, track string) []string {
 	t.Helper()
 	old := storeOf
 	st := newFakeStore()
-	storeOf = func(*database.Client) subsStore { return st }
+	storeOf = func(*database.Client) subscriptionStore { return st }
 	t.Cleanup(func() { storeOf = old })
 	sub := []*discordgo.ApplicationCommandInteractionDataOption{
 		{Name: "anime", Type: discordgo.ApplicationCommandOptionString, Value: typed, Focused: true},
