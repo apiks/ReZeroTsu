@@ -226,18 +226,9 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// serverSettings reads, in one lookup, whether the server shows donghua and its preferred track. Where the bot has
-// no server membership (DMs, and a user install in a server it has not joined) there are no settings; donghua is
-// shown and the track is Sub, as when the settings cannot be read.
+// serverSettings reads whether the server shows donghua and its preferred track, by the rule in commands.ServerSettings.
 func serverSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction) (donghua bool, pref animeschedule.PreferredTrack) {
-	if !interaction.BotInGuild(i) {
-		return true, animeschedule.PreferSub
-	}
-	settings, err := guildSettings(ctx, db, i.GuildID)
-	if err != nil || settings == nil {
-		return true, animeschedule.PreferSub
-	}
-	return settings.Donghua, settings.Preferred()
+	return commands.ServerSettings(ctx, db, i, guildSettings)
 }
 
 // trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.

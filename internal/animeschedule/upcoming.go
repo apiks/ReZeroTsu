@@ -30,6 +30,8 @@ type UpcomingShow struct {
 	SubPremiere, DubPremiere  time.Time
 	JPNTime, SubTime, DubTime time.Time
 	MediaType                 MediaType
+	// Donghua is true when any of the show's media-type routes contains "chinese", AnimeSchedule's own rule.
+	Donghua bool
 }
 
 type upcomingItem struct {
@@ -68,6 +70,7 @@ func (i upcomingItem) show() UpcomingShow {
 		SubTime:     i.SubTime,
 		DubTime:     i.DubTime,
 		MediaType:   decodeMediaType(i.MediaTypes),
+		Donghua:     isDonghua(i.MediaTypes),
 	}
 }
 
