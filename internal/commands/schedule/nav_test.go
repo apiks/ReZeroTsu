@@ -48,9 +48,18 @@ func pressNav(t *testing.T, customID, user string, msg *discordgo.Message) []int
 // pressNavIn is pressNav from the server guildID.
 func pressNavIn(t *testing.T, customID, user, guildID string, msg *discordgo.Message) []interactiontest.Call {
 	t.Helper()
+	return pressNavAs(t, customID, user, guildID, false, msg)
+}
+
+// pressNavAs is pressNavIn; userInstallOnly marks a user install in a server the bot has not joined.
+func pressNavAs(t *testing.T, customID, user, guildID string, userInstallOnly bool, msg *discordgo.Message) []interactiontest.Call {
+	t.Helper()
 	fake := &interactiontest.Fake{}
 	i := &discordgo.Interaction{Type: discordgo.InteractionMessageComponent, GuildID: guildID, ChannelID: "chan", Message: msg, User: &discordgo.User{ID: user},
 		Data: discordgo.MessageComponentInteractionData{CustomID: customID, ComponentType: discordgo.ButtonComponent}}
+	if userInstallOnly {
+		i.AuthorizingIntegrationOwners = map[discordgo.ApplicationIntegrationType]string{discordgo.ApplicationIntegrationUserInstall: user}
+	}
 	ic := interaction.NewContext(fake, i, (*database.Client)(nil), interaction.Private, interaction.Direct)
 	if err := handleNav(ic, nil); err != nil {
 		t.Fatal(err)

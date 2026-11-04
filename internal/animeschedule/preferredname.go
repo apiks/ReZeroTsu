@@ -1,6 +1,10 @@
 package animeschedule
 
-import "strings"
+import (
+	"strings"
+
+	"ReZeroTsu/internal/database/anime_subs"
+)
 
 // PreferredName is which of a show's names a server or a member wants it called by: Title, Romaji, English or
 // Native. Its zero value is Title.
@@ -39,6 +43,16 @@ func (p PreferredName) Next() PreferredName {
 		return PreferNative
 	}
 	return PreferTitle
+}
+
+// MemberPreferredName is the preferred name a member's subscription document holds. No document, and a missing or
+// unknown stored value, read as Title; a member's preferred name never comes from a server.
+func MemberPreferredName(doc *anime_subs.AnimeSubs) PreferredName {
+	if doc == nil {
+		return PreferTitle
+	}
+	name, _ := ParsePreferredName(doc.PreferredName)
+	return name
 }
 
 // Title is the capitalised name shown to members: Title, Romaji, English or Native.

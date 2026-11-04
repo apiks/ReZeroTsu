@@ -84,6 +84,12 @@ func init() {
 			},
 			{Name: "list", Desc: "Show your subscriptions and when each airs next.", Run: runList},
 			{Name: "clear", Desc: "Remove all your subscriptions, after asking first.", Run: runClear},
+			{
+				Name:    "name",
+				Desc:    "Choose which of a show's names your DMs and replies use, or see your current choice.",
+				Options: []*discordgo.ApplicationCommandOption{nameOption},
+				Run:     runName,
+			},
 		},
 	})
 	// Restricted: a list belongs to its author, so another member's press is refused, not given a copy.
@@ -123,7 +129,7 @@ var guildSettings = commands.GetSettings
 // of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerShowSettings), so a DM, a user install
 // in a server the bot has not joined, and an unreadable setting all offer donghua.
 func donghuaHidden(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
-	shown, _, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
+	shown, _, _ := commands.ServerShowSettings(ctx, db, i, guildSettings, nil)
 	return !shown
 }
 

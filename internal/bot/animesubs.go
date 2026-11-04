@@ -481,12 +481,15 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 }
 
 // processAnimeSubUser DMs one user the rows of todayRows (every row today with every track that selects it, from
-// animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due.
+// animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due, calling each
+// show by its shown name under the member's preferred name.
 func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayRows []animeschedule.SelectedRow, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
 	userID := doc.ID
+	// The member's own preferred name names the show in each DM; it changes no identity or sent state.
+	name := animeschedule.MemberPreferredName(doc)
 
 	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
 	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
@@ -580,7 +583,7 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 			}
 		}
 
-		emb := buildEpisodeEmbed(show, animeschedule.PreferTitle)
+		emb := buildEpisodeEmbed(show, name)
 		res := senders.open("", dmID, episodeDMPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch res.Outcome {
 		case PostCancelled:

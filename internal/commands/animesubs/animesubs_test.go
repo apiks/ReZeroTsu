@@ -11,11 +11,17 @@ import (
 
 // fakeStore is an in-memory subsStore. It has no whole-document rewrite, so the commands cannot call one.
 type fakeStore struct {
-	docs  map[string][]*anime_subs.ShowSub
-	calls []string
+	docs map[string][]*anime_subs.ShowSub
+	// preferred is each member's stored preferred name; a member listed here has a document even with no shows.
+	preferred   map[string]string
+	saveNameErr error
+	getErr      error
+	calls       []string
 }
 
-func newFakeStore() *fakeStore { return &fakeStore{docs: map[string][]*anime_subs.ShowSub{}} }
+func newFakeStore() *fakeStore {
+	return &fakeStore{docs: map[string][]*anime_subs.ShowSub{}, preferred: map[string]string{}}
+}
 
 func (f *fakeStore) with(uid string, names ...string) *fakeStore {
 	for _, n := range names {
@@ -33,10 +39,25 @@ func (f *fakeStore) names(uid string) []string {
 }
 
 func (f *fakeStore) GetByID(_ context.Context, id string) (*anime_subs.AnimeSubs, error) {
-	if _, ok := f.docs[id]; !ok {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	_, hasShows := f.docs[id]
+	name, hasName := f.preferred[id]
+	if !hasShows && !hasName {
 		return nil, nil
 	}
-	return &anime_subs.AnimeSubs{ID: id, Shows: append([]*anime_subs.ShowSub(nil), f.docs[id]...)}, nil
+	return &anime_subs.AnimeSubs{ID: id, Shows: append([]*anime_subs.ShowSub(nil), f.docs[id]...), PreferredName: name}, nil
+}
+
+// SetPreferredName upserts like Mongo: a member without a document gets one holding only the setting.
+func (f *fakeStore) SetPreferredName(_ context.Context, id, name string) error {
+	f.calls = append(f.calls, "setname")
+	if f.saveNameErr != nil {
+		return f.saveNameErr
+	}
+	f.preferred[id] = name
+	return nil
 }
 
 func (f *fakeStore) AddShowIfAbsent(_ context.Context, id string, sub *anime_subs.ShowSub) (bool, error) {
