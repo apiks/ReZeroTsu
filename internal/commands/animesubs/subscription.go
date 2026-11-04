@@ -126,11 +126,11 @@ func tracksArg(ic *interaction.Context) animeschedule.SubscriptionTracks {
 var guildSettings = commands.GetSettings
 
 // donghuaHidden reports whether donghua is left out of what /subscription add offers: in a server the bot is a member
-// of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerShowSettings), so a DM, a user install
-// in a server the bot has not joined, and an unreadable setting all offer donghua.
+// of whose donghua setting is off. It reads the server's settings the way /schedule does (commands.ServerShowSettings),
+// so a DM, a user install in a server the bot has not joined, and an unreadable setting all offer donghua.
 func donghuaHidden(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
-	shown, _, _ := commands.ServerShowSettings(ctx, db, i, guildSettings, nil)
-	return !shown
+	settings, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
+	return !settings.Donghua
 }
 
 func animeArg(ic *interaction.Context) string {
@@ -212,7 +212,7 @@ type ownChoice struct {
 // autocompleteOwn offers only the invoker's own subscriptions, matched anywhere in their shown name or stored title.
 // A choice is labelled with the shown name, and its value is the stored title.
 func autocompleteOwn(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i))
+	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i.Interaction))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 		return nil

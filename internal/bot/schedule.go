@@ -164,11 +164,9 @@ func processDailyScheduleForGuild(ctx context.Context, d RunOperations, senders 
 			logger.For("schedule").Error("GetGuildSettings failed", "shard_id", shardID, "guild_id", guildID, "err", err)
 		}
 	}
-	donghua, pref, name := true, animeschedule.PreferSub, animeschedule.PreferTitle
-	if settings != nil {
-		donghua, pref, name = settings.Donghua, settings.Preferred(), settings.PreferredShowName()
-	}
-	emb := schedule.BuildScheduleEmbed(now, now, dayShows(donghua, pref), pref, name)
+	// No settings (none stored, or a failed read) read as the default.
+	show := settings.ShowSettings()
+	emb := schedule.BuildScheduleEmbed(now, now, dayShows(show.Donghua, show.Track), show.Track, show.Name)
 	msg := OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}}
 	// A failed verification counts as not delivered here (presumeOnVerifyFailure false), so it is retried.
 	sender := senders.open(guildID, ap.ID, schedulePolicy(emb.Title, now))

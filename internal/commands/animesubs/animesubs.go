@@ -56,16 +56,17 @@ func namesFor(pref animeschedule.PreferredName) memberNames {
 	return memberNames{pref: pref, onHand: onHand}
 }
 
-// of is the shown name of sub: the first show on hand that sub is subscribed to (sameShow, ADR-0002), called by
-// the member's preferred name with the stored title as its title. A show not on hand is called by its stored title.
-func (m memberNames) of(sub *anime_subs.ShowSub) string {
+// of is the shown name of a subscription: the first show on hand it is subscribed to (ShowSub.Matches,
+// ADR-0002), called by the member's preferred name with the stored title as its title. A show not on hand is called
+// by its stored title.
+func (m memberNames) of(subscription *anime_subs.ShowSub) string {
 	for _, e := range m.onHand {
-		if sameShow(e, sub.Route, sub.Show) {
-			e.Name = sub.Show
+		if subscription.Matches(e.Route, e.Name) {
+			e.Name = subscription.Show
 			return e.ShownName(m.pref)
 		}
 	}
-	return sub.Show
+	return subscription.Show
 }
 
 func subsDescriptionForPage(list []*anime_subs.ShowSub, names memberNames, start, page, totalPages, n int) string {
@@ -281,22 +282,29 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 
 	// Resolve the stored titles (exact case) the input names, then remove exactly those. last is the subscription
 	// that named the final one.
-	var stored []string
-	var last *anime_subs.ShowSub
-	for _, sub := range doc.Shows {
-		if sub != nil && anime_subs.MatchKey(sub.Show) == anime_subs.MatchKey(animeInput) {
-			stored, last = append(stored, sub.Show), sub
+	key := anime_subs.MatchKey(animeInput)
+	// The names on hand are read once, and only when the stored titles do not settle the input.
+	var names *memberNames
+	shownName := func(s *anime_subs.ShowSub) string {
+		if names == nil {
+			n := namesFor(animeschedule.MemberPreferredName(doc))
+			names = &n
+		}
+		return names.of(s)
+	}
+	stored, last := subscriptionsNamed(doc.Shows, key, func(s *anime_subs.ShowSub) string { return s.Show })
+	if len(stored) == 0 {
+		// An autocomplete choice carries the title cut to Discord's limit, as the Remove picker does.
+		stored, last = subscriptionsNamed(doc.Shows, key, func(s *anime_subs.ShowSub) string { return clip(s.Show) })
+		if len(stored) > 1 {
+			return ambiguousRemoval(stored), nil
 		}
 	}
 	if len(stored) == 0 {
-		// An autocomplete choice carries the title cut to Discord's limit, as the Remove picker does.
-		for _, sub := range doc.Shows {
-			if sub != nil && anime_subs.MatchKey(clip(sub.Show)) == anime_subs.MatchKey(animeInput) {
-				stored, last = append(stored, sub.Show), sub
-			}
-		}
+		// Typed text submitted without a suggestion names a subscription by the member's shown name.
+		stored, last = subscriptionsNamed(doc.Shows, key, shownName)
 		if len(stored) > 1 {
-			return fmt.Sprintf("That name matches more than one of your subscriptions, so none were removed: `%s`. Use the Remove picker from `/subscription list` to choose one.", strings.Join(stored, "`, `")), nil
+			return ambiguousRemoval(stored), nil
 		}
 	}
 	if len(stored) == 0 {
@@ -310,11 +318,27 @@ func unsubCore(ctx context.Context, store subsStore, uid, animeInput string) (re
 	if len(stored) == 1 {
 		// One subscription removed: called by the member's shown name when that is not its stored title. Otherwise
 		// the typed input, as under Title.
-		if shown := namesFor(animeschedule.MemberPreferredName(doc)).of(last); shown != last.Show {
+		if shown := shownName(last); shown != last.Show {
 			removed = shown
 		}
 	}
 	return fmt.Sprintf("Success! You have unsubscribed from `%s`.", removed), nil
+}
+
+// subscriptionsNamed is the stored titles of the subscriptions whose name, under name, has the match key key, and
+// the last such subscription.
+func subscriptionsNamed(subscriptions []*anime_subs.ShowSub, key string, name func(*anime_subs.ShowSub) string) (stored []string, last *anime_subs.ShowSub) {
+	for _, s := range subscriptions {
+		if s != nil && anime_subs.MatchKey(name(s)) == key {
+			stored, last = append(stored, s.Show), s
+		}
+	}
+	return stored, last
+}
+
+// ambiguousRemoval refuses a remove whose input names more than one subscription, listing their stored titles.
+func ambiguousRemoval(stored []string) string {
+	return fmt.Sprintf("That name matches more than one of your subscriptions, so none were removed: `%s`. Use the Remove picker from `/subscription list` to choose one.", strings.Join(stored, "`, `"))
 }
 
 // seedMemory marks, for each track of the set, the row of that track that already aired today as sent, so

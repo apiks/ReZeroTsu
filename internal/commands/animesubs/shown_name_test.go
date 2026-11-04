@@ -221,6 +221,52 @@ func TestRemovingASuggestionRemovesTheRightSubscriptionAndNamesItByTheShownName(
 	}
 }
 
+// Text typed into /subscription remove and submitted without picking a suggestion resolves by the member's shown
+// name too, found the way the list finds it; another of the show's names does not.
+func TestRemovingByTheTypedShownNameRemovesThatSubscription(t *testing.T) {
+	for _, tc := range []struct{ typed, removed, left string }{
+		{"葬送のフリーレン", "葬送のフリーレン", "Kusuriya no Hitorigoto,Solo Leveling Old Title,Gone Show"},
+		{" 俺だけレベルアップな件 ", "俺だけレベルアップな件", "Sousou no Frieren,Kusuriya no Hitorigoto,Gone Show"},
+	} {
+		seedNames(t)
+		serverPrefers(t, "english")
+		st := memberStore("native", followed()...)
+		useStore(t, st)
+		got := reply(t, invoke(t, "remove", animeOption(tc.typed)...)).Embeds[0].Description
+		if want := "Success! You have unsubscribed from `" + tc.removed + "`."; got != want {
+			t.Errorf("typed %q: reply = %q, want %q", tc.typed, got, want)
+		}
+		if got := strings.Join(st.names("user"), ","); got != tc.left {
+			t.Errorf("typed %q: subscriptions = %v, want %v", tc.typed, got, tc.left)
+		}
+	}
+
+	seedNames(t)
+	st := memberStore("native", followed()...)
+	useStore(t, st)
+	got := reply(t, invoke(t, "remove", animeOption("Frieren: Beyond Journey's End")...)).Embeds[0].Description
+	if !strings.HasPrefix(got, "You are not subscribed to") || len(st.docs["user"]) != 4 {
+		t.Errorf("typed an English name the member does not prefer: reply = %q, subscriptions = %v; want not subscribed, nothing removed", got, st.names("user"))
+	}
+}
+
+// Two subscriptions called by the same shown name are refused the way two clipped titles are: nothing is removed.
+func TestRemovingByAShownNameTwoSubscriptionsShareRemovesNone(t *testing.T) {
+	a := entry("Twin Title A", "twin-a", "Ep 1", at(24*time.Hour))
+	b := entry("Twin Title B", "twin-b", "Ep 1", at(24*time.Hour))
+	a.English, b.English = "Twin", "Twin"
+	seedUpcoming(t, nil, a, b)
+	st := memberStore("english", &anime_subs.ShowSub{Show: "Twin Title A", Route: "twin-a"}, &anime_subs.ShowSub{Show: "Twin Title B", Route: "twin-b"})
+	useStore(t, st)
+	got := reply(t, invoke(t, "remove", animeOption("twin")...)).Embeds[0].Description
+	if !strings.Contains(got, "more than one") || !strings.Contains(got, "Twin Title A") || !strings.Contains(got, "Twin Title B") {
+		t.Errorf("reply = %q, want the matching subscriptions named and none removed", got)
+	}
+	if len(st.docs["user"]) != 2 {
+		t.Errorf("subscriptions = %v, want nothing removed", st.names("user"))
+	}
+}
+
 func TestAddConfirmsByTheMembersPreferredNameWithTheNextEpisode(t *testing.T) {
 	seedNames(t)
 	serverPrefers(t, "romaji")

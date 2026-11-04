@@ -14,13 +14,14 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// memberNames replaces the member lookup with members whose stored preferred names are stored (a member missing from
-// it has no document), or a failed read when err is set, and returns the reads per member.
-func memberNames(t *testing.T, stored map[string]string, err error) map[string]int {
+// stubMemberDocuments replaces the member lookup with one document per member of stored, holding that member's
+// stored preferred name (a member missing from it has no document), or a failed read when err is set. It returns the
+// reads per member.
+func stubMemberDocuments(t *testing.T, stored map[string]string, err error) map[string]int {
 	t.Helper()
 	reads := map[string]int{}
-	prev := memberSubs
-	memberSubs = func(_ context.Context, _ *database.Client, userID string) (*anime_subs.AnimeSubs, error) {
+	prev := memberDocument
+	memberDocument = func(_ context.Context, _ *database.Client, userID string) (*anime_subs.AnimeSubs, error) {
 		reads[userID]++
 		if err != nil {
 			return nil, err
@@ -31,7 +32,7 @@ func memberNames(t *testing.T, stored map[string]string, err error) map[string]i
 		}
 		return &anime_subs.AnimeSubs{ID: userID, PreferredName: name}, nil
 	}
-	t.Cleanup(func() { memberSubs = prev })
+	t.Cleanup(func() { memberDocument = prev })
 	return reads
 }
 
@@ -50,7 +51,7 @@ func TestScheduleWithoutServerMembershipCallsShowsByTheMembersPreferredName(t *t
 			seedNamedShows(t)
 			// The server's setting is never read without server membership.
 			serverReads := serverNames(t, &guilds.GuildSettings{Donghua: true, PreferredName: "romaji"}, nil)
-			reads := memberNames(t, map[string]string{"user": stored}, nil)
+			reads := stubMemberDocuments(t, map[string]string{"user": stored}, nil)
 			want := namesUnder[stored]
 			wantNames(t, "DM", runScheduleAs(t, "", false), want[0], want[1])
 			wantNames(t, "user install", runScheduleAs(t, "guild", true), want[0], want[1])
@@ -64,7 +65,7 @@ func TestScheduleWithoutServerMembershipCallsShowsByTheMembersPreferredName(t *t
 func TestScheduleInAServerFollowsTheServersPreferredNameNotTheMembers(t *testing.T) {
 	seedNamedShows(t)
 	serverNames(t, &guilds.GuildSettings{Donghua: true, PreferredName: "english"}, nil)
-	reads := memberNames(t, map[string]string{"user": "native", "stranger": "native"}, nil)
+	reads := stubMemberDocuments(t, map[string]string{"user": "native", "stranger": "native"}, nil)
 	wantNames(t, "/schedule", runScheduleAs(t, "guild", false), "Frieren: Beyond Journey's End", "Apothecary Title")
 	calls := pressNavIn(t, "sched:2026-11-05:user:sub", "stranger", "guild", publicMsg())
 	wantNames(t, "another member's press", calls[0].Response.Embeds[0], "Frieren: Beyond Journey's End", "Apothecary Title")
@@ -76,7 +77,7 @@ func TestScheduleInAServerFollowsTheServersPreferredNameNotTheMembers(t *testing
 func TestScheduleInAServerWithUnreadableSettingsShowsTitlesNotTheMembersName(t *testing.T) {
 	seedNamedShows(t)
 	serverNames(t, nil, errors.New("boom"))
-	memberNames(t, map[string]string{"user": "native"}, nil)
+	stubMemberDocuments(t, map[string]string{"user": "native"}, nil)
 	wantNames(t, "/schedule", runScheduleAs(t, "guild", false), "Frieren Title", "Apothecary Title")
 }
 
@@ -89,7 +90,7 @@ func TestSchedulePagePressesWithoutAServerSettingReadThePressersPreferredName(t 
 	}{{"DM", ""}, {"user install", "guild"}} {
 		t.Run(where.name, func(t *testing.T) {
 			seedNamedShows(t)
-			memberNames(t, map[string]string{"user": "native", "stranger": "english"}, nil)
+			stubMemberDocuments(t, map[string]string{"user": "native", "stranger": "english"}, nil)
 			userInstall := where.guildID != ""
 			press := func(user string, msg *discordgo.Message) []interactiontest.Call {
 				return pressNavAs(t, "sched:2026-11-05:user:sub", user, where.guildID, userInstall, msg)
@@ -115,7 +116,7 @@ func TestSchedulePagePressesWithoutAServerSettingReadThePressersPreferredName(t 
 
 func TestScheduleShowsTitlesWhenTheMembersPreferredNameCannotBeRead(t *testing.T) {
 	seedNamedShows(t)
-	memberNames(t, nil, errors.New("boom"))
+	stubMemberDocuments(t, nil, errors.New("boom"))
 	wantNames(t, "DM", runScheduleAs(t, "", false), "Frieren Title", "Apothecary Title")
 	calls := pressNavIn(t, "sched:2026-11-05:user:sub", "user", "", publicMsg())
 	wantNames(t, "author's press", calls[0].Response.Embeds[0], "Frieren Title", "Apothecary Title")
