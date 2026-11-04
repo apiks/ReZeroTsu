@@ -38,6 +38,14 @@ _Avoid_: track filter, subscription type, language option
 The one track a server, or one run of the schedule command, wants shown: Sub, Dub or Raw. Sub is the default. Each show appears once per airing, as its preferred track when it has one that week, else down the chain: Sub falls back to raw and never shows dub; Dub falls back to sub, then raw; Raw shows raw only.
 _Avoid_: track choice, track setting, air-type preference, "All"
 
+**Preferred name**:
+Which of a show's names a server, or a member, wants it called by: Title, Romaji, English or Native. Title is the default and is AnimeSchedule's own display title. A show is called by its preferred name when it has one, else by its title; the fallback never tries another name. A server's preferred name governs what the server sees in public: its schedule pages and autoposts. A member's governs what is theirs alone: their episode DMs and their private subscription replies, plus schedule pages where there is no server setting. A member's never comes from a server. A show is always identified by its title and route, whatever name it is shown by.
+_Avoid_: language, title language, name language, display language
+
+**Shown name**:
+The one name a show is called by, as the preferred name chooses it. It stands in place of the title, not beside it.
+_Avoid_: localized title
+
 **Timetable**:
 AnimeSchedule's week-by-week list of episode air times. The bot holds last week's, this week's and next week's, with days counted in UTC.
 _Avoid_: schedule data, cache

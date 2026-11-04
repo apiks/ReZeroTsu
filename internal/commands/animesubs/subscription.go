@@ -84,6 +84,12 @@ func init() {
 			},
 			{Name: "list", Desc: "Show your subscriptions and when each airs next.", Run: runList},
 			{Name: "clear", Desc: "Remove all your subscriptions, after asking first.", Run: runClear},
+			{
+				Name:    "name",
+				Desc:    "Choose which of a show's names your DMs and replies use, or see your current choice.",
+				Options: []*discordgo.ApplicationCommandOption{nameOption},
+				Run:     runName,
+			},
 		},
 	})
 	// Restricted: a list belongs to its author, so another member's press is refused, not given a copy.
@@ -120,11 +126,11 @@ func tracksArg(ic *interaction.Context) animeschedule.SubscriptionTracks {
 var guildSettings = commands.GetSettings
 
 // donghuaHidden reports whether donghua is left out of what /subscription add offers: in a server the bot is a member
-// of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerShowSettings), so a DM, a user install
-// in a server the bot has not joined, and an unreadable setting all offer donghua.
+// of whose donghua setting is off. It reads the server's settings the way /schedule does (commands.ServerShowSettings),
+// so a DM, a user install in a server the bot has not joined, and an unreadable setting all offer donghua.
 func donghuaHidden(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
-	shown, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
-	return !shown
+	settings, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
+	return !settings.Donghua
 }
 
 func animeArg(ic *interaction.Context) string {
@@ -150,7 +156,7 @@ func runRemove(ic *interaction.Context) error {
 }
 
 func runClear(ic *interaction.Context) error {
-	list, err := loadList(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
+	list, _, err := loadList(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
 	if err != nil {
 		return finish(ic, "Could not load your subscriptions.", err)
 	}
@@ -177,35 +183,49 @@ func clearButtons(authorID string) []discordgo.MessageComponent {
 }
 
 func runList(ic *interaction.Context) error {
-	list, err := loadList(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
+	list, pref, err := loadList(ic.Context(), storeOf(ic.DB), ic.Invoker.ID)
 	if err != nil {
 		return finish(ic, "Could not load your subscriptions.", err)
 	}
 	if len(list) == 0 {
 		return answer(ic, msgNoSubscriptions)
 	}
-	return ic.EditReply(renderPage(list, 0, ic.Invoker.ID))
+	return ic.EditReply(renderPage(list, namesFor(pref), 0, ic.Invoker.ID))
 }
 
-func loadList(ctx context.Context, store subsStore, uid string) ([]*anime_subs.ShowSub, error) {
+// loadList reads the member's subscriptions and their own preferred name, never a server's; Title when they have no
+// document.
+func loadList(ctx context.Context, store subsStore, uid string) ([]*anime_subs.ShowSub, animeschedule.PreferredName, error) {
 	doc, err := store.GetByID(ctx, uid)
 	if err != nil || doc == nil {
-		return nil, err
+		return nil, animeschedule.PreferTitle, err
 	}
-	return docToSubList(doc), nil
+	return docToSubList(doc), animeschedule.MemberPreferredName(doc), nil
 }
 
-// autocompleteOwn offers only the invoker's own subscriptions, matched anywhere in the title.
+// ownChoice is one of the invoker's subscriptions and the name they call it by.
+type ownChoice struct {
+	sub   *anime_subs.ShowSub
+	shown string
+}
+
+// autocompleteOwn offers only the invoker's own subscriptions, matched anywhere in their shown name or stored title.
+// A choice is labelled with the shown name, and its value is the stored title.
 func autocompleteOwn(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
-	list, err := loadList(ctx, storeOf(db), commands.UserID(i))
+	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i.Interaction))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 		return nil
 	}
-	matched := commands.MatchAnywhere(list, typed, func(s *anime_subs.ShowSub) []string { return []string{s.Show} })
+	names := namesFor(pref)
+	own := make([]ownChoice, 0, len(list))
+	for _, s := range list {
+		own = append(own, ownChoice{sub: s, shown: names.of(s)})
+	}
+	matched := commands.MatchAnywhere(own, typed, func(c ownChoice) []string { return []string{c.shown, c.sub.Show} })
 	out := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(matched))
-	for _, s := range matched {
-		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: clip(s.Show), Value: clip(s.Show)})
+	for _, c := range matched {
+		out = append(out, &discordgo.ApplicationCommandOptionChoice{Name: clip(c.shown), Value: clip(c.sub.Show)})
 	}
 	return out
 }
@@ -220,8 +240,8 @@ func clip(s string) string {
 }
 
 // renderPage builds one page of the list: the embed, Previous/Next when there is more than one page, and the
-// Remove picker for the entries on this page. page is clamped to the list.
-func renderPage(list []*anime_subs.ShowSub, page int, authorID string) interaction.Response {
+// Remove picker for the entries on this page, each called by its shown name. page is clamped to the list.
+func renderPage(list []*anime_subs.ShowSub, names memberNames, page int, authorID string) interaction.Response {
 	n := len(list)
 	totalPages := max((n+discord.MaxEmbedFields-1)/discord.MaxEmbedFields, 1)
 	page = min(max(page, 0), totalPages-1)
@@ -232,12 +252,13 @@ func renderPage(list []*anime_subs.ShowSub, page int, authorID string) interacti
 	if n > discord.MaxEmbedFields {
 		components = append(components, commands.PaginationComponents(pageKey, page, n, authorID)...)
 	}
-	components = append(components, removePicker(list[start:end], page, authorID))
-	emb := commands.NewEmbed(nil, embedTitleAnimeSubs, subsDescriptionForPage(list, start, page, totalPages, n), "Pick a show below to unsubscribe from it.")
+	components = append(components, removePicker(list[start:end], names, page, authorID))
+	emb := commands.NewEmbed(nil, embedTitleAnimeSubs, subsDescriptionForPage(list, names, start, page, totalPages, n), "Pick a show below to unsubscribe from it.")
 	return interaction.Response{Embeds: []*discordgo.MessageEmbed{emb}, Components: components}
 }
 
-func removePicker(entries []*anime_subs.ShowSub, page int, authorID string) discordgo.MessageComponent {
+// removePicker labels each entry with its shown name; an option's value is the stored title.
+func removePicker(entries []*anime_subs.ShowSub, names memberNames, page int, authorID string) discordgo.MessageComponent {
 	var options []discordgo.SelectMenuOption
 	seen := make(map[string]bool, len(entries))
 	for _, s := range entries {
@@ -246,7 +267,7 @@ func removePicker(entries []*anime_subs.ShowSub, page int, authorID string) disc
 			continue
 		}
 		seen[v] = true
-		options = append(options, discordgo.SelectMenuOption{Label: v, Value: v})
+		options = append(options, discordgo.SelectMenuOption{Label: clip(names.of(s)), Value: v})
 	}
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
 		MenuType:    discordgo.StringSelectMenu,
@@ -261,7 +282,7 @@ func RenderSubscriptionPage(ctx context.Context, db *database.Client, _ *discord
 	if authorID == "" {
 		return commands.Page{Refusal: "Could not load subscriptions."}
 	}
-	list, err := loadList(ctx, storeOf(db), authorID)
+	list, pref, err := loadList(ctx, storeOf(db), authorID)
 	if err != nil {
 		logger.For("animesubs").Error("subscription page failed", "err", err)
 		return commands.Page{Refusal: "Could not load your subscriptions."}
@@ -269,7 +290,7 @@ func RenderSubscriptionPage(ctx context.Context, db *database.Client, _ *discord
 	if len(list) == 0 {
 		return commands.Page{Refusal: msgNoSubscriptions + " Run /subscription list again."}
 	}
-	return commands.Page{Response: renderPage(list, page, authorID)}
+	return commands.Page{Response: renderPage(list, namesFor(pref), page, authorID)}
 }
 
 // handleRemovePicker removes the chosen subscription and re-renders the page. Guard home: only the member whose
@@ -289,7 +310,7 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 	}
 
 	store := storeOf(ic.DB)
-	list, err := loadList(ic.Context(), store, authorID)
+	list, pref, err := loadList(ic.Context(), store, authorID)
 	if err != nil {
 		return finishRefusal(ic, "Could not load your subscriptions.", err)
 	}
@@ -303,7 +324,7 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 		if err := store.RemoveShows(ic.Context(), authorID, stored); err != nil {
 			return finishRefusal(ic, "Could not update subscriptions.", err)
 		}
-		if list, err = loadList(ic.Context(), store, authorID); err != nil {
+		if list, pref, err = loadList(ic.Context(), store, authorID); err != nil {
 			return finishRefusal(ic, "Could not load your subscriptions.", err)
 		}
 	}
@@ -314,7 +335,7 @@ func handleRemovePicker(ic *interaction.Context, _ *discordgo.Session) error {
 			Components: []discordgo.MessageComponent{},
 		})
 	}
-	return ic.UpdateMessage(renderPage(list, page, authorID))
+	return ic.UpdateMessage(renderPage(list, namesFor(pref), page, authorID))
 }
 
 // refuseAfter logs a failed step under logMsg, with the invoker's context, and refuses privately.

@@ -57,7 +57,7 @@ func TestListPageOfLongTitlesFitsTheEmbedAndKeepsItsFooter(t *testing.T) {
 			for i := range 30 {
 				list = append(list, &anime_subs.ShowSub{Show: strings.Repeat(glyph, 150) + fmt.Sprint(i)})
 			}
-			got := subsDescriptionForPage(list, 0, 0, 2, len(list))
+			got := subsDescriptionForPage(list, memberNames{}, 0, 0, 2, len(list))
 			if n := utf16Len(got); n > 4096 {
 				t.Errorf("description is %d UTF-16 units, want at most 4096", n)
 			}

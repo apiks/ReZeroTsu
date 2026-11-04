@@ -23,6 +23,7 @@ const (
 	idBotLog    = panelPrefix + "bot-log"
 	idDonghua   = panelPrefix + "donghua"
 	idTrack     = panelPrefix + "track"
+	idName      = panelPrefix + "name"
 	idPingEdit  = panelPrefix + "ping-edit"
 	idPingForm  = panelPrefix + "ping-form"
 	// idPingText is the custom ID of the text box inside the ping-message form.
@@ -49,6 +50,7 @@ type settingsStore interface {
 	SetBotLog(ctx context.Context, guildID string, ref *guilds.ChannelRef) error
 	SetDonghua(ctx context.Context, guildID string, on bool) error
 	SetPreferredTrack(ctx context.Context, guildID string, pref animeschedule.PreferredTrack) error
+	SetPreferredName(ctx context.Context, guildID string, name animeschedule.PreferredName) error
 	SetPingMessage(ctx context.Context, guildID, text string) error
 	// GetGuild is the single read behind a panel render: settings and autoposts together.
 	GetGuild(ctx context.Context, guildID string) (*guilds.Guild, error)
@@ -72,6 +74,7 @@ const (
 	scopeBotLog scope = iota
 	scopeDonghua
 	scopeTrack
+	scopeName
 	scopePingMessage
 	scopeNewEpisodes
 	scopeDailySchedule
@@ -80,7 +83,7 @@ const (
 func init() {
 	commands.Add(&commands.Command{
 		Name:       "settings",
-		Desc:       "View and change this server's settings, such as the preferred track.",
+		Desc:       "View and change this server's settings, such as the preferred track and preferred name.",
 		Visibility: commands.Private,
 		Response:   commands.Deferred,
 		// Guard home: the bot-side moderator check that /bot-log, /donghua and /ping-message ran is now Discord's
@@ -148,7 +151,8 @@ func panelResponse(ic *interaction.Context, data *panelData) interaction.Respons
 		"\n**New episodes ping role:** " + off(autopostRoleID(data.newEpisodes), "None", commands.RoleMention) +
 		"\n**Daily schedule channel:** " + off(autopostChannelID(data.dailySchedule), "Off", commands.ChannelMention) +
 		"\n**Donghua in the schedule and new subscriptions:** " + donghua +
-		"\n**Preferred track:** " + gs.Preferred().Title() + " " + trackFallback(gs.Preferred()) + " Used by /schedule and both autoposts."
+		"\n**Preferred track:** " + gs.Preferred().Title() + " " + trackFallback(gs.Preferred()) + " Used by /schedule and both autoposts." +
+		"\n**Preferred name:** " + nameFallback(gs.PreferredShowName()) + " Used by /schedule and both autoposts."
 	if w := mentionWarning(ic, data.newEpisodes); w != "" {
 		desc += "\n\n" + w
 	}
@@ -173,6 +177,14 @@ func trackFallback(p animeschedule.PreferredTrack) string {
 	return "(" + p.Fallback() + ")."
 }
 
+// nameFallback names a preferred name and, unless it is Title, that a show lacking it is called by its title.
+func nameFallback(n animeschedule.PreferredName) string {
+	if n == animeschedule.PreferTitle {
+		return n.Title() + "."
+	}
+	return n.Title() + " (else the title)."
+}
+
 // botLogRow is row 1: the bot-log channel picker, carrying the stored channel as its default value.
 func botLogRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	none := 0
@@ -190,8 +202,8 @@ func botLogRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{menu}}
 }
 
-// toggleRow is row 5: the donghua toggle and the preferred-track button, each labelled with its state, and the
-// Edit ping message button.
+// toggleRow is row 5: the donghua toggle and the preferred-track button, each labelled with its state, the Edit
+// ping message button, and the preferred-name button, labelled with its state.
 func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 	donghua := discordgo.Button{Label: "Donghua: Off", Style: discordgo.SecondaryButton, CustomID: idDonghua}
 	if gs.Donghua {
@@ -201,6 +213,7 @@ func toggleRow(gs *guilds.GuildSettings) discordgo.MessageComponent {
 		donghua,
 		discordgo.Button{Label: "Preferred track: " + gs.Preferred().Title(), Style: discordgo.SecondaryButton, CustomID: idTrack},
 		discordgo.Button{Label: "Edit ping message", Style: discordgo.SecondaryButton, CustomID: idPingEdit},
+		discordgo.Button{Label: "Preferred name: " + gs.PreferredShowName().Title(), Style: discordgo.SecondaryButton, CustomID: idName},
 	}}
 }
 
@@ -226,6 +239,11 @@ func handlePanel(ic *interaction.Context, _ *discordgo.Session) error {
 	case idTrack:
 		return apply(ic, store, scopeTrack, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
 			gs.PreferredTrack = gs.Preferred().Next().String()
+			return ""
+		}))
+	case idName:
+		return apply(ic, store, scopeName, settingsChange(func(_ *interaction.Context, gs *guilds.GuildSettings) string {
+			gs.PreferredName = gs.PreferredShowName().Next().String()
 			return ""
 		}))
 	case idPingEdit:
@@ -337,6 +355,8 @@ func save(ctx context.Context, store settingsStore, guildID string, sc scope, d 
 		return store.SetDonghua(ctx, guildID, d.gs.Donghua)
 	case scopeTrack:
 		return store.SetPreferredTrack(ctx, guildID, d.gs.Preferred())
+	case scopeName:
+		return store.SetPreferredName(ctx, guildID, d.gs.PreferredShowName())
 	case scopePingMessage:
 		return store.SetPingMessage(ctx, guildID, d.gs.PingMessage)
 	}

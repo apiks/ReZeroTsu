@@ -83,7 +83,7 @@ func text(r interaction.Response) string {
 	return b.String()
 }
 
-func TestSubscriptionRegistersFourPrivateSubcommandsAndNoOldSlashCommands(t *testing.T) {
+func TestSubscriptionRegistersFivePrivateSubcommandsAndNoOldSlashCommands(t *testing.T) {
 	cmd := subscriptionCommand(t)
 	if cmd.Visibility != commands.Private || cmd.Response != commands.Deferred {
 		t.Errorf("visibility/response = %v/%v, want private and deferred", cmd.Visibility, cmd.Response)
@@ -95,7 +95,7 @@ func TestSubscriptionRegistersFourPrivateSubcommandsAndNoOldSlashCommands(t *tes
 			t.Errorf("%s overrides the private visibility", s.Name)
 		}
 	}
-	if strings.Join(names, ",") != "add,remove,list,clear" {
+	if strings.Join(names, ",") != "add,remove,list,clear,name" {
 		t.Errorf("subcommands = %v", names)
 	}
 	for _, s := range cmd.Subcommands {
@@ -266,7 +266,7 @@ func TestAddChoicesAreNamedTitleThenEnglishWhenTheyDiffer(t *testing.T) {
 
 func TestChoiceNameIsCutToDiscordsLimit(t *testing.T) {
 	long := strings.Repeat("x", 120)
-	if got := labelledName(candidate{ShowEntry: animeschedule.ShowEntry{Name: "T", English: long}}, false); len([]rune(got)) != 100 {
+	if got := labelledName(candidate{ShowEntry: animeschedule.ShowEntry{Name: "T", English: long}}, false, animeschedule.PreferTitle); len([]rune(got)) != 100 {
 		t.Errorf("length = %d", len([]rune(got)))
 	}
 }

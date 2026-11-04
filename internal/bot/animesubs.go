@@ -280,15 +280,18 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster
 	return updated, err
 }
 
-func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
+// buildEpisodeEmbed is the embed of one newly aired row, shared by episode DMs and the new-episodes autopost. Its
+// title, and a movie's "is out" line, call the show by its shown name under name.
+func buildEpisodeEmbed(show animeschedule.ShowEntry, name animeschedule.PreferredName) *discordgo.MessageEmbed {
+	shown := show.ShownName(name)
 	var desc string
 	switch {
 	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackSub:
-		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, subbed!", shown)
 	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackDub:
-		desc = fmt.Sprintf("**%s** is out, dubbed!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, dubbed!", shown)
 	case show.MediaType == animeschedule.MediaMovie:
-		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, raw!", shown)
 	case show.Track == animeschedule.TrackDub:
 		desc = fmt.Sprintf("**%s** dubbed is out!", show.Episode)
 	case show.Track == animeschedule.TrackSub:
@@ -299,7 +302,7 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	url := animeschedule.BaseURL + "/anime/" + show.Route
 	airTime := time.Unix(show.AirTimeUnix, 0).UTC()
 	emb := &discordgo.MessageEmbed{
-		Title:       show.Name,
+		Title:       shown,
 		Description: desc,
 		URL:         url,
 		Color:       discord.EmbedColor,
@@ -478,12 +481,15 @@ func runAnimeSubCheck(ctx context.Context, db *database.Client, s *discordgo.Ses
 }
 
 // processAnimeSubUser DMs one user the rows of todayRows (every row today with every track that selects it, from
-// animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due.
+// animeschedule.SelectRows under every track) that their subscriptions' sets select and that are due, calling each
+// show by its shown name under the member's preferred name.
 func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, doc *anime_subs.AnimeSubs, todayRows []animeschedule.SelectedRow, now time.Time) error {
 	if doc == nil || len(doc.Shows) == 0 {
 		return nil
 	}
 	userID := doc.ID
+	// The member's own preferred name names the show in each DM; it changes no identity or sent state.
+	name := animeschedule.MemberPreferredName(doc)
 
 	// Among duplicate entries of a show, read and update the one a collapse keeps (most recently notified, ties
 	// going to the later entry), so no notified state is lost when the duplicates are collapsed.
@@ -577,7 +583,7 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 			}
 		}
 
-		emb := buildEpisodeEmbed(show)
+		emb := buildEpisodeEmbed(show, name)
 		res := senders.open("", dmID, episodeDMPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch res.Outcome {
 		case PostCancelled:
@@ -749,8 +755,8 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		donghua, pref := guildShowSettings(ctx, st, guildID)
-		dayShows := shows(donghua, pref)
+		settings := guildShowSettings(ctx, st, guildID)
+		dayShows := shows(settings.Donghua, settings.Track)
 		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
 			logger.For("animesubs").Error("GetByID seed check failed", "channel_id", ap.ID, "err", err)
@@ -770,7 +776,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 
-		subChain := subChainOf(shows, dayShows, donghua, pref)
+		subChain := subChainOf(shows, dayShows, settings.Donghua, settings.Track)
 		if len(existing.Shows) > 0 && guildSentMatches(dayShows, existing.Shows, subChain) {
 			continue
 		}
@@ -792,14 +798,11 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 	}
 }
 
-// guildShowSettings is the donghua setting and preferred track a server's new-episodes autopost reads: donghua on
-// and Sub when the server has no settings.
-func guildShowSettings(ctx context.Context, st SentState, guildID string) (donghua bool, pref animeschedule.PreferredTrack) {
-	donghua, pref = true, animeschedule.PreferSub
-	if settings, _ := st.GetGuildSettings(ctx, guildID); settings != nil {
-		donghua, pref = settings.Donghua, settings.Preferred()
-	}
-	return donghua, pref
+// guildShowSettings is the show settings a server's new-episodes autopost reads: the default when the server has
+// no settings.
+func guildShowSettings(ctx context.Context, st SentState, guildID string) animeschedule.ShowSettings {
+	settings, _ := st.GetGuildSettings(ctx, guildID)
+	return settings.ShowSettings()
 }
 
 // subChainOf is today's Sub chain rows: dayShows when pref is already Sub, else a read under Sub.
@@ -885,8 +888,8 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		roleID = ""
 	}
-	donghua, pref := guildShowSettings(ctx, st, guildID)
-	todayShowsGuild := shows(donghua, pref)
+	settings := guildShowSettings(ctx, st, guildID)
+	todayShowsGuild := shows(settings.Donghua, settings.Track)
 	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
 		logger.For("animesubs").Error("GetByID failed", "channel_id", channelID, "err", err)
@@ -899,7 +902,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
-	subChain := subChainOf(shows, todayShowsGuild, donghua, pref)
+	subChain := subChainOf(shows, todayShowsGuild, settings.Donghua, settings.Track)
 	sent := newSentIndex(doc.Shows, subChain)
 	// A server that changed its preferred track today has no entries for the new chain's rows yet.
 	if !recordMissingRows(ctx, st, channelID, sent, todayShowsGuild, now) {
@@ -918,14 +921,14 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		if !donghua && show.Donghua {
+		if !settings.Donghua && show.Donghua {
 			continue
 		}
 		sub, ok := sent.find(show)
 		if !ok || sub.Notified {
 			continue
 		}
-		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show)})
+		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show, settings.Name)})
 	}
 	if len(due) == 0 {
 		return

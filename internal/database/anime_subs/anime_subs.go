@@ -122,6 +122,37 @@ type AnimeSubs struct {
 	IsGuild      bool       `bson:"is_guild"`
 	Shows        []*ShowSub `bson:"shows"`
 	LastSeedDate string     `bson:"last_seed_date"`
+	// PreferredName is a member's preferred name, in the stored form animeschedule.ParsePreferredName reads;
+	// optional (a document without one reads as Title). Only a member's document holds it.
+	PreferredName string `bson:"preferred_name,omitempty"`
+}
+
+// preferredNameField is the stored key of AnimeSubs.PreferredName.
+const preferredNameField = "preferred_name"
+
+// SetPreferredName stores a member's preferred name (its lower-case stored form) alone, in a single upsert
+// statement, so a member with no subscriptions gets a document holding only the setting.
+func (r *Repo) SetPreferredName(ctx context.Context, id, name string) error {
+	return setPreferredName(ctx, func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error) {
+		return r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(upsert))
+	}, id, name)
+}
+
+func setPreferredName(ctx context.Context, updateOne updateOneFunc, id, name string) error {
+	if _, err := updateOne(ctx, bson.M{"id": id}, preferredNameUpdate(name), true); err != nil {
+		return fmt.Errorf("SetPreferredName: %w", err)
+	}
+	return nil
+}
+
+// preferredNameUpdate is the update that sets the preferred name and nothing else of an existing document. A
+// document it creates gets the defaults AddShowIfAbsent fills: a member's, with no shows and no seed date; its id
+// comes from the equality filter.
+func preferredNameUpdate(name string) bson.M {
+	return bson.M{
+		"$set":         bson.M{preferredNameField: name},
+		"$setOnInsert": bson.M{"is_guild": false, "shows": bson.A{}, "last_seed_date": ""},
+	}
 }
 
 type Repo struct {
@@ -459,10 +490,15 @@ func collapsedShowsExpr() bson.M {
 
 // ClearShows empties the document's shows in a single update statement, leaving the document otherwise intact.
 func (r *Repo) ClearShows(ctx context.Context, id string) error {
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, bson.M{"$set": bson.M{"shows": []*ShowSub{}}}); err != nil {
+	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, clearShowsUpdate()); err != nil {
 		return fmt.Errorf("ClearShows: %w", err)
 	}
 	return nil
+}
+
+// clearShowsUpdate is the update that empties the shows and leaves every other field, the preferred name included.
+func clearShowsUpdate() bson.M {
+	return bson.M{"$set": bson.M{"shows": []*ShowSub{}}}
 }
 
 func (r *Repo) DeleteByID(ctx context.Context, id string) error {

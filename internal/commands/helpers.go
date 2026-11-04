@@ -119,7 +119,8 @@ func GetSettings(ctx context.Context, db *database.Client, guildID string) (*gui
 	return db.Guilds().GetGuildSettings(ctx, guildID)
 }
 
-func UserID(i *discordgo.InteractionCreate) string {
+// UserID is the ID of the user whose interaction i is: the member in a server, else the user.
+func UserID(i *discordgo.Interaction) string {
 	if i.Member != nil {
 		return i.Member.User.ID
 	}

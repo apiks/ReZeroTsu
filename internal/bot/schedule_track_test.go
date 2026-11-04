@@ -42,7 +42,7 @@ func TestDailyScheduleBodyAndFooterFollowTheServersPreferredTrack(t *testing.T) 
 			t.Fatalf("stored %q: delivered %d posts, want 1", tc.stored, len(got))
 		}
 		emb := got[0].Msg.Embeds[0]
-		want := schedule.BuildScheduleEmbed(h.now, h.now, inner(true, tc.want), tc.want)
+		want := schedule.BuildScheduleEmbed(h.now, h.now, inner(true, tc.want), tc.want, animeschedule.PreferTitle)
 		if emb.Footer.Text != want.Footer.Text || emb.Description != want.Description || emb.Title != want.Title {
 			t.Errorf("stored %q: posted %q / %q, want %q / %q", tc.stored, emb.Description, emb.Footer.Text, want.Description, want.Footer.Text)
 		}
