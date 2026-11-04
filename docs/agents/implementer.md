@@ -7,6 +7,7 @@ Read by an implementer subagent that builds one ticket. The prompt names the tic
 - Reset onto the integration branch, then `git switch -c ticket/<number>-<slug>` and commit there. A worktree starts on a branch the harness names, and the orchestrator merges the branch you report.
 - Read `AGENTS.md`, `GLOSSARY.md` and `CODING_STANDARDS.md`, then the ticket and its parent spec.
 - Load the `tdd` skill before the first line of code. Write each test first and run it red on an assertion: stub every new symbol first, so the failure line names the behaviour and is not a compile error ("undefined: X"). Test through the existing seams and fakes.
+- Build every test the parent spec's Testing Decisions name for your ticket, and report any you skip with the reason. Ticket criteria name behaviour only; the spec names the seams and the cases.
 - Name things with `GLOSSARY.md` terms.
 - A change described as behaviour-preserving follows the "Behaviour parity" standard: every deleted or moved guard gets a named new home.
 - Facts about AnimeSchedule's API (weeks, time zones, rate limits, response shapes) are in `docs/animeschedule-api.md`.

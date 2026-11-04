@@ -69,7 +69,7 @@ func init() {
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        optTrack,
 					Description: "Which airings alert you: Sub (default, raw when a week has no sub), Dub, Raw, or several",
-					Choices:     trackChoices,
+					Choices:     trackOptionChoices,
 				}},
 				Run:                runAdd,
 				AutocompleteOption: autocompleteAdd,

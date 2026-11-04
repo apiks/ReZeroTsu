@@ -31,7 +31,7 @@ func TestProcessTimetableBucketsByUTCDate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := processTimetable([]TimetableAnime{{Title: "Show", Route: "show", AirType: "sub", EpisodeDate: ts}})
+			got := processTimetable([]TimetableAnime{{Title: "Show", Route: "show", AirType: "sub", EpisodeDate: ts}}) // archcheck:allow the API's own field name
 			if len(got[tc.wantDate]) != 1 || len(got) != 1 {
 				t.Fatalf("expected one entry under %s, got %v", tc.wantDate, got)
 			}

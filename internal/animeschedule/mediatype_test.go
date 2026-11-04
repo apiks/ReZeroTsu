@@ -44,7 +44,7 @@ func TestTimetableEntryMediaTypeFromRoute(t *testing.T) {
 
 func TestDonghuaFlagIndependentOfMediaType(t *testing.T) {
 	ts := time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC)
-	a := TimetableAnime{Title: "S", Route: "s", AirType: "sub", EpisodeDate: ts, Donghua: true,
+	a := TimetableAnime{Title: "S", Route: "s", AirType: "sub", EpisodeDate: ts, Donghua: true, // archcheck:allow the API's own field name
 		MediaTypes: []MediaTypeRef{{Name: "TV", Route: "tv"}}}
 	got := processTimetable([]TimetableAnime{a})["2025-01-06"]
 	if len(got) != 1 || !got[0].Donghua || got[0].MediaType != MediaTV {

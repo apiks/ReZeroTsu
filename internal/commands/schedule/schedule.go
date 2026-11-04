@@ -27,8 +27,8 @@ const (
 
 var dayNames = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 
-// trackChoice is the track option's choice for p: its title and what it falls back to.
-func trackChoice(p animeschedule.PreferredTrack) *discordgo.ApplicationCommandOptionChoice {
+// trackOptionChoice is the track option's choice for p: its title and what it falls back to.
+func trackOptionChoice(p animeschedule.PreferredTrack) *discordgo.ApplicationCommandOptionChoice {
 	return &discordgo.ApplicationCommandOptionChoice{Name: p.Title() + ": " + p.Fallback(), Value: p.String()}
 }
 
@@ -55,9 +55,9 @@ func init() {
 				Description: "Which track to show. Defaults to the server's preferred track, else Sub.",
 				Required:    false,
 				Choices: []*discordgo.ApplicationCommandOptionChoice{
-					trackChoice(animeschedule.PreferSub),
-					trackChoice(animeschedule.PreferDub),
-					trackChoice(animeschedule.PreferRaw),
+					trackOptionChoice(animeschedule.PreferSub),
+					trackOptionChoice(animeschedule.PreferDub),
+					trackOptionChoice(animeschedule.PreferRaw),
 				},
 			},
 		},

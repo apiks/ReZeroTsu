@@ -10,6 +10,8 @@ The docs are split across pages, and the main page lacks the endpoint details:
 
 Requests send `Authorization: Bearer <key>` and the bot's `User-Agent`.
 
+The API's own source is in the sibling repo `AnimeSchedule`. The response objects are in `backend/web/handlers/api/v3/objects` and the handlers in `backend/web/handlers/api/v3/private/anime`; its `GLOSSARY.md` defines Track, Episode Span and the track-existence rule. Check a field there before assuming the bot decodes all of it, and add what you find to this file.
+
 ## Timetables: `GET /api/v3/timetables`
 
 - `airType` is an optional path segment: `raw`, `sub`, `dub` or `all` (default).

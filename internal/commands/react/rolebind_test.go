@@ -106,7 +106,7 @@ func rightClick(t *testing.T, fake *interactiontest.Fake, name string, msg *disc
 const formID = "reactrole:add:c1:m1"
 
 // worldFake is a server where role "1000000000000000001" sits below the bot's highest role and "1000000000000000002" sits at it.
-// The default submitter holds topModRole, above every other role, so the moderator's own hierarchy never gets in the way.
+// The default submitter holds highestRole, above every other role, so the moderator's own hierarchy never gets in the way.
 func worldFake() *interactiontest.Fake {
 	return &interactiontest.Fake{
 		Bot: &discordgo.User{ID: "bot"},
@@ -116,16 +116,16 @@ func worldFake() *interactiontest.Fake {
 		RoleSets: map[string][]*discordgo.Role{"g": {
 			{ID: "1000000000000000005", Position: 5}, {ID: "1000000000000000004", Position: 1},
 			{ID: "1000000000000000001", Position: 2}, {ID: "1000000000000000002", Position: 5}, {ID: "1000000000000000003", Position: 9},
-			{ID: topModRole, Position: 20},
+			{ID: highestRole, Position: 20},
 		}},
 	}
 }
 
-const topModRole = "1000000000000000020"
+const highestRole = "1000000000000000020"
 
 func submit(t *testing.T, fake *interactiontest.Fake, customID, emoji string, roles ...string) error {
 	t.Helper()
-	return submitAs(t, fake, &discordgo.Member{User: &discordgo.User{ID: "user"}, Roles: []string{topModRole}}, customID, emoji, roles...)
+	return submitAs(t, fake, &discordgo.Member{User: &discordgo.User{ID: "user"}, Roles: []string{highestRole}}, customID, emoji, roles...)
 }
 
 func submitAs(t *testing.T, fake *interactiontest.Fake, member *discordgo.Member, customID, emoji string, roles ...string) error {

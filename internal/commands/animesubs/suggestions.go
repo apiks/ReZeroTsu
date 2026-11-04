@@ -30,8 +30,8 @@ var typeChoices = []*discordgo.ApplicationCommandOptionChoice{
 
 const optTrack = "track"
 
-// trackChoices are the fixed values of the `track` option: each subscription tracks set and its stored form.
-var trackChoices = func() []*discordgo.ApplicationCommandOptionChoice {
+// trackOptionChoices are the fixed values of the `track` option: each subscription tracks set and its stored form.
+var trackOptionChoices = func() []*discordgo.ApplicationCommandOptionChoice {
 	var out []*discordgo.ApplicationCommandOptionChoice
 	for _, set := range []animeschedule.SubscriptionTracks{
 		animeschedule.SubscribeSub, animeschedule.SubscribeDub, animeschedule.SubscribeRaw,

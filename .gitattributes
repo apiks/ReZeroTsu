@@ -9,3 +9,6 @@
 
 # Scripts run under sh, which rejects CRLF
 scripts/*.sh text eol=lf
+
+# Every ticket appends a bullet in the same place; keep both sides of a parallel merge
+docs/release-notes.md merge=union
