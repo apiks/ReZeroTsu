@@ -22,6 +22,8 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -count=1 ./...
+      - name: dead code
+        run: scripts/deadcode.sh
       - name: lint
         uses: golangci/golangci-lint-action@v8
         with:
