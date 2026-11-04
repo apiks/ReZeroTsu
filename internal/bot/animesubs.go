@@ -755,8 +755,8 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		donghua, pref, _ := guildShowSettings(ctx, st, guildID)
-		dayShows := shows(donghua, pref)
+		settings := guildShowSettings(ctx, st, guildID)
+		dayShows := shows(settings.Donghua, settings.Track)
 		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
 			logger.For("animesubs").Error("GetByID seed check failed", "channel_id", ap.ID, "err", err)
@@ -776,7 +776,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 			continue
 		}
 
-		subChain := subChainOf(shows, dayShows, donghua, pref)
+		subChain := subChainOf(shows, dayShows, settings.Donghua, settings.Track)
 		if len(existing.Shows) > 0 && guildSentMatches(dayShows, existing.Shows, subChain) {
 			continue
 		}
@@ -798,14 +798,11 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 	}
 }
 
-// guildShowSettings is the donghua setting, preferred track and preferred name a server's new-episodes autopost
-// reads: donghua on, Sub and Title when the server has no settings.
-func guildShowSettings(ctx context.Context, st SentState, guildID string) (donghua bool, pref animeschedule.PreferredTrack, name animeschedule.PreferredName) {
-	donghua, pref, name = true, animeschedule.PreferSub, animeschedule.PreferTitle
-	if settings, _ := st.GetGuildSettings(ctx, guildID); settings != nil {
-		donghua, pref, name = settings.Donghua, settings.Preferred(), settings.PreferredShowName()
-	}
-	return donghua, pref, name
+// guildShowSettings is the show settings a server's new-episodes autopost reads: the default when the server has
+// no settings.
+func guildShowSettings(ctx context.Context, st SentState, guildID string) animeschedule.ShowSettings {
+	settings, _ := st.GetGuildSettings(ctx, guildID)
+	return settings.ShowSettings()
 }
 
 // subChainOf is today's Sub chain rows: dayShows when pref is already Sub, else a read under Sub.
@@ -891,8 +888,8 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		roleID = ""
 	}
-	donghua, pref, name := guildShowSettings(ctx, st, guildID)
-	todayShowsGuild := shows(donghua, pref)
+	settings := guildShowSettings(ctx, st, guildID)
+	todayShowsGuild := shows(settings.Donghua, settings.Track)
 	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
 		logger.For("animesubs").Error("GetByID failed", "channel_id", channelID, "err", err)
@@ -905,7 +902,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		doc = &anime_subs.AnimeSubs{ID: channelID, IsGuild: true, Shows: showSubs}
 	}
-	subChain := subChainOf(shows, todayShowsGuild, donghua, pref)
+	subChain := subChainOf(shows, todayShowsGuild, settings.Donghua, settings.Track)
 	sent := newSentIndex(doc.Shows, subChain)
 	// A server that changed its preferred track today has no entries for the new chain's rows yet.
 	if !recordMissingRows(ctx, st, channelID, sent, todayShowsGuild, now) {
@@ -924,14 +921,14 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if show.AirTimeUnix > now.Unix() {
 			continue
 		}
-		if !donghua && show.Donghua {
+		if !settings.Donghua && show.Donghua {
 			continue
 		}
 		sub, ok := sent.find(show)
 		if !ok || sub.Notified {
 			continue
 		}
-		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show, name)})
+		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show, settings.Name)})
 	}
 	if len(due) == 0 {
 		return

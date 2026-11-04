@@ -133,7 +133,13 @@ const preferredNameField = "preferred_name"
 // SetPreferredName stores a member's preferred name (its lower-case stored form) alone, in a single upsert
 // statement, so a member with no subscriptions gets a document holding only the setting.
 func (r *Repo) SetPreferredName(ctx context.Context, id, name string) error {
-	if _, err := r.coll.UpdateOne(ctx, bson.M{"id": id}, preferredNameUpdate(name), options.UpdateOne().SetUpsert(true)); err != nil {
+	return setPreferredName(ctx, func(ctx context.Context, filter, update any, upsert bool) (*mongo.UpdateResult, error) {
+		return r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(upsert))
+	}, id, name)
+}
+
+func setPreferredName(ctx context.Context, updateOne updateOneFunc, id, name string) error {
+	if _, err := updateOne(ctx, bson.M{"id": id}, preferredNameUpdate(name), true); err != nil {
 		return fmt.Errorf("SetPreferredName: %w", err)
 	}
 	return nil

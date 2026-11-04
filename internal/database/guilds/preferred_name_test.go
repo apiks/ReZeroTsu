@@ -23,6 +23,20 @@ func TestMissingPreferredNameReadsAsTitle(t *testing.T) {
 	}
 }
 
+// A server's show settings are its donghua setting, preferred track and preferred name; a server with no settings
+// reads as the default.
+func TestShowSettingsBundleTheServersSettingsAndDefaultWithoutThem(t *testing.T) {
+	var none *GuildSettings
+	if got, want := none.ShowSettings(), animeschedule.DefaultShowSettings(); got != want {
+		t.Errorf("no settings = %+v, want %+v", got, want)
+	}
+	got := (&GuildSettings{Donghua: false, PreferredTrack: "dub", PreferredName: "native"}).ShowSettings()
+	want := animeschedule.ShowSettings{Donghua: false, Track: animeschedule.PreferDub, Name: animeschedule.PreferNative}
+	if got != want {
+		t.Errorf("settings = %+v, want %+v", got, want)
+	}
+}
+
 // SetPreferredName needs a real Mongo, so this tests the update it sends: only guild_settings.preferred_name, holding
 // the lower-case value ParsePreferredName reads back, never the title shown to members.
 func TestPreferredNameWritesOnlyItsOwnSettingsKeyAsItsLowerCaseValue(t *testing.T) {

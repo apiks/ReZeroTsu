@@ -118,7 +118,7 @@ func autocompleteRemindTime(ctx context.Context, db *database.Client, s *discord
 }
 
 func autocompleteRemindID(ctx context.Context, db *database.Client, s *discordgo.Session, i *discordgo.InteractionCreate, optionName, focusedValue string) []*discordgo.ApplicationCommandOptionChoice {
-	return remindIDChoices(ctx, storeOf(db), commands.UserID(i), focusedValue)
+	return remindIDChoices(ctx, storeOf(db), commands.UserID(i.Interaction), focusedValue)
 }
 
 // clip cuts text to at most n characters, ending with "..." when it was cut.

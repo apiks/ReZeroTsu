@@ -169,7 +169,7 @@ func labelledName(c candidate, subscribed bool, pref animeschedule.PreferredName
 // names shows under Title.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	chosen := chosenTracks(i.ApplicationCommandData().Options)
-	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i))
+	list, pref, err := loadList(ctx, storeOf(db), commands.UserID(i.Interaction))
 	if err != nil {
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 	}

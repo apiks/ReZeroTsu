@@ -286,6 +286,15 @@ func (g *GuildSettings) PreferredShowName() animeschedule.PreferredName {
 	return name
 }
 
+// ShowSettings is the server's donghua setting, preferred track and preferred name. A server with no settings (a nil
+// g) reads as animeschedule.DefaultShowSettings.
+func (g *GuildSettings) ShowSettings() animeschedule.ShowSettings {
+	if g == nil {
+		return animeschedule.DefaultShowSettings()
+	}
+	return animeschedule.ShowSettings{Donghua: g.Donghua, Track: g.Preferred(), Name: g.PreferredShowName()}
+}
+
 // SetPreferredName sets guild_settings.preferred_name alone.
 func (r *Repo) SetPreferredName(ctx context.Context, guildID string, name animeschedule.PreferredName) error {
 	if err := r.setSettingsField(ctx, guildID, preferredNameField, preferredNameValue(name)); err != nil {

@@ -228,8 +228,9 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// memberSubs reads the invoking member's subscription document, which holds their preferred name; tests replace it.
-var memberSubs commands.ReadMemberSubs = func(ctx context.Context, db *database.Client, userID string) (*anime_subs.AnimeSubs, error) {
+// memberDocument reads the invoking member's subscription document, which holds their preferred name; tests replace
+// it.
+var memberDocument commands.ReadMemberDocument = func(ctx context.Context, db *database.Client, userID string) (*anime_subs.AnimeSubs, error) {
 	return db.AnimeSubs().GetByID(ctx, userID)
 }
 
@@ -247,11 +248,11 @@ func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 // and returns the track used and the preferred name the page calls shows by: the server's, or where there is no
 // server setting the preferred name of the member whose interaction this is (the presser, for a page press).
 func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack, animeschedule.PreferredName) {
-	donghua, pref, name := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings, memberSubs)
+	settings := commands.InvokerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings, memberDocument)
 	if chosen != nil {
-		pref = *chosen
+		settings.Track = *chosen
 	}
-	return animeschedule.GetDayShows(date, donghua, pref), pref, name
+	return animeschedule.GetDayShows(date, settings.Donghua, settings.Track), settings.Track, settings.Name
 }
 
 // handleSchedule answers /schedule with one day's schedule and Previous/Next buttons. Refusals are private.

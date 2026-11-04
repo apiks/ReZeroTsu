@@ -12,45 +12,37 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// ReadMemberSubs reads a member's subscription document by user ID; nil when the member has none.
-type ReadMemberSubs func(ctx context.Context, db *database.Client, userID string) (*anime_subs.AnimeSubs, error)
+// ReadServerSettings reads a server's settings by guild ID.
+type ReadServerSettings func(ctx context.Context, db *database.Client, guildID string) (*guilds.GuildSettings, error)
 
-// ServerShowSettings reads, in one lookup through read, whether the server shows donghua, its preferred track and its
-// preferred name. Where the bot has no server membership (DMs, and a user install in a server it has not joined)
-// there are no settings: donghua is shown, the track is Sub, and the name is the invoking member's own preferred
-// name, read through member. In a server the bot is a member of, settings that cannot be read give donghua shown,
-// Sub and Title. A caller that needs no preferred name passes a nil member and gets Title. /schedule and
-// /subscription add read the setting here, so they share one rule; the autoposts in internal/bot restate the same
-// default themselves.
-func ServerShowSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction, read func(context.Context, *database.Client, string) (*guilds.GuildSettings, error), member ReadMemberSubs) (donghua bool, pref animeschedule.PreferredTrack, name animeschedule.PreferredName) {
+// ReadMemberDocument reads a member's subscription document by user ID; nil when the member has none.
+type ReadMemberDocument func(ctx context.Context, db *database.Client, userID string) (*anime_subs.AnimeSubs, error)
+
+// ServerShowSettings is the show settings of the server interaction i runs in, read in one lookup through read, and
+// whether there is one. Where the bot has no server membership (DMs, and a user install in a server it has not
+// joined) there is no server: inServer is false and the settings are the default. In a server the bot is a member
+// of, settings that cannot be read are the default. /subscription add reads its donghua setting here.
+func ServerShowSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction, read ReadServerSettings) (settings animeschedule.ShowSettings, inServer bool) {
 	if !interaction.BotInGuild(i) {
-		return true, animeschedule.PreferSub, memberPreferredName(ctx, db, i, member)
+		return animeschedule.DefaultShowSettings(), false
 	}
-	settings, err := read(ctx, db, i.GuildID)
-	if err != nil || settings == nil {
-		return true, animeschedule.PreferSub, animeschedule.PreferTitle
+	gs, err := read(ctx, db, i.GuildID)
+	if err != nil {
+		return animeschedule.DefaultShowSettings(), true
 	}
-	return settings.Donghua, settings.Preferred(), settings.PreferredShowName()
+	return gs.ShowSettings(), true
 }
 
-// memberPreferredName is the preferred name of the member whose interaction i is, read through member; Title when
-// member is nil or the read fails.
-func memberPreferredName(ctx context.Context, db *database.Client, i *discordgo.Interaction, member ReadMemberSubs) animeschedule.PreferredName {
-	if member == nil {
-		return animeschedule.PreferTitle
+// InvokerShowSettings is the show settings that apply to the member whose interaction i is: the server's
+// (ServerShowSettings), or where there is no server the default with the member's own preferred name, read through
+// member. A member whose preferred name cannot be read gets Title. /schedule reads its settings here.
+func InvokerShowSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction, read ReadServerSettings, member ReadMemberDocument) animeschedule.ShowSettings {
+	settings, inServer := ServerShowSettings(ctx, db, i, read)
+	if inServer {
+		return settings
 	}
-	var user *discordgo.User
-	if i.Member != nil {
-		user = i.Member.User
-	} else {
-		user = i.User
+	if doc, err := member(ctx, db, UserID(i)); err == nil {
+		settings.Name = animeschedule.MemberPreferredName(doc)
 	}
-	if user == nil {
-		return animeschedule.PreferTitle
-	}
-	doc, err := member(ctx, db, user.ID)
-	if err != nil {
-		return animeschedule.PreferTitle
-	}
-	return animeschedule.MemberPreferredName(doc)
+	return settings
 }
