@@ -51,7 +51,7 @@ A show listed on AnimeSchedule whose first episode has not aired yet. It can be 
 _Avoid_: unaired show, announced anime
 
 **Donghua**:
-Chinese animation. A server can hide it from its schedule pages.
+Chinese animation, of any media type. A server can hide it from its schedule pages and from the shows offered for a new subscription.
 _Avoid_: Chinese anime, ONA (Chinese)
 
 **Track**:
