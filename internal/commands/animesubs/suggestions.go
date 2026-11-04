@@ -37,13 +37,20 @@ type candidate struct {
 
 // candidateSources are where suggestions come from, in the order they are offered: timetable shows, then upcoming
 // shows. The upcoming shows are labelled with the premiere of the chosen tracks, or raw's when none are chosen (nil).
-func candidateSources(chosen *animeschedule.SubscriptionTracks) [][]candidate {
-	return [][]candidate{timetableCandidates(), upcomingCandidates(chosen)}
+// With hideDonghua set, every donghua is left out of every source, whether or not the member follows it.
+func candidateSources(chosen *animeschedule.SubscriptionTracks, hideDonghua bool) [][]candidate {
+	sources := [][]candidate{timetableCandidates(), upcomingCandidates(chosen)}
+	if hideDonghua {
+		for k, source := range sources {
+			sources[k] = slices.DeleteFunc(source, func(c candidate) bool { return c.Donghua })
+		}
+	}
+	return sources
 }
 
 // upcomingEntry is an upcoming show as a ShowEntry: its air time is the premiere, 0 while AnimeSchedule has no date.
 func upcomingEntry(u animeschedule.UpcomingShow) animeschedule.ShowEntry {
-	e := animeschedule.ShowEntry{Name: u.Name, Route: u.Route, Romaji: u.Romaji, English: u.English, Native: u.Native, MediaType: u.MediaType}
+	e := animeschedule.ShowEntry{Name: u.Name, Route: u.Route, Romaji: u.Romaji, English: u.English, Native: u.Native, MediaType: u.MediaType, Donghua: u.Donghua}
 	if !u.Premiere.IsZero() {
 		e.AirTimeUnix = u.Premiere.Unix()
 	}
@@ -106,9 +113,9 @@ func timetableCandidates() []candidate {
 }
 
 // candidates are all the sources' shows in offer order.
-func candidates() []candidate {
+func candidates(hideDonghua bool) []candidate {
 	var out []candidate
-	for _, source := range candidateSources(nil) {
+	for _, source := range candidateSources(nil, hideDonghua) {
 		out = append(out, source...)
 	}
 	return out
@@ -165,7 +172,7 @@ func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Sess
 		logger.For("animesubs").Error("subscription autocomplete failed", "err", err)
 	}
 	var rest, subscribed []*discordgo.ApplicationCommandOptionChoice
-	for _, source := range candidateSources(chosen) {
+	for _, source := range candidateSources(chosen, donghuaHidden(ctx, db, i.Interaction)) {
 		for _, c := range commands.MatchAnywhereAll(source, typed, func(c candidate) []string { return c.AllNames() }) {
 			isSubscribed := slices.ContainsFunc(list, func(s *anime_subs.ShowSub) bool { return s.Matches(c.Route, c.Name) })
 			choice := &discordgo.ApplicationCommandOptionChoice{Name: labelledName(c, isSubscribed), Value: choiceValue(c)}

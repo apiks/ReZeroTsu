@@ -43,6 +43,17 @@ func decodeMediaType(refs []MediaTypeRef) MediaType {
 	return MediaTV
 }
 
+// isDonghua applies AnimeSchedule's own rule: a show is donghua when any of its media-type routes contains "chinese".
+// The six such routes are tv-chinese, tv-chinese-short, ona-chinese, ova-chinese, special-chinese and movie-chinese.
+func isDonghua(refs []MediaTypeRef) bool {
+	for _, r := range refs {
+		if strings.Contains(strings.ToLower(r.Route), "chinese") {
+			return true
+		}
+	}
+	return false
+}
+
 // Label is the short name shown beside a non-TV entry; TV has none.
 func (m MediaType) Label() string {
 	switch m {

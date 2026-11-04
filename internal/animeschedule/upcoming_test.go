@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -334,5 +335,50 @@ func TestUpcomingShowsDecodeShape(t *testing.T) {
 	var p upcomingPage
 	if err := json.Unmarshal([]byte(`{"anime":[`+item("A", "a", zeroTime, "tv")+`],"page":1,"totalAmount":1}`), &p); err != nil || len(p.Anime) != 1 {
 		t.Fatalf("decode = %+v, %v", p, err)
+	}
+}
+
+// itemWithRoutes is an upcoming item whose mediaTypes list holds the given routes in order; none gives no list.
+func itemWithRoutes(title string, routes ...string) string {
+	refs := make([]string, len(routes))
+	for i, r := range routes {
+		refs[i] = fmt.Sprintf(`{"name":"x","route":%q}`, r)
+	}
+	return fmt.Sprintf(`{"title":%q,"route":%q,"premier":%q,"mediaTypes":[%s]}`, title, title, zeroTime, strings.Join(refs, ","))
+}
+
+func TestRefreshUpcomingRecordsWhichShowsAreDonghuaFromAllTheirMediaTypeRoutes(t *testing.T) {
+	cases := []struct {
+		name   string
+		routes []string
+		want   bool
+	}{
+		{"tv-chinese", []string{"tv-chinese"}, true},
+		{"tv-chinese-short", []string{"tv-chinese-short"}, true},
+		{"ona-chinese", []string{"ona-chinese"}, true},
+		{"ova-chinese", []string{"ova-chinese"}, true},
+		{"special-chinese", []string{"special-chinese"}, true},
+		{"movie-chinese", []string{"movie-chinese"}, true},
+		{"only a later route is Chinese", []string{"ona", "tv", "movie-chinese"}, true},
+		{"a route in another case", []string{" TV-Chinese "}, true},
+		{"non-Chinese show", []string{"tv", "ona"}, false},
+		{"no media types", nil, false},
+	}
+	var items []string
+	for _, c := range cases {
+		items = append(items, itemWithRoutes(c.name, c.routes...))
+	}
+	useUpcomingServer(t, &upcomingFixture{total: len(items), pages: []string{"[" + strings.Join(items, ",") + "]"}})
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, u := range UpcomingShows() {
+		got[u.Name] = u.Donghua
+	}
+	for _, c := range cases {
+		if got[c.name] != c.want {
+			t.Errorf("%s: Donghua = %v, want %v", c.name, got[c.name], c.want)
+		}
 	}
 }

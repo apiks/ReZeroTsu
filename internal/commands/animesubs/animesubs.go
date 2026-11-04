@@ -101,9 +101,9 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 
 // findShowByName returns the candidate show (loaded weeks or upcoming) matching name by any of its four names, or
 // the zero value and false.
-func findShowByName(name string) (animeschedule.ShowEntry, bool) {
+func findShowByName(name string, hideDonghua bool) (animeschedule.ShowEntry, bool) {
 	var shows []animeschedule.ShowEntry
-	for _, c := range candidates() {
+	for _, c := range candidates(hideDonghua) {
 		shows = append(shows, c.ShowEntry)
 	}
 	return findShowIn(shows, name)
@@ -132,14 +132,20 @@ var showLookup = findShowByName
 
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
 // already held), which is when the DMs footer applies.
-func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks) (responseDesc string, confirmed bool, logErr error) {
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks, hideDonghua bool) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
 	}
-	show, ok := showLookup(animeInput)
+	show, ok := showLookup(animeInput, hideDonghua)
 	if !ok {
 		msg := "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
+		// A name that matches only a hidden donghua is told where to follow it, not that it does not exist.
+		if hideDonghua {
+			if hidden, found := showLookup(animeInput, false); found && hidden.Donghua {
+				msg += fmt.Sprintf(" This server hides donghua. Run %s in a DM with ZeroTsu to follow it.", commands.CommandMention("subscription", "add"))
+			}
+		}
 		return msg, false, nil
 	}
 	showName := show.Name
