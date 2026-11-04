@@ -43,7 +43,7 @@ type TimetableAnime struct {
 	DelayedFrom             time.Time      `json:"delayedFrom"`
 	DelayedUntil            time.Time      `json:"delayedUntil"`
 	Donghua                 bool           `json:"donghua"`
-	AirType                 string         `json:"airType"`
+	AirType                 string         `json:"airType"` // archcheck:allow the API's own field name
 	ImageVersionRoute       string         `json:"imageVersionRoute"`
 	MediaTypes              []MediaTypeRef `json:"mediaTypes"`
 }
@@ -573,7 +573,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			delayed = a.DelayedText
 		}
 
-		airType := trackOf(a.AirType)
+		track := trackOf(a.AirType) // archcheck:allow the API's own field name
 		byDate[date] = append(byDate[date], ShowEntry{
 			Name:              strings.TrimSpace(a.Title),
 			Romaji:            strings.TrimSpace(a.Romaji),
@@ -585,7 +585,7 @@ func processTimetable(list []TimetableAnime) map[string][]ShowEntry {
 			Delayed:           delayed,
 			Donghua:           a.Donghua,
 			MediaType:         decodeMediaType(a.MediaTypes),
-			Track:             airType,
+			Track:             track,
 			ImageVersionRoute: a.ImageVersionRoute,
 			Final:             final,
 		})

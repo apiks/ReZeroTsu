@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -226,12 +227,23 @@ type check func(*token.FileSet, *ast.File, string) []string
 // relative to root, with forward slashes.
 func scanTree(t *testing.T, root string, c check) []string {
 	t.Helper()
+	return scanFiles(t, root, c, false)
+}
+
+// scanTreeWithTests is scanTree over the test files too.
+func scanTreeWithTests(t *testing.T, root string, c check) []string {
+	t.Helper()
+	return scanFiles(t, root, c, true)
+}
+
+func scanFiles(t *testing.T, root string, c check, withTests bool) []string {
+	t.Helper()
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || (!withTests && strings.HasSuffix(path, "_test.go")) {
 			return nil
 		}
 		fset := token.NewFileSet()
@@ -311,6 +323,25 @@ func TestGlossaryAvoidTermsAreNotUsedInNames(t *testing.T) {
 func TestGlossaryAvoidPhrasesAreNotUsedInCommentsOrStrings(t *testing.T) {
 	for _, v := range scanTree(t, "..", checkAvoidPhrases(avoidPhrases(t))) {
 		t.Error(v)
+	}
+}
+
+func TestGlossaryAvoidPhrasesAreNotUsedInNamesOrFileNames(t *testing.T) {
+	for _, v := range scanTreeWithTests(t, "..", checkAvoidNames(avoidNamePhrases(t))) {
+		t.Error(v)
+	}
+}
+
+func TestGlossaryAvoidPhrasesAreNotUsedInUserDocs(t *testing.T) {
+	re := avoidPhrases(t)
+	for _, doc := range []string{"README.md", "docs/release-notes.md"} {
+		raw, err := os.ReadFile(filepath.Join("../..", doc))
+		if err != nil {
+			t.Fatalf("read %s: %v", doc, err)
+		}
+		for _, v := range checkAvoidPhrasesInText(re, doc, string(raw)) {
+			t.Error(v)
+		}
 	}
 }
 
@@ -396,6 +427,14 @@ func f(title string, fields []int) {
 		"const quoted = \"ONA (Chinese)\" // archcheck:allow\n" +
 		"const stored = \"post_type\"\n" +
 		"const fine = \"sort\"\n"
+	const naming = "package bot\n\n" +
+		"type Entry struct {\n" +
+		"\tAirType string\n" +
+		"\tpostTypeFeed int // archcheck:allow\n" +
+		"}\n\n" +
+		"func trackFilter(episodeFeeds []string) { _ = ONAChinese }\n\n" +
+		"func fine(sortOrder int) {}\n"
+	const storing = "package bot\n\nfunc get(postType string) { _ = postTypeNewEpisodes }\n"
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
@@ -427,6 +466,10 @@ func f(title string, fields []int) {
 		{"unrelated code has no Avoid term", clean, checkAvoidTerms, "x.go", 0},
 		{"multi-word Avoid terms are flagged in comments and strings, not where allowed or stored names", phrasing, checkAvoidPhrases(avoidPhrases(t)), "x.go", 2},
 		{"unrelated code has no Avoid phrase", clean, checkAvoidPhrases(avoidPhrases(t)), "x.go", 0},
+		{"multi-word Avoid terms are flagged in names, not where allowed", naming, checkAvoidNames(avoidPhrases(t)), "x.go", 3},
+		{"the stored autopost post type is not an Avoid term in names", storing, checkAvoidNames(avoidNamePhrases(t)), "x.go", 0},
+		{"a file name with an Avoid term is flagged", clean, checkAvoidNames(avoidPhrases(t)), "post_type_test.go", 1},
+		{"unrelated names have no Avoid phrase", clean, checkAvoidNames(avoidPhrases(t)), "x.go", 0},
 		{"text sliced at a Discord length limit is flagged, a count limit is not", slicing, checkLimitSlices, "x.go", 2},
 		{"unrelated slices are fine", clean, checkLimitSlices, "x.go", 0},
 	}
@@ -449,6 +492,23 @@ const allowMarker = "archcheck:allow"
 // also matches a hyphen, and a trailing "s" is allowed. Single words stay in avoidTerms and CODING_STANDARDS.md.
 func avoidPhrases(t *testing.T) *regexp.Regexp {
 	t.Helper()
+	return avoidPhrasesExcept(t)
+}
+
+// storedNameTerms are Avoid terms that identifiers may still spell because the stored field they name is a
+// different concept from the one the glossary retires: an autopost's `post_type` (new-episodes or daily-schedule)
+// is not a Reddit feed's sort. The comment and string checks keep flagging them.
+var storedNameTerms = []string{"post type"}
+
+// avoidNamePhrases is avoidPhrases without the terms in storedNameTerms, for the check on identifiers.
+func avoidNamePhrases(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	return avoidPhrasesExcept(t, storedNameTerms...)
+}
+
+// avoidPhrasesExcept is avoidPhrases without the listed terms.
+func avoidPhrasesExcept(t *testing.T, skip ...string) *regexp.Regexp {
+	t.Helper()
 	raw, err := os.ReadFile("../../GLOSSARY.md")
 	if err != nil {
 		t.Fatalf("read GLOSSARY.md: %v", err)
@@ -461,7 +521,7 @@ func avoidPhrases(t *testing.T) *regexp.Regexp {
 		}
 		for _, term := range strings.Split(rest, ",") {
 			term = strings.TrimSpace(term)
-			if strings.Contains(term, " ") {
+			if strings.Contains(term, " ") && !slices.Contains(skip, term) {
 				alts = append(alts, strings.ReplaceAll(regexp.QuoteMeta(term), " ", "[ -]"))
 			}
 		}
@@ -508,6 +568,87 @@ func checkAvoidPhrases(re *regexp.Regexp) check {
 		})
 		return out
 	}
+}
+
+// wordsOf splits an identifier or file name into lower-case words, so "AirType", "airType" and "air_type" all give
+// "air type", the shape the multi-word Avoid terms are written in.
+func wordsOf(name string) string {
+	runes := []rune(name)
+	var b strings.Builder
+	for i, r := range runes {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			b.WriteByte(' ')
+			continue
+		}
+		if unicode.IsUpper(r) && i > 0 {
+			prev := runes[i-1]
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextLower) {
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}
+
+// checkAvoidNames reports identifiers, and the file's own name, that spell a multi-word glossary Avoid term as
+// words ("AirType", "trackFilter", "track_setting_test.go"). checkAvoidPhrases reads only comments and strings,
+// so a name can otherwise carry a retired term for ever. A line carrying archcheck:allow is exempt, for a stored
+// or upstream name that must keep its spelling.
+func checkAvoidNames(re *regexp.Regexp) check {
+	return func(fset *token.FileSet, file *ast.File, name string) []string {
+		allowed := map[int]bool{}
+		for _, g := range file.Comments {
+			for _, c := range g.List {
+				if strings.Contains(c.Text, allowMarker) {
+					allowed[fset.Position(c.End()).Line] = true
+				}
+			}
+		}
+		var out []string
+		stem := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(name), ".go"), "_test")
+		if m := re.FindString(" " + wordsOf(stem) + " "); m != "" && !allowed[fset.Position(file.Package).Line] {
+			out = append(out, fmt.Sprintf("%s: the file name contains the glossary Avoid term %q; rename the file with the term GLOSSARY.md defines", name, strings.TrimSpace(m)))
+		}
+		seen := map[string]bool{}
+		ast.Inspect(file, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			line := fset.Position(id.Pos()).Line
+			if allowed[line] {
+				return true
+			}
+			if m := re.FindString(" " + wordsOf(id.Name) + " "); m != "" {
+				key := fmt.Sprintf("%d:%s", line, id.Name)
+				if !seen[key] {
+					seen[key] = true
+					out = append(out, fmt.Sprintf("%s:%d: the name %q contains the glossary Avoid term %q; use the term GLOSSARY.md defines",
+						name, line, id.Name, strings.TrimSpace(m)))
+				}
+			}
+			return true
+		})
+		return out
+	}
+}
+
+// checkAvoidPhrasesInText reports the lines of a Markdown document that contain a multi-word glossary Avoid term.
+// A line carrying archcheck:allow is exempt, for the places that quote a retired or upstream name.
+func checkAvoidPhrasesInText(re *regexp.Regexp, name, text string) []string {
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, allowMarker) {
+			continue
+		}
+		if m := re.FindString(line); m != "" {
+			out = append(out, fmt.Sprintf("%s:%d: contains the glossary Avoid term %q; use the term GLOSSARY.md defines",
+				name, i+1, strings.TrimFunc(m, func(r rune) bool { return !unicode.IsLetter(r) && r != ')' })))
+		}
+	}
+	return out
 }
 
 // checkLimitSlices reports a string sliced at a Discord length limit (s[:discord.MaxEmbedDescriptionLength-1]).

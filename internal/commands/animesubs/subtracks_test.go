@@ -14,7 +14,7 @@ func trackOption(value string) *discordgo.ApplicationCommandInteractionDataOptio
 	return &discordgo.ApplicationCommandInteractionDataOption{Name: "track", Type: discordgo.ApplicationCommandOptionString, Value: value}
 }
 
-func TestAddOffersFiveTrackChoicesAndNeverSaysAll(t *testing.T) {
+func TestAddOffersFiveTrackOptionChoicesAndNeverSaysAll(t *testing.T) {
 	var opt *discordgo.ApplicationCommandOption
 	for _, o := range subcommand(t, "add").Options {
 		if o.Name == "track" {
