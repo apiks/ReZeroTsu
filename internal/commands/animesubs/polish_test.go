@@ -100,7 +100,7 @@ func TestAddNotFoundReplyCoversUpcomingShows(t *testing.T) {
 	seedTypes(t)
 	useStore(t, newFakeStore())
 	plain := text(reply(t, invoke(t, "add", animeOption("Nothing Like It")...)))
-	if !strings.Contains(plain, "airing or upcoming") || strings.Contains(plain, "this week") || strings.Contains(plain, "type filter") {
+	if !strings.Contains(plain, "airing or upcoming") || strings.Contains(plain, "this week") {
 		t.Errorf("reply %q", plain)
 	}
 }

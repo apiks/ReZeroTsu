@@ -250,7 +250,7 @@ func TestSettingsShowsStoredValuesPrivately(t *testing.T) {
 		t.Fatalf("last call = %s, want EditReply", call.Op)
 	}
 	desc, picker, buttons := panelOf(t, call.Response)
-	for _, want := range []string{"<#111>", "Hello there", "/ping"} {
+	for _, want := range []string{"<#111>", "Hello there", "/ping", "**Donghua in the schedule and new subscriptions:** Shown"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("panel %q is missing %q", desc, want)
 		}

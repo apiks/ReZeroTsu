@@ -120,10 +120,10 @@ func tracksArg(ic *interaction.Context) animeschedule.SubscriptionTracks {
 var guildSettings = commands.GetSettings
 
 // donghuaHidden reports whether donghua is left out of what /subscription add offers: in a server the bot is a member
-// of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerSettings), so a DM, a user install
+// of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerShowSettings), so a DM, a user install
 // in a server the bot has not joined, and an unreadable setting all offer donghua.
 func donghuaHidden(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
-	shown, _ := commands.ServerSettings(ctx, db, i, guildSettings)
+	shown, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
 	return !shown
 }
 

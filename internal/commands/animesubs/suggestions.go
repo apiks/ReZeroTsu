@@ -112,10 +112,10 @@ func timetableCandidates() []candidate {
 	return out
 }
 
-// candidates are all the sources' shows in offer order.
-func candidates(hideDonghua bool) []candidate {
+// candidates are all the sources' shows in offer order, donghua included.
+func candidates() []candidate {
 	var out []candidate
-	for _, source := range candidateSources(nil, hideDonghua) {
+	for _, source := range candidateSources(nil, false) {
 		out = append(out, source...)
 	}
 	return out
@@ -162,9 +162,10 @@ func labelledName(c candidate, subscribed bool) string {
 	return string(title[:min(room, len(title))]) + suffix
 }
 
-// autocompleteAdd offers the candidate shows matched anywhere in any of their four names, with the invoker's subscribed shows labelled and last. Each source ranks its own matches (prefix before
-// substring), timetable shows come before upcoming shows, and the 25-choice cap applies to that final order. A
-// choice's value is the show's route, or its title when it has none. The invoker's subscriptions are read once.
+// autocompleteAdd offers the candidate shows matched anywhere in any of their four names, with the invoker's
+// subscribed shows labelled and last. Each source ranks its own matches (prefix before substring), timetable shows
+// come before upcoming shows, and the 25-choice cap applies to that final order. A choice's value is the show's
+// route, or its title when it has none. The invoker's subscriptions are read once.
 func autocompleteAdd(ctx context.Context, db *database.Client, _ *discordgo.Session, i *discordgo.InteractionCreate, _, typed string) []*discordgo.ApplicationCommandOptionChoice {
 	chosen := chosenTracks(i.ApplicationCommandData().Options)
 	list, err := loadList(ctx, storeOf(db), commands.UserID(i))

@@ -7,13 +7,30 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// The shape of /subscription add: a required, autocompleted anime and an optional track with its five fixed choices.
 func TestAddRegistersWithAnimeAndTrackOnly(t *testing.T) {
+	opts := subcommand(t, "add").Options
 	var got []string
-	for _, o := range subcommand(t, "add").Options {
+	for _, o := range opts {
 		got = append(got, o.Name)
 	}
 	if strings.Join(got, ",") != "anime,track" {
-		t.Errorf("/subscription add options = %v, want anime,track", got)
+		t.Fatalf("/subscription add options = %v, want anime,track", got)
+	}
+	anime, track := opts[0], opts[1]
+	if !anime.Required || !anime.Autocomplete {
+		t.Errorf("anime: required=%v autocomplete=%v, want both true", anime.Required, anime.Autocomplete)
+	}
+	if track.Required || track.Autocomplete {
+		t.Errorf("track: required=%v autocomplete=%v, want both false", track.Required, track.Autocomplete)
+	}
+	var choices []string
+	for _, c := range track.Choices {
+		choices = append(choices, c.Name+"="+c.Value.(string))
+	}
+	want := "Sub=sub|Dub=dub|Raw=raw|Sub and Dub=sub_dub|Every track=every"
+	if strings.Join(choices, "|") != want {
+		t.Errorf("track choices = %v, want %s", choices, want)
 	}
 }
 

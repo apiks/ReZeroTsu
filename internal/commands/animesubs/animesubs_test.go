@@ -93,7 +93,7 @@ func (f *fakeStore) ClearShows(_ context.Context, id string) error {
 func withLookup(t *testing.T, titles ...string) {
 	t.Helper()
 	old := showLookup
-	showLookup = func(name string, _ bool) (animeschedule.ShowEntry, bool) {
+	showLookup = func(name string) (animeschedule.ShowEntry, bool) {
 		for _, ti := range titles {
 			if strings.EqualFold(ti, strings.TrimSpace(name)) {
 				return animeschedule.ShowEntry{Name: ti}, true
@@ -314,7 +314,7 @@ func TestAiredTodayEntry(t *testing.T) {
 
 func TestSubCoreStoresTheResolvedShowRoute(t *testing.T) {
 	old := showLookup
-	showLookup = func(string, bool) (animeschedule.ShowEntry, bool) {
+	showLookup = func(string) (animeschedule.ShowEntry, bool) {
 		return animeschedule.ShowEntry{Name: "Frieren", Route: "sousou-no-frieren"}, true
 	}
 	t.Cleanup(func() { showLookup = old })
