@@ -141,7 +141,7 @@ func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
 	if onToday {
 		line += fmt.Sprintf(" · <t:%d:R>", e.AirTimeUnix)
 	}
-	if label := e.MediaType.Label(); label != "" {
+	if label := e.TypeLabel(); label != "" {
 		line += " · " + label
 	}
 	return line

@@ -10,8 +10,6 @@ const (
 	MediaTV MediaType = iota
 	MediaTVShort
 	MediaONA
-	// MediaDonghua is AnimeSchedule's "ONA (Chinese)"; that label is the upstream value, not our term. archcheck:allow
-	MediaDonghua
 	MediaOVA
 	MediaSpecial
 	MediaMovie
@@ -23,14 +21,21 @@ type MediaTypeRef struct {
 	Route string `json:"route"`
 }
 
+// mediaTypeByRoute maps each route to its base type. A Chinese route maps to the same base type as its Japanese
+// twin; the Donghua fact (isDonghua) is what tells them apart.
 var mediaTypeByRoute = map[string]MediaType{
-	"tv":          MediaTV,
-	"tv-short":    MediaTVShort,
-	"ona":         MediaONA,
-	"ona-chinese": MediaDonghua,
-	"ova":         MediaOVA,
-	"special":     MediaSpecial,
-	"movie":       MediaMovie,
+	"tv":               MediaTV,
+	"tv-chinese":       MediaTV,
+	"tv-short":         MediaTVShort,
+	"tv-chinese-short": MediaTVShort,
+	"ona":              MediaONA,
+	"ona-chinese":      MediaONA,
+	"ova":              MediaOVA,
+	"ova-chinese":      MediaOVA,
+	"special":          MediaSpecial,
+	"special-chinese":  MediaSpecial,
+	"movie":            MediaMovie,
+	"movie-chinese":    MediaMovie,
 }
 
 // decodeMediaType returns the first recognised media type in refs, matching the route; an unknown or missing type is TV.
@@ -54,15 +59,13 @@ func isDonghua(refs []MediaTypeRef) bool {
 	return false
 }
 
-// Label is the short name shown beside a non-TV entry; TV has none.
+// Label is the short name of a non-TV media type; TV has none. TypeLabel adds Donghua.
 func (m MediaType) Label() string {
 	switch m {
 	case MediaTVShort:
 		return "TV Short"
 	case MediaONA:
 		return "ONA"
-	case MediaDonghua:
-		return "Donghua"
 	case MediaOVA:
 		return "OVA"
 	case MediaSpecial:
@@ -71,4 +74,17 @@ func (m MediaType) Label() string {
 		return "Movie"
 	}
 	return ""
+}
+
+// TypeLabel is the label shown beside an entry: its media type's label, then "Donghua" for a donghua, as in
+// "Movie · Donghua". A Chinese TV series reads "Donghua" and a plain TV show has none.
+func (e ShowEntry) TypeLabel() string {
+	label := e.MediaType.Label()
+	switch {
+	case !e.Donghua:
+		return label
+	case label == "":
+		return "Donghua"
+	}
+	return label + " · Donghua"
 }

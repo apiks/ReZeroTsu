@@ -25,6 +25,9 @@ func TestEpisodeEmbedWording(t *testing.T) {
 		{"tv raw", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 5", Track: "raw"}, "**Ep 5** raw is out!"},
 		{"ova keeps episode wording", animeschedule.ShowEntry{Name: "Show", Episode: "Ep 1F", Track: "sub", MediaType: animeschedule.MediaOVA}, "**Ep 1F** subbed is out!"},
 		{"movie sub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "sub", MediaType: animeschedule.MediaMovie}, "**Film** is out, subbed!"},
+		{"chinese movie sub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "sub", MediaType: animeschedule.MediaMovie, Donghua: true}, "**Film** is out, subbed!"},
+		{"chinese movie dub", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "dub", MediaType: animeschedule.MediaMovie, Donghua: true}, "**Film** is out, dubbed!"},
+		{"chinese movie raw", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "raw", MediaType: animeschedule.MediaMovie, Donghua: true}, "**Film** is out, raw!"},
 		{"movie raw", animeschedule.ShowEntry{Name: "Film", Episode: "Ep 1F", Track: "raw", MediaType: animeschedule.MediaMovie}, "**Film** is out, raw!"},
 	}
 	for _, tc := range tests {

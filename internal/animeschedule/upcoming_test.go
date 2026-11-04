@@ -97,7 +97,7 @@ func TestRefreshUpcomingReadsEveryPageIntoShows(t *testing.T) {
 	if a.Name != "A" || a.Route != "a" || a.Romaji != "R-A" || a.English != "E-A" || a.Native != "N-A" || !a.Premiere.Equal(want) || a.MediaType != MediaTV {
 		t.Errorf("first show = %+v", a)
 	}
-	wantTypes := []MediaType{MediaTV, MediaDonghua, MediaMovie, MediaTVShort, MediaTV}
+	wantTypes := []MediaType{MediaTV, MediaONA, MediaMovie, MediaTVShort, MediaTV}
 	for i, w := range wantTypes {
 		if got[i].MediaType != w {
 			t.Errorf("show %d media type = %v, want %v", i, got[i].MediaType, w)
@@ -379,6 +379,41 @@ func TestRefreshUpcomingRecordsWhichShowsAreDonghuaFromAllTheirMediaTypeRoutes(t
 	for _, c := range cases {
 		if got[c.name] != c.want {
 			t.Errorf("%s: Donghua = %v, want %v", c.name, got[c.name], c.want)
+		}
+	}
+}
+
+func TestRefreshUpcomingDecodesChineseRoutesToTheirBaseType(t *testing.T) {
+	cases := []struct {
+		name   string
+		routes []string
+		want   MediaType
+	}{
+		{"tv-chinese", []string{"tv-chinese"}, MediaTV},
+		{"tv-chinese-short", []string{"tv-chinese-short"}, MediaTVShort},
+		{"ona-chinese", []string{"ona-chinese"}, MediaONA},
+		{"ova-chinese", []string{"ova-chinese"}, MediaOVA},
+		{"special-chinese", []string{"special-chinese"}, MediaSpecial},
+		{"movie-chinese", []string{"movie-chinese"}, MediaMovie},
+		{"first recognised wins", []string{"weird", "ova-chinese", "movie"}, MediaOVA},
+		{"japanese movie", []string{"movie"}, MediaMovie},
+		{"no media types", nil, MediaTV},
+	}
+	var items []string
+	for _, c := range cases {
+		items = append(items, itemWithRoutes(c.name, c.routes...))
+	}
+	useUpcomingServer(t, &upcomingFixture{total: len(items), pages: []string{"[" + strings.Join(items, ",") + "]"}})
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]MediaType{}
+	for _, u := range UpcomingShows() {
+		got[u.Name] = u.MediaType
+	}
+	for _, c := range cases {
+		if got[c.name] != c.want {
+			t.Errorf("%s: media type = %v, want %v", c.name, got[c.name], c.want)
 		}
 	}
 }

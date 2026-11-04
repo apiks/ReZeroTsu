@@ -118,6 +118,32 @@ func TestAddSubscribesToAnUpcomingShowByTypedNameAndStoresItsTitleAndRoute(t *te
 	}
 }
 
+func TestUpcomingChineseMovieUsesMovieFormsInRepliesAndListLines(t *testing.T) {
+	seedUpcoming(t, []animeschedule.UpcomingShow{
+		{Name: "Dated Film", Route: "dated-film", MediaType: animeschedule.MediaMovie, Donghua: true, Premiere: premiereIn(20 * 24 * time.Hour)},
+		{Name: "Undated Film", Route: "undated-film", MediaType: animeschedule.MediaMovie, Donghua: true},
+	})
+	dated := fmt.Sprintf("It releases %s.", fullAndRelative(premiereIn(20*24*time.Hour).Unix()))
+	if got := addReply(t, "Dated Film").Embeds[0].Description; !strings.Contains(got, dated) || strings.Contains(got, "episode 1") {
+		t.Errorf("dated reply = %q, want %q", got, dated)
+	}
+	if got := addReply(t, "Undated Film").Embeds[0].Description; !strings.Contains(got, "release date") || strings.Contains(got, "episode 1") {
+		t.Errorf("undated reply = %q, want the release-date wording", got)
+	}
+	st := newFakeStore()
+	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Dated Film", Route: "dated-film"}, {Show: "Undated Film", Route: "undated-film"}}
+	useStore(t, st)
+	got := reply(t, invoke(t, "list")).Embeds[0].Description
+	for _, want := range []string{
+		fmt.Sprintf("1. Dated Film · Movie · Donghua · releases <t:%d:R>\n", premiereIn(20*24*time.Hour).Unix()),
+		"2. Undated Film · Movie · Donghua · release date TBA\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list %q lacks line %q", got, want)
+		}
+	}
+}
+
 func TestAddSaysAnUpcomingShowHasNoPremiereDateYet(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Undated Show", Route: "undated-show"}})
 	got := addReply(t, "Undated Show").Embeds[0].Description

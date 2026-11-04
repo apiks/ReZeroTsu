@@ -101,17 +101,17 @@ func addAt(t *testing.T, w where, typed string) string {
 func seedDonghua(t *testing.T) {
 	t.Helper()
 	soulLand := entry("Soul Land", "soul-land", "Ep 2", at(time.Hour))
-	soulLand.Donghua, soulLand.MediaType = true, animeschedule.MediaDonghua
+	soulLand.Donghua, soulLand.MediaType = true, animeschedule.MediaONA
 	chineseTV := entry("Martial Peak", "martial-peak", "Ep 3", at(2*time.Hour))
 	chineseTV.Donghua = true // a Chinese TV series decodes as TV but the timetable flags it
 	seedUpcoming(t, []animeschedule.UpcomingShow{
-		{Name: "Upcoming Donghua", Route: "upcoming-donghua", Donghua: true, MediaType: animeschedule.MediaDonghua},
-		{Name: "Upcoming Chinese Movie", Route: "upcoming-chinese-movie", Donghua: true},
+		{Name: "Upcoming Donghua", Route: "upcoming-donghua", Donghua: true, MediaType: animeschedule.MediaONA},
+		{Name: "Upcoming Chinese Movie", Route: "upcoming-chinese-movie", Donghua: true, MediaType: animeschedule.MediaMovie},
 		{Name: "Upcoming Plain", Route: "upcoming-plain"},
 	}, entry("Airing Plain", "airing-plain", "Ep 2", at(3*time.Hour)), soulLand, chineseTV)
 }
 
-var allDonghuaOffered = "Airing Plain|Soul Land · Donghua|Martial Peak|Upcoming Donghua · premiere date TBA · Donghua|Upcoming Chinese Movie · premiere date TBA|Upcoming Plain · premiere date TBA"
+var allDonghuaOffered = "Airing Plain|Soul Land · ONA · Donghua|Martial Peak · Donghua|Upcoming Donghua · premiere date TBA · ONA · Donghua|Upcoming Chinese Movie · premiere date TBA · Movie · Donghua|Upcoming Plain · premiere date TBA"
 
 func TestSuggestionsLeaveOutEveryDonghuaInAServerThatHidesDonghua(t *testing.T) {
 	seedDonghua(t)

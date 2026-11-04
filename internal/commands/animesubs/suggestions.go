@@ -147,7 +147,7 @@ func labelledName(c candidate, subscribed bool) string {
 	if c.Premiere != "" {
 		labels = append(labels, c.Premiere)
 	}
-	if l := c.MediaType.Label(); l != "" {
+	if l := c.TypeLabel(); l != "" {
 		labels = append(labels, l)
 	}
 	if subscribed {
