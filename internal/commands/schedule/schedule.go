@@ -10,6 +10,7 @@ import (
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
+	"ReZeroTsu/internal/database/anime_subs"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
 
@@ -227,6 +228,11 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
+// memberSubs reads the invoking member's subscription document, which holds their preferred name; tests replace it.
+var memberSubs commands.ReadMemberSubs = func(ctx context.Context, db *database.Client, userID string) (*anime_subs.AnimeSubs, error) {
+	return db.AnimeSubs().GetByID(ctx, userID)
+}
+
 // trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.
 func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
@@ -238,9 +244,10 @@ func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 }
 
 // dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
-// and returns the track used and the preferred name the page calls shows by.
+// and returns the track used and the preferred name the page calls shows by: the server's, or where there is no
+// server setting the preferred name of the member whose interaction this is (the presser, for a page press).
 func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack, animeschedule.PreferredName) {
-	donghua, pref, name := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings)
+	donghua, pref, name := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings, memberSubs)
 	if chosen != nil {
 		pref = *chosen
 	}

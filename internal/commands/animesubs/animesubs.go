@@ -129,6 +129,7 @@ type subsStore interface {
 	RemoveShows(ctx context.Context, id string, showNames []string) error
 	SetShowTracks(ctx context.Context, id, showName, tracks string, marks []anime_subs.Mark) error
 	ClearShows(ctx context.Context, id string) error
+	SetPreferredName(ctx context.Context, id, name string) error
 }
 
 // showLookup resolves user input to a loaded-week or upcoming show; replaced in tests.
