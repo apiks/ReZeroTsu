@@ -76,7 +76,7 @@ func TestAddSaysWhenAMovieReleases(t *testing.T) {
 	}
 }
 
-func TestAddSaysWhenAChineseMovieReleases(t *testing.T) {
+func TestAddSaysWhenADonghuaMovieReleases(t *testing.T) {
 	m := entry("Big Film", "big-film", "Ep 1", at(10*24*time.Hour))
 	m.MediaType, m.Donghua = animeschedule.MediaMovie, true
 	seedEntries(t, m)

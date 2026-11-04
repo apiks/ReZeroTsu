@@ -201,6 +201,12 @@ func Seed(days map[string][]ShowEntry) (restore func()) {
 	}
 }
 
+// SeedTimetable seeds the timetable from API rows as a fetch would decode them, and returns the restore function of
+// Seed. It exists so tests of other packages can start from a row in the API's own shape.
+func SeedTimetable(list []TimetableAnime) (restore func()) {
+	return Seed(processTimetable(list))
+}
+
 // APIKeyConfigured reports whether an API key is set.
 func APIKeyConfigured() bool {
 	apiKeyMu.RLock()

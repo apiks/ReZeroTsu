@@ -11,7 +11,7 @@ Input for `/to-spec`. This log records the decisions from a review of `/subscrip
 - The suggestions already label non-TV shows ("· TV Short", "· ONA", "· Donghua", "· OVA", "· Special", "· Movie").
 - `/schedule`, the daily-schedule autopost and the new-episodes autopost hide donghua when the server's donghua setting is off. `/subscription add` ignores the setting: its suggestions and typed lookup offer donghua in every server.
 - The server-settings read for `/schedule` treats a DM, and a user install in a server the bot has not joined, as having no settings: donghua is shown there.
-- Timetable entries carry the API's `donghua` flag. Upcoming shows carry no such flag; the bot decodes only their first recognised media type, and recognises only `ona-chinese` as Chinese.
+- Timetable entries carry the API's `donghua` flag. Upcoming shows carry no such flag; the bot decodes only their first recognised media type, and (the state before ticket #128, which now recognises all six Chinese routes) recognised only `ona-chinese` as Chinese.
 
 ### AnimeSchedule (sibling repo `AnimeSchedule`)
 

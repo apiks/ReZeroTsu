@@ -19,9 +19,12 @@ const (
 	maxUserSubscriptions = 100
 )
 
-// maxListTitleUnits is how much of a title a list line keeps, in the UTF-16 units Discord counts. A page holds 25
-// lines, each with a status of up to about 70 units, so 25 clipped lines and the footer stay under the 4096 limit.
-const maxListTitleUnits = 80
+// maxListTitleUnits is how much of a title a list line keeps, in the UTF-16 units Discord counts, before the "…" that
+// marks a cut. A page holds 25 lines. The worst status is about 78 units: " · TV Short · Donghua" (21) +
+// " · Every track" (14) + " · Ep 100-101F (sub) aired <t:…:R>" (43). A line is also a prefix of up to 4 units
+// ("25. "), the clipped title (77 + 1 for "…") and a newline. That is 25 × (4 + 78 + 78 + 1) = 4025 units, under 4096
+// with room for the 37-unit footer (4062).
+const maxListTitleUnits = 77
 
 // clipListTitle cuts a title to maxListTitleUnits UTF-16 units at a character boundary and marks the cut.
 func clipListTitle(title string) string {

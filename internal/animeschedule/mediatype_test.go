@@ -15,12 +15,12 @@ func TestTimetableEntryMediaTypeFromRoute(t *testing.T) {
 		{"tv", `[{"name":"TV","route":"tv"}]`, MediaTV},
 		{"tv short", `[{"name":"TV Short","route":"tv-short"}]`, MediaTVShort},
 		{"ona", `[{"name":"ONA","route":"ona"}]`, MediaONA},
-		{"chinese tv", `[{"name":"TV (Chinese)","route":"tv-chinese"}]`, MediaTV},
-		{"chinese tv short", `[{"name":"TV Short (Chinese)","route":"tv-chinese-short"}]`, MediaTVShort},
-		{"chinese ona", `[{"name":"ONA (Chinese)","route":"ona-chinese"}]`, MediaONA},
-		{"chinese ova", `[{"name":"OVA (Chinese)","route":"ova-chinese"}]`, MediaOVA},
-		{"chinese special", `[{"name":"Special (Chinese)","route":"special-chinese"}]`, MediaSpecial},
-		{"chinese movie", `[{"name":"Movie (Chinese)","route":"movie-chinese"}]`, MediaMovie},
+		{"donghua tv", `[{"name":"TV (Chinese)","route":"tv-chinese"}]`, MediaTV},
+		{"donghua tv short", `[{"name":"TV Short (Chinese)","route":"tv-chinese-short"}]`, MediaTVShort},
+		{"donghua ona", `[{"name":"ONA (Chinese)","route":"ona-chinese"}]`, MediaONA},
+		{"donghua ova", `[{"name":"OVA (Chinese)","route":"ova-chinese"}]`, MediaOVA},
+		{"donghua special", `[{"name":"Special (Chinese)","route":"special-chinese"}]`, MediaSpecial},
+		{"donghua movie", `[{"name":"Movie (Chinese)","route":"movie-chinese"}]`, MediaMovie},
 		{"first recognised route wins", `[{"name":"Weird","route":"weird"},{"name":"Movie (Chinese)","route":"movie-chinese"},{"name":"TV","route":"tv"}]`, MediaMovie},
 		{"ova", `[{"name":"OVA","route":"ova"}]`, MediaOVA},
 		{"special", `[{"name":"Special","route":"special"}]`, MediaSpecial},
@@ -85,7 +85,7 @@ func TestTypeLabelCarriesTheMediaTypeThenDonghua(t *testing.T) {
 	}
 }
 
-func TestChineseTimetableEntryIsItsBaseTypeAndDonghua(t *testing.T) {
+func TestDonghuaTimetableEntryIsItsBaseTypeAndDonghua(t *testing.T) {
 	ts := time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC)
 	a := TimetableAnime{Title: "S", Route: "s", AirType: "sub", EpisodeDate: ts, Donghua: true, // archcheck:allow the API's own field name
 		MediaTypes: []MediaTypeRef{{Name: "Movie (Chinese)", Route: "movie-chinese"}}}

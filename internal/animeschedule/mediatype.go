@@ -22,7 +22,8 @@ type MediaTypeRef struct {
 }
 
 // mediaTypeByRoute maps each route to its base type. A Chinese route maps to the same base type as its Japanese
-// twin; the Donghua fact (isDonghua) is what tells them apart.
+// twin. What tells them apart is the Donghua fact: a timetable entry takes it from the API's own Donghua flag, and an
+// upcoming show takes it from isDonghua over its routes.
 var mediaTypeByRoute = map[string]MediaType{
 	"tv":               MediaTV,
 	"tv-chinese":       MediaTV,

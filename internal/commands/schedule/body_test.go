@@ -99,18 +99,27 @@ func TestScheduleLabelsNonTVEntriesOnly(t *testing.T) {
 	want := map[string]string{"A-tv": "", "B-short": "TV Short", "C-ona": "ONA", "E-ova": "OVA", "F-special": "Special", "G-movie": "Movie",
 		"H-cn-tv": "Donghua", "I-cn-short": "TV Short · Donghua", "J-cn-ona": "ONA · Donghua", "K-cn-ova": "OVA · Donghua",
 		"L-cn-special": "Special · Donghua", "M-cn-movie": "Movie · Donghua"}
-	lines := strings.Split(emb.Description, "\n")
-	for _, l := range lines {
-		for name, label := range want {
-			if !strings.Contains(l, "**"+name+"**") {
-				continue
+	found := map[string]string{}
+	for _, l := range strings.Split(emb.Description, "\n") {
+		for name := range want {
+			if strings.Contains(l, "**"+name+"**") {
+				found[name] = l
 			}
-			if label == "" && strings.Count(l, "·") != 1 {
-				t.Errorf("TV line %q should carry no label", l)
-			}
-			if label != "" && !strings.HasSuffix(l, " · "+label) {
-				t.Errorf("line %q should end with %q", l, " · "+label)
-			}
+		}
+	}
+	for name, label := range want {
+		l, ok := found[name]
+		if !ok {
+			t.Errorf("no line for %q in %q", name, emb.Description)
+			continue
+		}
+		// A line is "**name** — episode TRACK · <t:...:t>" and then " · label" for a labelled entry.
+		wantLine := "**" + name + "** — E SUB · <t:1700000000:t>"
+		if label != "" {
+			wantLine += " · " + label
+		}
+		if l != wantLine {
+			t.Errorf("line for %q = %q, want %q", name, l, wantLine)
 		}
 	}
 }
