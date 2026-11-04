@@ -33,6 +33,9 @@ Input for `/to-spec`. This log records the decisions from a review of `/subscrip
 - In a server where the bot is a member and donghua is hidden, `/subscription add` neither suggests donghua nor resolves a typed donghua name. This covers timetable shows and upcoming shows, and shows the member already follows.
 - In a DM, and from a user install in a server the bot has not joined, donghua is offered as today, the same rule `/schedule` uses.
 - A typed name that matches only a hidden donghua gets the not-found reply plus: "This server hides donghua. Run /subscription add in a DM with ZeroTsu to follow it." The command mention is clickable.
+- A typed name is resolved against every show first, with the usual precedence (route, title, title cut to 100 characters, romaji, English, native). If it resolves to a hidden donghua, the reply is the not-found message plus the pointer and nothing is subscribed, even when a lower-precedence match exists among the shown shows. This stops a collision from silently subscribing the member to a different show.
+- If that hidden donghua is one the member already follows, the reply is "You already follow `<title>`. This server hides donghua, so run /subscription add in a DM with ZeroTsu to change its tracks." and nothing changes, because the not-found message would be untrue.
+- The settings panel line reads "Donghua in the schedule and new subscriptions".
 - Existing subscriptions to donghua are untouched: `list`, `remove`, the Remove picker, `clear`, episode DMs and the cleanup all ignore the setting.
 
 ### Docs
