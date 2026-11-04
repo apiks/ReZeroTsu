@@ -43,9 +43,15 @@ Input for `/to-spec`. This log records the decisions from a review of `/subscrip
 - `/help` follows the command shape. The README's `/subscription` line drops `type` and says hidden donghua is not offered. `docs/release-notes.md` gets a section for this spec.
 - `docs/animeschedule-api.md` lists the six Chinese routes and states the "contains chinese" rule for donghua, replacing the `ona-chinese`-only advice.
 
-## Out of scope, found while researching
+## Chinese media types carry both their type and Donghua (added after the review)
 
-- The bot decodes `tv-chinese`, `tv-chinese-short`, `ova-chinese`, `special-chinese` and `movie-chinese` as TV, because it recognises only `ona-chinese`. A Chinese movie therefore gets episode wording ("Ep 1 subbed is out!") instead of movie wording, and has no media-type label. Fixing the media type is its own decision (what label a Chinese movie carries); this spec only fixes which shows count as donghua.
+Found while researching: the bot recognised only `ona-chinese`, so `tv-chinese`, `tv-chinese-short`, `ova-chinese`, `special-chinese` and `movie-chinese` decoded as TV. A Chinese movie got episode wording ("Ep 1 subbed is out!") and no label. Decision: a Chinese release is both its media type and Donghua.
+
+- The six Chinese routes decode to their base type (TV, TV Short, ONA, OVA, Special, Movie) plus a Donghua fact, not to a type of their own. The Donghua fact is the same one that hides donghua, so the label and the hiding cannot disagree.
+- A Chinese movie gets movie wording everywhere a Japanese one does: "**Title** is out, subbed!" (or dubbed, or raw) for alerts, and "It releases …", "It released …", "release date TBA" in `/subscription add` replies and list lines.
+- The label carries both: the type's label, then "Donghua", as in "· Movie · Donghua", "· TV Short · Donghua", "· OVA · Donghua" and "· Special · Donghua". A Chinese TV series is unlabelled as a type, so it reads "· Donghua". A Chinese ONA reads "· ONA · Donghua" (it read "· Donghua" before).
+- Hiding donghua, the schedule's donghua filter and the `donghua` fact on timetable entries are unchanged.
+- Ticket #128 in spec #125 carries this.
 
 ## Delivery
 
