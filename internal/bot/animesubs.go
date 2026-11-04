@@ -280,15 +280,18 @@ func cleanupFinishedShows(ctx context.Context, st userSubsStore, keep keepRoster
 	return updated, err
 }
 
-func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
+// buildEpisodeEmbed is the embed of one newly aired row, shared by episode DMs and the new-episodes autopost. Its
+// title, and a movie's "is out" line, call the show by its shown name under name.
+func buildEpisodeEmbed(show animeschedule.ShowEntry, name animeschedule.PreferredName) *discordgo.MessageEmbed {
+	shown := show.ShownName(name)
 	var desc string
 	switch {
 	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackSub:
-		desc = fmt.Sprintf("**%s** is out, subbed!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, subbed!", shown)
 	case show.MediaType == animeschedule.MediaMovie && show.Track == animeschedule.TrackDub:
-		desc = fmt.Sprintf("**%s** is out, dubbed!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, dubbed!", shown)
 	case show.MediaType == animeschedule.MediaMovie:
-		desc = fmt.Sprintf("**%s** is out, raw!", show.Name)
+		desc = fmt.Sprintf("**%s** is out, raw!", shown)
 	case show.Track == animeschedule.TrackDub:
 		desc = fmt.Sprintf("**%s** dubbed is out!", show.Episode)
 	case show.Track == animeschedule.TrackSub:
@@ -299,7 +302,7 @@ func buildEpisodeEmbed(show animeschedule.ShowEntry) *discordgo.MessageEmbed {
 	url := animeschedule.BaseURL + "/anime/" + show.Route
 	airTime := time.Unix(show.AirTimeUnix, 0).UTC()
 	emb := &discordgo.MessageEmbed{
-		Title:       show.Name,
+		Title:       shown,
 		Description: desc,
 		URL:         url,
 		Color:       discord.EmbedColor,
@@ -577,7 +580,7 @@ func processAnimeSubUser(ctx context.Context, d RunOperations, senders *channelS
 			}
 		}
 
-		emb := buildEpisodeEmbed(show)
+		emb := buildEpisodeEmbed(show, animeschedule.PreferTitle)
 		res := senders.open("", dmID, episodeDMPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
 		switch res.Outcome {
 		case PostCancelled:
@@ -749,7 +752,7 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 		if err != nil || ap == nil || ap.ID == "" {
 			continue
 		}
-		donghua, pref := guildShowSettings(ctx, st, guildID)
+		donghua, pref, _ := guildShowSettings(ctx, st, guildID)
 		dayShows := shows(donghua, pref)
 		existing, err := st.GetAnimeSubs(ctx, ap.ID)
 		if err != nil {
@@ -792,14 +795,14 @@ func seedGuildNewEpisodesForShard(ctx context.Context, st SentState, guildIDs []
 	}
 }
 
-// guildShowSettings is the donghua setting and preferred track a server's new-episodes autopost reads: donghua on
-// and Sub when the server has no settings.
-func guildShowSettings(ctx context.Context, st SentState, guildID string) (donghua bool, pref animeschedule.PreferredTrack) {
-	donghua, pref = true, animeschedule.PreferSub
+// guildShowSettings is the donghua setting, preferred track and preferred name a server's new-episodes autopost
+// reads: donghua on, Sub and Title when the server has no settings.
+func guildShowSettings(ctx context.Context, st SentState, guildID string) (donghua bool, pref animeschedule.PreferredTrack, name animeschedule.PreferredName) {
+	donghua, pref, name = true, animeschedule.PreferSub, animeschedule.PreferTitle
 	if settings, _ := st.GetGuildSettings(ctx, guildID); settings != nil {
-		donghua, pref = settings.Donghua, settings.Preferred()
+		donghua, pref, name = settings.Donghua, settings.Preferred(), settings.PreferredShowName()
 	}
-	return donghua, pref
+	return donghua, pref, name
 }
 
 // subChainOf is today's Sub chain rows: dayShows when pref is already Sub, else a read under Sub.
@@ -885,7 +888,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		}
 		roleID = ""
 	}
-	donghua, pref := guildShowSettings(ctx, st, guildID)
+	donghua, pref, name := guildShowSettings(ctx, st, guildID)
 	todayShowsGuild := shows(donghua, pref)
 	doc, err := st.GetAnimeSubs(ctx, channelID)
 	if err != nil {
@@ -925,7 +928,7 @@ func processGuildNewEpisodes(ctx context.Context, d RunOperations, senders *chan
 		if !ok || sub.Notified {
 			continue
 		}
-		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show)})
+		due = append(due, dueEntry{show: show, sub: sub, emb: buildEpisodeEmbed(show, name)})
 	}
 	if len(due) == 0 {
 		return

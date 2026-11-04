@@ -267,7 +267,7 @@ func TestSettingsShowsStoredValuesPrivately(t *testing.T) {
 	if len(picker.DefaultValues) != 1 || picker.DefaultValues[0].ID != "111" || picker.DefaultValues[0].Type != discordgo.SelectMenuDefaultValueChannel {
 		t.Errorf("picker defaults = %v, want the stored bot-log channel", picker.DefaultValues)
 	}
-	if len(buttons) != 3 || !strings.Contains(buttons[0].Label, "On") || buttons[2].Label != "Edit ping message" {
+	if len(buttons) != 4 || !strings.Contains(buttons[0].Label, "On") || buttons[2].Label != "Edit ping message" {
 		t.Errorf("buttons = %+v", buttons)
 	}
 }

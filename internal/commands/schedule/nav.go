@@ -170,9 +170,9 @@ func renderPage(ic *interaction.Context, v view, date time.Time, authorID string
 	if !v.holds(date) {
 		return commands.Page{Refusal: msgDayNotLoaded}
 	}
-	shows, pref := dayShows(ic, date, chosen)
+	shows, pref, name := dayShows(ic, date, chosen)
 	return commands.Page{Response: interaction.Response{
-		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref)},
+		Embeds:     []*discordgo.MessageEmbed{BuildScheduleEmbed(date, v.now, shows, pref, name)},
 		Components: pageComponents(v, date, authorID, pref),
 	}}
 }

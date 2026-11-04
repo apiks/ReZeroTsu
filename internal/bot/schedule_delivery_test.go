@@ -207,7 +207,7 @@ func TestDailySchedulePostsTheTodayPageBody(t *testing.T) {
 		t.Fatalf("delivered = %+v, want one embed", got)
 	}
 	emb := got[0].Msg.Embeds[0]
-	want := schedule.BuildScheduleEmbed(animeschedule.Today(), animeschedule.Now(), h.fn(true, animeschedule.PreferSub), animeschedule.PreferSub)
+	want := schedule.BuildScheduleEmbed(animeschedule.Today(), animeschedule.Now(), h.fn(true, animeschedule.PreferSub), animeschedule.PreferSub, animeschedule.PreferTitle)
 	if emb.Description != want.Description || emb.Footer.Text != want.Footer.Text || emb.Title != want.Title {
 		t.Errorf("posted %q / %q, want the /schedule body %q / %q", emb.Description, emb.Footer.Text, want.Description, want.Footer.Text)
 	}
@@ -238,7 +238,7 @@ func TestDailySchedulePageIsTodayForTheRunsCapturedInstant(t *testing.T) {
 }
 
 func scheduleEmbedFor(h *scheduleHarness) *discordgo.MessageEmbed {
-	return schedule.BuildScheduleEmbed(h.now, h.now, h.fn(true, animeschedule.PreferSub), animeschedule.PreferSub)
+	return schedule.BuildScheduleEmbed(h.now, h.now, h.fn(true, animeschedule.PreferSub), animeschedule.PreferSub, animeschedule.PreferTitle)
 }
 
 func TestDailyScheduleWebhookGoneFallsBackOnce(t *testing.T) {

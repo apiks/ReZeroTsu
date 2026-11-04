@@ -123,7 +123,7 @@ var guildSettings = commands.GetSettings
 // of whose donghua setting is off. It uses the rule /schedule uses (commands.ServerShowSettings), so a DM, a user install
 // in a server the bot has not joined, and an unreadable setting all offer donghua.
 func donghuaHidden(ctx context.Context, db *database.Client, i *discordgo.Interaction) bool {
-	shown, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
+	shown, _, _ := commands.ServerShowSettings(ctx, db, i, guildSettings)
 	return !shown
 }
 
