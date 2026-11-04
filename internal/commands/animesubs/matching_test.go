@@ -14,7 +14,7 @@ import (
 func lookupAs(t *testing.T, show animeschedule.ShowEntry) {
 	t.Helper()
 	old := showLookup
-	showLookup = func(string, *animeschedule.MediaType) (animeschedule.ShowEntry, bool) { return show, true }
+	showLookup = func(string) (animeschedule.ShowEntry, bool) { return show, true }
 	t.Cleanup(func() { showLookup = old })
 }
 
@@ -29,7 +29,7 @@ func TestAddSubscribesToASecondShowThatSharesATitleWithASubscribedOne(t *testing
 	lookupAs(t, animeschedule.ShowEntry{Name: "Foo", Route: "foo-b"})
 	st := newFakeStore()
 	st.docs["u"] = []*anime_subs.ShowSub{{Show: "Foo", Route: "foo-a"}}
-	msg, _, err := subCore(context.Background(), st, "u", "foo-b", nil, animeschedule.SubscribeSub)
+	msg, _, err := subCore(context.Background(), st, "u", "foo-b", animeschedule.SubscribeSub, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestAddRecognisesARenamedShowByItsRoute(t *testing.T) {
 	lookupAs(t, animeschedule.ShowEntry{Name: "Foo Season 2", Route: "x"})
 	st := newFakeStore()
 	st.docs["u"] = []*anime_subs.ShowSub{{Show: "Foo", Route: "x"}}
-	msg, _, err := subCore(context.Background(), st, "u", "x", nil, animeschedule.SubscribeSub)
+	msg, _, err := subCore(context.Background(), st, "u", "x", animeschedule.SubscribeSub, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestAddRecognisesARenamedShowByItsRoute(t *testing.T) {
 func TestAddRecognisesALegacyRoutelessSubscriptionByTitle(t *testing.T) {
 	lookupAs(t, animeschedule.ShowEntry{Name: "Foo", Route: "x"})
 	st := newFakeStore().with("u", "foo ")
-	msg, _, err := subCore(context.Background(), st, "u", "x", nil, animeschedule.SubscribeSub)
+	msg, _, err := subCore(context.Background(), st, "u", "x", animeschedule.SubscribeSub, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestAddSeedsOnlyFromTheSameShowsAiredEntry(t *testing.T) {
 	seedEntries(t, entry("Foo", "foo-a", "Ep 3", at(-time.Hour)))
 	lookupAs(t, animeschedule.ShowEntry{Name: "Foo", Route: "foo-b"})
 	st := newFakeStore()
-	if _, _, err := subCore(context.Background(), st, "u", "foo-b", nil, animeschedule.SubscribeSub); err != nil {
+	if _, _, err := subCore(context.Background(), st, "u", "foo-b", animeschedule.SubscribeSub, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.docs["u"]; len(got) != 1 || got[0].Notified || got[0].LastNotifiedAirUnix != 0 {
@@ -96,7 +96,7 @@ func TestSubscriptionWithARouteIsNotMatchedByTitleToARoutelessEntry(t *testing.T
 	seedEntries(t, entry("Twin", "", "Ep 1", at(time.Hour)))
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Twin", Route: "twin-a"}}
-	if got := strings.Join(names(suggestions(t, st, "user", "", "")), "|"); got != "Twin" {
+	if got := strings.Join(names(suggestions(t, st, "user", "")), "|"); got != "Twin" {
 		t.Errorf("suggestions = %q, want Twin unlabelled", got)
 	}
 	useStore(t, st)
@@ -111,7 +111,7 @@ func TestSuggestionsAndLookupCoverLastWeeksShowsOnABreak(t *testing.T) {
 		finalEpisode(entry("Ended", "ended", "Ep 12", at(-5*24*time.Hour))),
 		finalEpisode(entry("Returning", "returning", "Ep 12", at(-5*24*time.Hour))),
 		entry("Returning", "returning", "Ep 1", at(24*time.Hour)))
-	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "", "")), "|")
+	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|")
 	if want := "Returning|On Break"; got != want {
 		t.Errorf("suggestions = %q, want %q (a show whose final episode aired last week is dropped)", got, want)
 	}

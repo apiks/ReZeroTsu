@@ -287,7 +287,7 @@ func (n nextEpisode) placeLine() string {
 func (n nextEpisode) listStatus() string {
 	unix := n.Entry.AirTimeUnix
 	out := ""
-	if label := n.Entry.MediaType.Label(); label != "" && n.Found {
+	if label := n.Entry.TypeLabel(); label != "" && n.Found {
 		out = " · " + label
 	}
 	if n.Set != animeschedule.SubscribeSub {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestRefreshUpcomingReadsEveryPageIntoShows(t *testing.T) {
 	if a.Name != "A" || a.Route != "a" || a.Romaji != "R-A" || a.English != "E-A" || a.Native != "N-A" || !a.Premiere.Equal(want) || a.MediaType != MediaTV {
 		t.Errorf("first show = %+v", a)
 	}
-	wantTypes := []MediaType{MediaTV, MediaDonghua, MediaMovie, MediaTVShort, MediaTV}
+	wantTypes := []MediaType{MediaTV, MediaONA, MediaMovie, MediaTVShort, MediaTV}
 	for i, w := range wantTypes {
 		if got[i].MediaType != w {
 			t.Errorf("show %d media type = %v, want %v", i, got[i].MediaType, w)
@@ -334,5 +335,91 @@ func TestUpcomingShowsDecodeShape(t *testing.T) {
 	var p upcomingPage
 	if err := json.Unmarshal([]byte(`{"anime":[`+item("A", "a", zeroTime, "tv")+`],"page":1,"totalAmount":1}`), &p); err != nil || len(p.Anime) != 1 {
 		t.Fatalf("decode = %+v, %v", p, err)
+	}
+}
+
+// itemWithRoutes is an upcoming item whose mediaTypes list holds the given routes in order; none gives no list.
+func itemWithRoutes(title string, routes ...string) string {
+	refs := make([]string, len(routes))
+	for i, r := range routes {
+		refs[i] = fmt.Sprintf(`{"name":"x","route":%q}`, r)
+	}
+	return fmt.Sprintf(`{"title":%q,"route":%q,"premier":%q,"mediaTypes":[%s]}`, title, title, zeroTime, strings.Join(refs, ","))
+}
+
+func TestRefreshUpcomingRecordsWhichShowsAreDonghuaFromAllTheirMediaTypeRoutes(t *testing.T) {
+	cases := []struct {
+		name   string
+		routes []string
+		want   bool
+	}{
+		{"tv-chinese", []string{"tv-chinese"}, true},
+		{"tv-chinese-short", []string{"tv-chinese-short"}, true},
+		{"ona-chinese", []string{"ona-chinese"}, true},
+		{"ova-chinese", []string{"ova-chinese"}, true},
+		{"special-chinese", []string{"special-chinese"}, true},
+		{"movie-chinese", []string{"movie-chinese"}, true},
+		{"only a later route is a donghua route", []string{"ona", "tv", "movie-chinese"}, true},
+		{"a route in another case", []string{" TV-Chinese "}, true},
+		{"non-donghua show", []string{"tv", "ona"}, false},
+		{"no media types", nil, false},
+	}
+	var items []string
+	for _, c := range cases {
+		items = append(items, itemWithRoutes(c.name, c.routes...))
+	}
+	useUpcomingServer(t, &upcomingFixture{total: len(items), pages: []string{"[" + strings.Join(items, ",") + "]"}})
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, u := range UpcomingShows() {
+		got[u.Name] = u.Donghua
+	}
+	for _, c := range cases {
+		d, ok := got[c.name]
+		if !ok {
+			t.Errorf("%s: show missing from the upcoming list", c.name)
+		} else if d != c.want {
+			t.Errorf("%s: Donghua = %v, want %v", c.name, d, c.want)
+		}
+	}
+}
+
+func TestRefreshUpcomingDecodesDonghuaRoutesToTheirBaseType(t *testing.T) {
+	cases := []struct {
+		name   string
+		routes []string
+		want   MediaType
+	}{
+		{"tv-chinese", []string{"tv-chinese"}, MediaTV},
+		{"tv-chinese-short", []string{"tv-chinese-short"}, MediaTVShort},
+		{"ona-chinese", []string{"ona-chinese"}, MediaONA},
+		{"ova-chinese", []string{"ova-chinese"}, MediaOVA},
+		{"special-chinese", []string{"special-chinese"}, MediaSpecial},
+		{"movie-chinese", []string{"movie-chinese"}, MediaMovie},
+		{"first recognised wins", []string{"weird", "ova-chinese", "movie"}, MediaOVA},
+		{"japanese movie", []string{"movie"}, MediaMovie},
+		{"no media types", nil, MediaTV},
+	}
+	var items []string
+	for _, c := range cases {
+		items = append(items, itemWithRoutes(c.name, c.routes...))
+	}
+	useUpcomingServer(t, &upcomingFixture{total: len(items), pages: []string{"[" + strings.Join(items, ",") + "]"}})
+	if err := RefreshUpcoming(context.Background(), "key"); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]MediaType{}
+	for _, u := range UpcomingShows() {
+		got[u.Name] = u.MediaType
+	}
+	for _, c := range cases {
+		mt, ok := got[c.name]
+		if !ok {
+			t.Errorf("%s: show missing from the upcoming list", c.name)
+		} else if mt != c.want {
+			t.Errorf("%s: media type = %v, want %v", c.name, mt, c.want)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,35 @@ func TestDailyScheduleDelivery(t *testing.T) {
 				t.Errorf("autopost cleared = %v, want %v", ap == nil, tc.wantApCleared)
 			}
 		})
+	}
+}
+
+// The daily schedule page labels each non-TV entry with its media type and Donghua, as the schedule command does.
+func TestDailyScheduleAutopostPageCarriesTheTypeLabels(t *testing.T) {
+	h := newScheduleHarness()
+	air := h.now.Unix() + 3600
+	h.fn = func(bool, animeschedule.PreferredTrack) []animeschedule.ShowEntry {
+		return []animeschedule.ShowEntry{
+			{Name: "Plain", Route: "plain", Episode: "E", AirTimeUnix: air, Track: "sub"},
+			{Name: "Film", Route: "film", Episode: "E", AirTimeUnix: air, Track: "sub", MediaType: animeschedule.MediaMovie, Donghua: true},
+			{Name: "Web", Route: "web", Episode: "E", AirTimeUnix: air, Track: "sub", MediaType: animeschedule.MediaONA, Donghua: true},
+			{Name: "Serial", Route: "serial", Episode: "E", AirTimeUnix: air, Track: "sub", Donghua: true},
+		}
+	}
+	if err := h.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := h.fd.deliveredTo("sch")
+	if len(got) != 1 {
+		t.Fatalf("delivered %d posts, want 1", len(got))
+	}
+	desc := got[0].Msg.Embeds[0].Description
+	lines := map[string]string{"Plain": "", "Film": " · Movie · Donghua", "Web": " · ONA · Donghua", "Serial": " · Donghua"}
+	for name, label := range lines {
+		want := fmt.Sprintf("**%s** — E SUB · <t:%d:t> · <t:%d:R>%s", name, air, air, label)
+		if !strings.Contains(desc+"\n", want+"\n") {
+			t.Errorf("page %q lacks the line %q", desc, want)
+		}
 	}
 }
 

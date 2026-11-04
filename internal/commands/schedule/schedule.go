@@ -141,7 +141,7 @@ func scheduleLine(e animeschedule.ShowEntry, onToday bool) string {
 	if onToday {
 		line += fmt.Sprintf(" · <t:%d:R>", e.AirTimeUnix)
 	}
-	if label := e.MediaType.Label(); label != "" {
+	if label := e.TypeLabel(); label != "" {
 		line += " · " + label
 	}
 	return line
@@ -226,20 +226,6 @@ func BuildScheduleEmbed(date, now time.Time, shows []animeschedule.ShowEntry, pr
 // guildSettings reads a server's settings; tests replace it.
 var guildSettings = commands.GetSettings
 
-// serverSettings reads, in one lookup, whether the server shows donghua and its preferred track. Where the bot has
-// no server membership (DMs, and a user install in a server it has not joined) there are no settings; donghua is
-// shown and the track is Sub, as when the settings cannot be read.
-func serverSettings(ctx context.Context, db *database.Client, i *discordgo.Interaction) (donghua bool, pref animeschedule.PreferredTrack) {
-	if !interaction.BotInGuild(i) {
-		return true, animeschedule.PreferSub
-	}
-	settings, err := guildSettings(ctx, db, i.GuildID)
-	if err != nil || settings == nil {
-		return true, animeschedule.PreferSub
-	}
-	return settings.Donghua, settings.Preferred()
-}
-
 // trackOption reads the track option; nil when it was omitted, so the server's preferred track applies.
 func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 	if opt := commands.ParseOption(ic.Command.Options, "track"); opt != nil {
@@ -253,7 +239,7 @@ func trackOption(ic *interaction.Context) *animeschedule.PreferredTrack {
 // dayShows reads the shows of date under the track chosen, or the server's preferred track when none was chosen,
 // and returns the track used.
 func dayShows(ic *interaction.Context, date time.Time, chosen *animeschedule.PreferredTrack) ([]animeschedule.ShowEntry, animeschedule.PreferredTrack) {
-	donghua, pref := serverSettings(ic.Context(), ic.DB, ic.Interaction)
+	donghua, pref := commands.ServerShowSettings(ic.Context(), ic.DB, ic.Interaction, guildSettings)
 	if chosen != nil {
 		pref = *chosen
 	}

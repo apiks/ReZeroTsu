@@ -25,7 +25,7 @@ func TestAddSuggestionsOfferTimetableShowsThenUpcomingShowsWithTheirPremiere(t *
 		{Name: "Undated Show", Route: "undated-show"},
 		{Name: "Upcoming Film", Route: "upcoming-film", MediaType: animeschedule.MediaMovie},
 	}, entry("Airing Show", "airing-show", "Ep 2", at(time.Hour)))
-	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "", "")), "|")
+	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|")
 	want := "Airing Show|Dated Show · premieres 10 Jan|Undated Show · premiere date TBA|Upcoming Film · premiere date TBA · Movie"
 	if got != want {
 		t.Errorf("names = %q\nwant    %q", got, want)
@@ -35,7 +35,7 @@ func TestAddSuggestionsOfferTimetableShowsThenUpcomingShowsWithTheirPremiere(t *
 func TestAddSuggestionsMatchUpcomingShowsAnywhereInTheirFourNames(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Kimi", Route: "kimi", Romaji: "Kimi no Na", English: "Your Name Is", Native: "君の名"}})
 	for _, typed := range []string{"kimi", "name is", "君"} {
-		if got := names(suggestions(t, newFakeStore(), "user", typed, "")); len(got) != 1 {
+		if got := names(suggestions(t, newFakeStore(), "user", typed)); len(got) != 1 {
 			t.Errorf("typed %q: names = %v, want the upcoming show", typed, got)
 		}
 	}
@@ -46,18 +46,18 @@ func TestAddSuggestionsOfferAShowOnBothListsOnceAsATimetableShow(t *testing.T) {
 		{Name: "Frieren", Route: "frieren", Premiere: premiereIn(24 * time.Hour)},
 		{Name: "Untracked", Premiere: premiereIn(24 * time.Hour)},
 	}, entry("Renamed Frieren", "frieren", "Ep 2", at(time.Hour)), entry("Untracked", "", "Ep 2", at(time.Hour)))
-	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "", "")), "|")
+	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|")
 	if want := "Renamed Frieren|Untracked"; got != want {
 		t.Errorf("names = %q, want %q", got, want)
 	}
 }
 
-func TestAddSuggestionsApplyTheTypeFilterToUpcomingShows(t *testing.T) {
+func TestAddSuggestionsLabelUpcomingShowsByMediaType(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{
 		{Name: "Upcoming Film", Route: "upcoming-film", MediaType: animeschedule.MediaMovie},
 		{Name: "Upcoming Tv", Route: "upcoming-tv"},
 	})
-	if got := strings.Join(names(suggestions(t, newFakeStore(), "user", "", "movie")), "|"); got != "Upcoming Film · premiere date TBA · Movie" {
+	if got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|"); got != "Upcoming Film · premiere date TBA · Movie|Upcoming Tv · premiere date TBA" {
 		t.Errorf("names = %q", got)
 	}
 }
@@ -66,7 +66,7 @@ func TestAddSuggestionsLabelASubscribedUpcomingShow(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{{Name: "Dated Show", Route: "dated-show", Premiere: time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)}})
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Old Name", Route: "dated-show"}}
-	if got := strings.Join(names(suggestions(t, st, "user", "", "")), "|"); got != "Dated Show · premieres 10 Jan · subscribed" {
+	if got := strings.Join(names(suggestions(t, st, "user", "")), "|"); got != "Dated Show · premieres 10 Jan · subscribed" {
 		t.Errorf("names = %q", got)
 	}
 }
@@ -78,7 +78,7 @@ func TestAddChoiceValueIsTheRouteOrTheTitleWhenThereIsNone(t *testing.T) {
 		{Name: "No Route Upcoming"},
 	}, entry("Airing Show", "airing-show", "Ep 2", at(time.Hour)), entry("Plain Title", "", "Ep 1", at(time.Hour)))
 	var values []string
-	for _, c := range suggestions(t, newFakeStore(), "user", "", "") {
+	for _, c := range suggestions(t, newFakeStore(), "user", "") {
 		v := c.Value.(string)
 		if len([]rune(v)) > 100 {
 			t.Errorf("value %q is over 100 characters", v)
@@ -114,6 +114,32 @@ func TestAddSubscribesToAnUpcomingShowByTypedNameAndStoresItsTitleAndRoute(t *te
 		}
 		if subs := st.docs["user"]; len(subs) != 1 || subs[0].Show != "Dated Show" || subs[0].Route != "dated-show" {
 			t.Errorf("typed %q: subscriptions = %+v", typed, subs)
+		}
+	}
+}
+
+func TestUpcomingDonghuaMovieUsesMovieFormsInRepliesAndListLines(t *testing.T) {
+	seedUpcoming(t, []animeschedule.UpcomingShow{
+		{Name: "Dated Film", Route: "dated-film", MediaType: animeschedule.MediaMovie, Donghua: true, Premiere: premiereIn(20 * 24 * time.Hour)},
+		{Name: "Undated Film", Route: "undated-film", MediaType: animeschedule.MediaMovie, Donghua: true},
+	})
+	dated := fmt.Sprintf("It releases %s.", fullAndRelative(premiereIn(20*24*time.Hour).Unix()))
+	if got := addReply(t, "Dated Film").Embeds[0].Description; !strings.Contains(got, dated) || strings.Contains(got, "episode 1") {
+		t.Errorf("dated reply = %q, want %q", got, dated)
+	}
+	if got := addReply(t, "Undated Film").Embeds[0].Description; !strings.Contains(got, "release date") || strings.Contains(got, "episode 1") {
+		t.Errorf("undated reply = %q, want the release-date wording", got)
+	}
+	st := newFakeStore()
+	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Dated Film", Route: "dated-film"}, {Show: "Undated Film", Route: "undated-film"}}
+	useStore(t, st)
+	got := reply(t, invoke(t, "list")).Embeds[0].Description
+	for _, want := range []string{
+		fmt.Sprintf("1. Dated Film · Movie · Donghua · releases <t:%d:R>\n", premiereIn(20*24*time.Hour).Unix()),
+		"2. Undated Film · Movie · Donghua · release date TBA\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list %q lacks line %q", got, want)
 		}
 	}
 }

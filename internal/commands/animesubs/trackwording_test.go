@@ -183,6 +183,33 @@ func TestListLineInsertsTheSetAfterTheMediaTypeLabel(t *testing.T) {
 	}
 }
 
+// The worst list line: a TV Short Donghua entry that already aired, on Every track, with a span label, under a title
+// at the clip limit. Its status is " · TV Short · Donghua" (21) + " · Every track" (14) + " · Ep 100-101F (sub) aired
+// <t:…:R>" (43), about 78 units. The footer is the longest one, from the last page of a full list.
+func TestWorstCasePageOfListLinesKeepsItsFooter(t *testing.T) {
+	var rows []animeschedule.ShowEntry
+	var list []*anime_subs.ShowSub
+	for i := range 25 {
+		name := strings.Repeat("あ", 100) + fmt.Sprint(i)
+		e := trackRow(name, fmt.Sprint("r", i), "Ep 100-101F", animeschedule.TrackSub, at(-time.Duration(i+1)*time.Hour))
+		e.MediaType = animeschedule.MediaTVShort
+		e.Donghua = true
+		rows = append(rows, e)
+		list = append(list, &anime_subs.ShowSub{Show: name, Route: fmt.Sprint("r", i), Tracks: "every"})
+	}
+	seedEntries(t, rows...)
+	got := subsDescriptionForPage(list, 0, 0, 4, 100)
+	if !strings.Contains(got, " · TV Short · Donghua · Every track · Ep 100-101F (sub) aired <t:") {
+		t.Fatalf("description lacks the worst-case status: %q", got)
+	}
+	if n := utf16Len(got); n > 4096 {
+		t.Errorf("description is %d UTF-16 units, want at most 4096", n)
+	}
+	if !strings.Contains(got, "Page 1 of 4. Showing 1–25 of 100.") {
+		t.Errorf("description lost its footer")
+	}
+}
+
 func TestPageOf25EveryTrackLinesStaysUnderTheEmbedLimit(t *testing.T) {
 	var rows []animeschedule.ShowEntry
 	var list []*anime_subs.ShowSub

@@ -19,9 +19,12 @@ const (
 	maxUserSubscriptions = 100
 )
 
-// maxListTitleUnits is how much of a title a list line keeps, in the UTF-16 units Discord counts. A page holds 25
-// lines, each with a status of up to about 70 units, so 25 clipped lines and the footer stay under the 4096 limit.
-const maxListTitleUnits = 80
+// maxListTitleUnits is how much of a title a list line keeps, in the UTF-16 units Discord counts, before the "…" that
+// marks a cut. A page holds 25 lines. The worst status is about 78 units: " · TV Short · Donghua" (21) +
+// " · Every track" (14) + " · Ep 100-101F (sub) aired <t:…:R>" (43). A line is also a prefix of up to 4 units
+// ("25. "), the clipped title (77 + 1 for "…") and a newline. That is 25 × (4 + 78 + 78 + 1) = 4025 units, under 4096
+// with room for the 37-unit footer (4062).
+const maxListTitleUnits = 77
 
 // clipListTitle cuts a title to maxListTitleUnits UTF-16 units at a character boundary and marks the cut.
 func clipListTitle(title string) string {
@@ -100,10 +103,11 @@ func findShowIn(shows []animeschedule.ShowEntry, input string) (animeschedule.Sh
 }
 
 // findShowByName returns the candidate show (loaded weeks or upcoming) matching name by any of its four names, or
-// the zero value and false.
-func findShowByName(name string, only *animeschedule.MediaType) (animeschedule.ShowEntry, bool) {
+// the zero value and false. It looks at every show, donghua included: whether a donghua may be subscribed is subCore's
+// decision, made after the name has resolved.
+func findShowByName(name string) (animeschedule.ShowEntry, bool) {
 	var shows []animeschedule.ShowEntry
-	for _, c := range candidates(only) {
+	for _, c := range candidates() {
 		shows = append(shows, c.ShowEntry)
 	}
 	return findShowIn(shows, name)
@@ -130,26 +134,35 @@ type subsStore interface {
 // showLookup resolves user input to a loaded-week or upcoming show; replaced in tests.
 var showLookup = findShowByName
 
+const msgShowNotFound = "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
+
 // subCore adds the subscription and answers. confirmed is true for a reply that confirms the subscription (new or
-// already held), which is when the DMs footer applies. only narrows the lookup to one media type.
-func subCore(ctx context.Context, store subsStore, uid, animeInput string, only *animeschedule.MediaType, set animeschedule.SubscriptionTracks) (responseDesc string, confirmed bool, logErr error) {
+// already held), which is when the DMs footer applies.
+func subCore(ctx context.Context, store subsStore, uid, animeInput string, set animeschedule.SubscriptionTracks, hideDonghua bool) (responseDesc string, confirmed bool, logErr error) {
 	animeInput = strings.TrimSpace(animeInput)
 	if animeInput == "" {
 		return "Please provide an anime name: pick one of the suggestions, or check `/schedule` for the shows on the timetable.", false, nil
 	}
-	show, ok := showLookup(animeInput, only)
+	// The name resolves against every show first, with the usual precedence, so a hidden donghua is never skipped for a
+	// lower-precedence match among the shown shows.
+	show, ok := showLookup(animeInput)
 	if !ok {
-		msg := "I could not find that airing or upcoming show. Pick one of the suggestions or check the spelling, and see `/schedule` for the timetable."
-		if only != nil {
-			msg += " The type filter may be hiding it; try again without it."
-		}
-		return msg, false, nil
+		return msgShowNotFound, false, nil
 	}
 	showName := show.Name
 
 	doc, err := store.GetByID(ctx, uid)
 	if err != nil {
 		return "Could not load your subscriptions.", false, err
+	}
+	if hideDonghua && show.Donghua {
+		// The server hides this donghua. A member who follows it is told how to change its tracks; one who does not is
+		// told where to follow it. Nothing is changed.
+		mention := commands.CommandMention("subscription", "add")
+		if doc != nil && slices.ContainsFunc(doc.Shows, func(sub *anime_subs.ShowSub) bool { return sub != nil && sub.Matches(show.Route, showName) }) {
+			return fmt.Sprintf("You already follow `%s`. This server hides donghua, so run %s in a DM with ZeroTsu to change its tracks.", showName, mention), false, nil
+		}
+		return msgShowNotFound + fmt.Sprintf(" This server hides donghua. Run %s in a DM with ZeroTsu to follow it.", mention), false, nil
 	}
 	if doc != nil {
 		for _, sub := range doc.Shows {

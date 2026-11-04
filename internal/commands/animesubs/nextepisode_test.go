@@ -76,6 +76,51 @@ func TestAddSaysWhenAMovieReleases(t *testing.T) {
 	}
 }
 
+func TestAddSaysWhenADonghuaMovieReleases(t *testing.T) {
+	m := entry("Big Film", "big-film", "Ep 1", at(10*24*time.Hour))
+	m.MediaType, m.Donghua = animeschedule.MediaMovie, true
+	seedEntries(t, m)
+	got := addReply(t, "Big Film").Embeds[0].Description
+	want := "Subscribed to **Big Film**.\nIt releases " + fullAndRelative(at(10*24*time.Hour)) + "."
+	if got != want {
+		t.Errorf("description = %q, want %q", got, want)
+	}
+}
+
+func TestListLinesCarryTheTypeAndDonghuaLabels(t *testing.T) {
+	cn := func(name, route string, mt animeschedule.MediaType) animeschedule.ShowEntry {
+		e := entry(name, route, "Ep 1", at(10*24*time.Hour))
+		e.MediaType, e.Donghua = mt, true
+		return e
+	}
+	seedEntries(t,
+		cn("Film", "film", animeschedule.MediaMovie),
+		cn("Short", "short", animeschedule.MediaTVShort),
+		cn("Video", "video", animeschedule.MediaOVA),
+		cn("Extra", "extra", animeschedule.MediaSpecial),
+		cn("Series", "series", animeschedule.MediaTV),
+		cn("Web", "web", animeschedule.MediaONA))
+	st := newFakeStore()
+	st.docs["user"] = []*anime_subs.ShowSub{
+		{Show: "Film", Route: "film"}, {Show: "Short", Route: "short"}, {Show: "Video", Route: "video"},
+		{Show: "Extra", Route: "extra"}, {Show: "Series", Route: "series"}, {Show: "Web", Route: "web"},
+	}
+	useStore(t, st)
+	got := reply(t, invoke(t, "list")).Embeds[0].Description
+	for _, want := range []string{
+		fmt.Sprintf("1. Film · Movie · Donghua · releases <t:%d:R>\n", at(10*24*time.Hour)),
+		"2. Short · TV Short · Donghua · ",
+		"3. Video · OVA · Donghua · ",
+		"4. Extra · Special · Donghua · ",
+		"5. Series · Donghua · ",
+		"6. Web · ONA · Donghua · ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list %q lacks line %q", got, want)
+		}
+	}
+}
+
 func TestAddConfirmationAlwaysCarriesTheDMsFooter(t *testing.T) {
 	seedEntries(t, entry("Frieren", "frieren", "Ep 6", at(time.Hour)))
 	first := addReply(t, "Frieren")
