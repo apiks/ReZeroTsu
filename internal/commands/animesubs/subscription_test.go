@@ -266,7 +266,7 @@ func TestAddChoicesAreNamedTitleThenEnglishWhenTheyDiffer(t *testing.T) {
 
 func TestChoiceNameIsCutToDiscordsLimit(t *testing.T) {
 	long := strings.Repeat("x", 120)
-	if got := labelledName(candidate{ShowEntry: animeschedule.ShowEntry{Name: "T", English: long}}, false); len([]rune(got)) != 100 {
+	if got := labelledName(candidate{ShowEntry: animeschedule.ShowEntry{Name: "T", English: long}}, false, animeschedule.PreferTitle); len([]rune(got)) != 100 {
 		t.Errorf("length = %d", len([]rune(got)))
 	}
 }
