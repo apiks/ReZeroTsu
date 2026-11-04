@@ -84,12 +84,21 @@ func TestScheduleLabelsNonTVEntriesOnly(t *testing.T) {
 	mk := func(name string, mt animeschedule.MediaType) animeschedule.ShowEntry {
 		return animeschedule.ShowEntry{Name: name, Episode: "E", Track: "sub", AirTimeUnix: 1700000000, MediaType: mt}
 	}
+	cn := func(name string, mt animeschedule.MediaType) animeschedule.ShowEntry {
+		e := mk(name, mt)
+		e.Donghua = true
+		return e
+	}
 	emb := openDay(t, "thursday", map[string][]animeschedule.ShowEntry{"2026-11-05": {
 		mk("A-tv", animeschedule.MediaTV), mk("B-short", animeschedule.MediaTVShort), mk("C-ona", animeschedule.MediaONA),
-		mk("D-donghua", animeschedule.MediaDonghua), mk("E-ova", animeschedule.MediaOVA),
+		mk("E-ova", animeschedule.MediaOVA),
 		mk("F-special", animeschedule.MediaSpecial), mk("G-movie", animeschedule.MediaMovie),
+		cn("H-cn-tv", animeschedule.MediaTV), cn("I-cn-short", animeschedule.MediaTVShort), cn("J-cn-ona", animeschedule.MediaONA),
+		cn("K-cn-ova", animeschedule.MediaOVA), cn("L-cn-special", animeschedule.MediaSpecial), cn("M-cn-movie", animeschedule.MediaMovie),
 	}})
-	want := map[string]string{"A-tv": "", "B-short": "TV Short", "C-ona": "ONA", "D-donghua": "Donghua", "E-ova": "OVA", "F-special": "Special", "G-movie": "Movie"}
+	want := map[string]string{"A-tv": "", "B-short": "TV Short", "C-ona": "ONA", "E-ova": "OVA", "F-special": "Special", "G-movie": "Movie",
+		"H-cn-tv": "Donghua", "I-cn-short": "TV Short · Donghua", "J-cn-ona": "ONA · Donghua", "K-cn-ova": "OVA · Donghua",
+		"L-cn-special": "Special · Donghua", "M-cn-movie": "Movie · Donghua"}
 	lines := strings.Split(emb.Description, "\n")
 	for _, l := range lines {
 		for name, label := range want {
@@ -189,7 +198,7 @@ func inServer(t *testing.T, donghua bool, lookupErr error) *int {
 }
 
 func TestScheduleDonghuaSettingHidesDonghuaOnTheCommandAndOnPagePresses(t *testing.T) {
-	soulLand := animeschedule.ShowEntry{Name: "Soul Land", AirTimeUnix: 1, Donghua: true, MediaType: animeschedule.MediaDonghua}
+	soulLand := animeschedule.ShowEntry{Name: "Soul Land", AirTimeUnix: 1, Donghua: true, MediaType: animeschedule.MediaONA}
 	frieren := animeschedule.ShowEntry{Name: "Frieren", AirTimeUnix: 1}
 	for _, tc := range []struct {
 		name       string
