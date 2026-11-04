@@ -342,6 +342,16 @@ func TestGlossaryAvoidPhrasesAreNotUsedInUserDocs(t *testing.T) {
 		for _, v := range checkAvoidPhrasesInText(re, doc, string(raw)) {
 			t.Error(v)
 		}
+		for _, v := range checkRawMentions(doc, string(raw)) {
+			t.Error(v)
+		}
+	}
+}
+
+func TestRawMentionsAreFlaggedInDocs(t *testing.T) {
+	text := "Run </subscription add> in a DM.\nOr </subscription add:123>.\nOr </schedule:99>.\nA quote `/schedule`.\n</p>\nKept </list:1> <!-- archcheck:allow -->\n"
+	if got := checkRawMentions("x.md", text); len(got) != 3 {
+		t.Errorf("violations = %d %v, want 3", len(got), got)
 	}
 }
 
@@ -646,6 +656,26 @@ func checkAvoidPhrasesInText(re *regexp.Regexp, name, text string) []string {
 		if m := re.FindString(line); m != "" {
 			out = append(out, fmt.Sprintf("%s:%d: contains the glossary Avoid term %q; use the term GLOSSARY.md defines",
 				name, i+1, strings.TrimFunc(m, func(r rune) bool { return !unicode.IsLetter(r) && r != ')' })))
+		}
+	}
+	return out
+}
+
+// rawMention matches Discord's own command-mention syntax, "</subscription add:123>" or "</schedule:123>", and the
+// same without its ID. Markdown shows it as junk; a document quotes the command as `/subscription add`. A plain
+// HTML closing tag such as </p> has no space and no ID, so it does not match.
+var rawMention = regexp.MustCompile(`</[\w-]+(?: [\w-]+)+(?::\d+)?>|</[\w-]+:\d+>`)
+
+// checkRawMentions reports the lines of a Markdown document that contain Discord's raw command-mention syntax. A
+// line carrying archcheck:allow is exempt.
+func checkRawMentions(name, text string) []string {
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, allowMarker) {
+			continue
+		}
+		if m := rawMention.FindString(line); m != "" {
+			out = append(out, fmt.Sprintf("%s:%d: contains the raw Discord mention %q; write the command as `/name` instead", name, i+1, m))
 		}
 	}
 	return out

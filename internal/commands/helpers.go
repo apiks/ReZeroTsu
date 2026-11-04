@@ -126,13 +126,6 @@ func UserID(i *discordgo.InteractionCreate) string {
 	return i.User.ID
 }
 
-func InteractionUser(i *discordgo.InteractionCreate) *discordgo.User {
-	if i.Member != nil && i.Member.User != nil {
-		return i.Member.User
-	}
-	return i.User
-}
-
 func ParseOption(opts []*discordgo.ApplicationCommandInteractionDataOption, name string) *discordgo.ApplicationCommandInteractionDataOption {
 	for _, o := range opts {
 		if o.Name == name {
@@ -140,15 +133,6 @@ func ParseOption(opts []*discordgo.ApplicationCommandInteractionDataOption, name
 		}
 	}
 	return nil
-}
-
-// TargetChannelID returns the "channel" option's ID, or the interaction's channel ID.
-func TargetChannelID(data discordgo.ApplicationCommandInteractionData, s *discordgo.Session, i *discordgo.InteractionCreate) string {
-	opt := ParseOption(data.Options, "channel")
-	if opt != nil {
-		return opt.ChannelValue(s).ID
-	}
-	return i.ChannelID
 }
 
 // MessageLink is the URL of a message in a server.

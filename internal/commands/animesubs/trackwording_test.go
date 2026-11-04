@@ -210,6 +210,76 @@ func TestWorstCasePageOfListLinesKeepsItsFooter(t *testing.T) {
 	}
 }
 
+// TestEveryPageOfEveryStatusKeepsItsFooter builds a full first page and a full last page for every combination of
+// media type, Donghua, track set and status, so a longer label or a new status form that no longer fits fails here
+// the day it is added, not the day a member's list loses its footer.
+func TestEveryPageOfEveryStatusKeepsItsFooter(t *testing.T) {
+	types := []animeschedule.MediaType{animeschedule.MediaTV, animeschedule.MediaTVShort, animeschedule.MediaONA,
+		animeschedule.MediaOVA, animeschedule.MediaSpecial, animeschedule.MediaMovie}
+	// A set's stored form and the track of the rows it selects, labelled when the set has several tracks.
+	sets := []struct {
+		stored string
+		track  animeschedule.Track
+	}{
+		{"", animeschedule.TrackSub}, {"dub", animeschedule.TrackDub}, {"raw", animeschedule.TrackRaw},
+		{"sub_dub", animeschedule.TrackDub}, {"every", animeschedule.TrackDub},
+	}
+	states := []string{"next", "aired", "premiere", "premiered", "premiere date unknown", "nothing listed"}
+	const total = 100
+	checked := 0
+	for _, mt := range types {
+		for _, donghua := range []bool{false, true} {
+			for _, set := range sets {
+				for _, state := range states {
+					var rows []animeschedule.ShowEntry
+					var upcoming []animeschedule.UpcomingShow
+					var list []*anime_subs.ShowSub
+					for i := range total {
+						route := fmt.Sprint("r", i)
+						name := strings.Repeat("あ", 100) + fmt.Sprint(i)
+						list = append(list, &anime_subs.ShowSub{Show: name, Route: route, Tracks: set.stored})
+						switch state {
+						case "next", "aired":
+							d := time.Duration(i+1) * time.Hour
+							if state == "aired" {
+								d = -d
+							}
+							e := trackRow(name, route, "Ep 100-101F", set.track, at(d))
+							e.MediaType, e.Donghua = mt, donghua
+							rows = append(rows, e)
+						case "premiere", "premiered", "premiere date unknown":
+							var p time.Time
+							switch state {
+							case "premiere":
+								p = nextEpisodeNow.Add(48 * time.Hour)
+							case "premiered":
+								p = nextEpisodeNow.Add(-48 * time.Hour)
+							}
+							upcoming = append(upcoming, animeschedule.UpcomingShow{Name: name, Route: route, MediaType: mt,
+								Donghua: donghua, Premiere: p, SubPremiere: p, DubPremiere: p})
+						}
+					}
+					seedEntries(t, rows...)
+					t.Cleanup(animeschedule.SeedUpcoming(upcoming, true))
+					for _, start := range []int{0, total - 25} {
+						page := start / 25
+						got := subsDescriptionForPage(list, start, page, total/25, total)
+						footer := fmt.Sprintf("Page %d of %d. Showing %d–%d of %d.", page+1, total/25, start+1, start+25, total)
+						if n := utf16Len(got); n > 4096 || !strings.Contains(got, footer) {
+							t.Fatalf("%v donghua=%v set=%q %s page %d: %d UTF-16 units, footer kept = %v; line: %q",
+								mt, donghua, set.stored, state, page+1, n, strings.Contains(got, footer), strings.SplitN(got, "\n", 2)[0])
+						}
+						checked++
+					}
+				}
+			}
+		}
+	}
+	if checked != len(types)*2*len(sets)*len(states)*2 {
+		t.Fatalf("checked %d pages", checked)
+	}
+}
+
 func TestPageOf25EveryTrackLinesStaysUnderTheEmbedLimit(t *testing.T) {
 	var rows []animeschedule.ShowEntry
 	var list []*anime_subs.ShowSub

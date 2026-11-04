@@ -1,6 +1,6 @@
 # Coding standards
 
-Read during review. Mechanical rules (formatting, unused code, direct Discord sends, show-name matching, text sliced at a Discord length limit) are enforced by checks, not listed here.
+Read during review. Mechanical rules (formatting, unused code, unreachable functions, direct Discord sends, show-name matching, text sliced at a Discord length limit, raw Discord mentions in docs) are enforced by checks, not listed here.
 
 ## Behaviour parity
 
@@ -28,6 +28,10 @@ A change to what a delivery run records as sent is checked against three cases, 
 - A setting changed mid-day (the preferred track, donghua): rows the new setting selects get entries the same way, and earlier airings are not posted again.
 
 A test of the delivery run alone passes while the seeding path reposts, so the seeding is part of every such test.
+
+## Test stubs
+
+A package-wide stub set in `TestMain` lives in the package's `main_test.go`, and at least one test asserts how often the stubbed call runs. Without a count, a lost or doubled call passes every test that merely needs the stub to exist.
 
 ## Mongo writes
 
