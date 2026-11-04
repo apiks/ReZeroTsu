@@ -96,22 +96,22 @@ func addAt(t *testing.T, w where, typed string) string {
 	return text(reply(t, fake))
 }
 
-// seedDonghua loads one show of each kind a server may hide: a donghua on the timetable, a Chinese TV series the
+// seedDonghua loads one show of each kind a server may hide: a donghua on the timetable, a donghua TV series the
 // timetable flags as donghua, an upcoming donghua, and plain shows to stay.
 func seedDonghua(t *testing.T) {
 	t.Helper()
 	soulLand := entry("Soul Land", "soul-land", "Ep 2", at(time.Hour))
 	soulLand.Donghua, soulLand.MediaType = true, animeschedule.MediaONA
-	chineseTV := entry("Martial Peak", "martial-peak", "Ep 3", at(2*time.Hour))
-	chineseTV.Donghua = true // a Chinese TV series decodes as TV but the timetable flags it
+	donghuaTV := entry("Martial Peak", "martial-peak", "Ep 3", at(2*time.Hour))
+	donghuaTV.Donghua = true // a donghua TV series decodes as TV but the timetable flags it
 	seedUpcoming(t, []animeschedule.UpcomingShow{
 		{Name: "Upcoming Donghua", Route: "upcoming-donghua", Donghua: true, MediaType: animeschedule.MediaONA},
-		{Name: "Upcoming Chinese Movie", Route: "upcoming-chinese-movie", Donghua: true, MediaType: animeschedule.MediaMovie},
+		{Name: "Upcoming Donghua Movie", Route: "upcoming-donghua-movie", Donghua: true, MediaType: animeschedule.MediaMovie},
 		{Name: "Upcoming Plain", Route: "upcoming-plain"},
-	}, entry("Airing Plain", "airing-plain", "Ep 2", at(3*time.Hour)), soulLand, chineseTV)
+	}, entry("Airing Plain", "airing-plain", "Ep 2", at(3*time.Hour)), soulLand, donghuaTV)
 }
 
-var allDonghuaOffered = "Airing Plain|Soul Land · ONA · Donghua|Martial Peak · Donghua|Upcoming Donghua · premiere date TBA · ONA · Donghua|Upcoming Chinese Movie · premiere date TBA · Movie · Donghua|Upcoming Plain · premiere date TBA"
+var allDonghuaOffered = "Airing Plain|Soul Land · ONA · Donghua|Martial Peak · Donghua|Upcoming Donghua · premiere date TBA · ONA · Donghua|Upcoming Donghua Movie · premiere date TBA · Movie · Donghua|Upcoming Plain · premiere date TBA"
 
 func TestSuggestionsLeaveOutEveryDonghuaInAServerThatHidesDonghua(t *testing.T) {
 	seedDonghua(t)
@@ -156,7 +156,7 @@ func TestTypedNameResolvesNoDonghuaInAServerThatHidesDonghua(t *testing.T) {
 	commands.SetCommandIDs([]*discordgo.ApplicationCommand{{ID: "123", Name: "subscription", Type: discordgo.ChatApplicationCommand}})
 	t.Cleanup(func() { commands.SetCommandIDs(nil) })
 	const pointer = "This server hides donghua. Run </subscription add:123> in a DM with ZeroTsu to follow it."
-	for _, typed := range []string{"Soul Land", "soul-land", "Martial Peak", "Upcoming Donghua", "upcoming-chinese-movie"} {
+	for _, typed := range []string{"Soul Land", "soul-land", "Martial Peak", "Upcoming Donghua", "upcoming-donghua-movie"} {
 		t.Run(typed, func(t *testing.T) {
 			seedDonghua(t)
 			serverDonghua(t, false, nil)

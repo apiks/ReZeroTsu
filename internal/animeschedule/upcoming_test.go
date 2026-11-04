@@ -359,9 +359,9 @@ func TestRefreshUpcomingRecordsWhichShowsAreDonghuaFromAllTheirMediaTypeRoutes(t
 		{"ova-chinese", []string{"ova-chinese"}, true},
 		{"special-chinese", []string{"special-chinese"}, true},
 		{"movie-chinese", []string{"movie-chinese"}, true},
-		{"only a later route is Chinese", []string{"ona", "tv", "movie-chinese"}, true},
+		{"only a later route is a donghua route", []string{"ona", "tv", "movie-chinese"}, true},
 		{"a route in another case", []string{" TV-Chinese "}, true},
-		{"non-Chinese show", []string{"tv", "ona"}, false},
+		{"non-donghua show", []string{"tv", "ona"}, false},
 		{"no media types", nil, false},
 	}
 	var items []string
@@ -377,13 +377,16 @@ func TestRefreshUpcomingRecordsWhichShowsAreDonghuaFromAllTheirMediaTypeRoutes(t
 		got[u.Name] = u.Donghua
 	}
 	for _, c := range cases {
-		if got[c.name] != c.want {
-			t.Errorf("%s: Donghua = %v, want %v", c.name, got[c.name], c.want)
+		d, ok := got[c.name]
+		if !ok {
+			t.Errorf("%s: show missing from the upcoming list", c.name)
+		} else if d != c.want {
+			t.Errorf("%s: Donghua = %v, want %v", c.name, d, c.want)
 		}
 	}
 }
 
-func TestRefreshUpcomingDecodesChineseRoutesToTheirBaseType(t *testing.T) {
+func TestRefreshUpcomingDecodesDonghuaRoutesToTheirBaseType(t *testing.T) {
 	cases := []struct {
 		name   string
 		routes []string
@@ -412,8 +415,11 @@ func TestRefreshUpcomingDecodesChineseRoutesToTheirBaseType(t *testing.T) {
 		got[u.Name] = u.MediaType
 	}
 	for _, c := range cases {
-		if got[c.name] != c.want {
-			t.Errorf("%s: media type = %v, want %v", c.name, got[c.name], c.want)
+		mt, ok := got[c.name]
+		if !ok {
+			t.Errorf("%s: show missing from the upcoming list", c.name)
+		} else if mt != c.want {
+			t.Errorf("%s: media type = %v, want %v", c.name, mt, c.want)
 		}
 	}
 }

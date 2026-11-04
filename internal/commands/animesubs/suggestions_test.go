@@ -33,7 +33,7 @@ func seedTypes(t *testing.T) {
 			{Name: "Plain Tv", Route: "plain-tv", MediaType: animeschedule.MediaTV},
 			{Name: "Short Tv", Route: "short-tv", MediaType: animeschedule.MediaTVShort},
 			{Name: "Web One", Route: "web-one", MediaType: animeschedule.MediaONA},
-			{Name: "Chinese One", Route: "chinese-one", MediaType: animeschedule.MediaONA, Donghua: true},
+			{Name: "Donghua One", Route: "donghua-one", MediaType: animeschedule.MediaONA, Donghua: true},
 			{Name: "Video One", Route: "video-one", MediaType: animeschedule.MediaOVA},
 			{Name: "Extra One", Route: "extra-one", MediaType: animeschedule.MediaSpecial},
 			{Name: "Film One", Route: "film-one", MediaType: animeschedule.MediaMovie},
@@ -66,7 +66,7 @@ func names(choices []*discordgo.ApplicationCommandOptionChoice) []string {
 func TestAddSuggestionsLabelEveryNonTVMediaType(t *testing.T) {
 	seedTypes(t)
 	got := strings.Join(names(suggestions(t, newFakeStore(), "user", "")), "|")
-	want := "Plain Tv|Short Tv · TV Short|Web One · ONA|Chinese One · ONA · Donghua|Video One · OVA|Extra One · Special|Film One · Movie"
+	want := "Plain Tv|Short Tv · TV Short|Web One · ONA|Donghua One · ONA · Donghua|Video One · OVA|Extra One · Special|Film One · Movie"
 	if got != want {
 		t.Errorf("names = %q\nwant    %q", got, want)
 	}
@@ -77,7 +77,7 @@ func TestAddSuggestionsLabelSubscribedShowsAndSortThemLastWithoutHidingThem(t *t
 	st := newFakeStore()
 	st.docs["user"] = []*anime_subs.ShowSub{{Show: "Web One", Route: "web-one"}, {Show: "Plain Tv"}}
 	got := strings.Join(names(suggestions(t, st, "user", "")), "|")
-	want := "Short Tv · TV Short|Chinese One · ONA · Donghua|Video One · OVA|Extra One · Special|Film One · Movie|Plain Tv · subscribed|Web One · ONA · subscribed"
+	want := "Short Tv · TV Short|Donghua One · ONA · Donghua|Video One · OVA|Extra One · Special|Film One · Movie|Plain Tv · subscribed|Web One · ONA · subscribed"
 	if got != want {
 		t.Errorf("names = %q\nwant    %q", got, want)
 	}

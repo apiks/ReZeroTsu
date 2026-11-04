@@ -118,7 +118,7 @@ func TestAddSubscribesToAnUpcomingShowByTypedNameAndStoresItsTitleAndRoute(t *te
 	}
 }
 
-func TestUpcomingChineseMovieUsesMovieFormsInRepliesAndListLines(t *testing.T) {
+func TestUpcomingDonghuaMovieUsesMovieFormsInRepliesAndListLines(t *testing.T) {
 	seedUpcoming(t, []animeschedule.UpcomingShow{
 		{Name: "Dated Film", Route: "dated-film", MediaType: animeschedule.MediaMovie, Donghua: true, Premiere: premiereIn(20 * 24 * time.Hour)},
 		{Name: "Undated Film", Route: "undated-film", MediaType: animeschedule.MediaMovie, Donghua: true},
