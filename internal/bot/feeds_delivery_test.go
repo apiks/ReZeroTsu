@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"ReZeroTsu/internal/database/feed_checks"
@@ -105,7 +106,7 @@ func TestFeedsUnknownOutcome(t *testing.T) {
 			d.RecentErr = tc.recentErr
 			feeds := []guilds.FeedEntry{entry("c1", false)}
 			runFeeds(context.Background(), d, st, feeds, parsedFor(2))
-			if saved := len(st.FeedChecks) == 2; saved != tc.wantSavedAll {
+			if saved := postChecks(st) == 2; saved != tc.wantSavedAll {
 				t.Fatalf("feed checks saved = %d, wantSavedAll=%v", len(st.FeedChecks), tc.wantSavedAll)
 			}
 			before := d.SendCalls
@@ -140,7 +141,7 @@ func TestFeedsShutdownMidFlush(t *testing.T) {
 	if got := len(embedAuthorURLs(d, "c1")); got != 10 {
 		t.Fatalf("delivered %d before shutdown, want 10", got)
 	}
-	if got := len(st.FeedChecks); got != 10 {
+	if got := postChecks(st.fakeSentState); got != 10 {
 		t.Fatalf("recorded %d delivered items, want 10", got)
 	}
 	runFeeds(context.Background(), d, st, feeds, parsedFor(items))
@@ -244,15 +245,20 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 				})
 			}
 			flushChannel(context.Background(), d, newTestSenders(d), st, "g1", "c1", items)
-			if fmt.Sprint(st.FeedCheckWrites) != fmt.Sprint(tc.wantWrites) {
-				t.Errorf("feed-check writes = %v, want %v", st.FeedCheckWrites, tc.wantWrites)
+			// The first message of the day also writes the channel's warning record.
+			writes := slices.Clone(st.FeedCheckWrites)
+			if len(writes) > 0 {
+				writes[0]--
+			}
+			if fmt.Sprint(writes) != fmt.Sprint(tc.wantWrites) {
+				t.Errorf("feed-check writes = %v, want %v", writes, tc.wantWrites)
 			}
 			want := 0
 			for _, n := range tc.wantWrites {
 				want += n
 			}
-			if len(st.FeedChecks) != want {
-				t.Errorf("feed checks stored = %d, want %d", len(st.FeedChecks), want)
+			if postChecks(st) != want {
+				t.Errorf("feed checks stored = %d, want %d", postChecks(st), want)
 			}
 		})
 	}
