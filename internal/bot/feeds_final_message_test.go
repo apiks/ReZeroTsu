@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ReZeroTsu/internal/database/feed_checks"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/reddit"
@@ -16,19 +17,6 @@ import (
 
 func finalFeed(channel, subreddit, sort string) guilds.FeedEntry {
 	return guilds.FeedEntry{Subreddit: subreddit, PostType: sort, ChannelID: channel}
-}
-
-// contentsTo lists the text of every message delivered to channel; a message with embeds reads "<embeds>".
-func contentsTo(d *fakeDiscord, channel string) []string {
-	var out []string
-	for _, m := range d.deliveredTo(channel) {
-		if len(m.Msg.Embeds) != 0 {
-			out = append(out, "<embeds>")
-			continue
-		}
-		out = append(out, m.Msg.Content)
-	}
-	return out
 }
 
 func finalText(feeds string) string {
@@ -54,7 +42,7 @@ func TestFinalMessageNamesTheChannelsFeedsOnceEach(t *testing.T) {
 			setRedditNow(t, reddit.Cutoff)
 			d, st := newFakeDiscord(), newFakeSentState()
 			runFeeds(context.Background(), d, st, tc.feeds, parsedFor(3))
-			got := contentsTo(d, "c1")
+			got := contents(d, "c1")
 			if len(got) != 1 || got[0] != finalText(tc.want) {
 				t.Errorf("messages = %q, want one %q", got, finalText(tc.want))
 			}
@@ -67,10 +55,10 @@ func TestFinalMessageGoesToEachChannelOnce(t *testing.T) {
 	d, st := newFakeDiscord(), newFakeSentState()
 	feeds := []guilds.FeedEntry{finalFeed("c1", "anime", "new"), finalFeed("c2", "manga", "hot"), finalFeed("c1", "anime", "top")}
 	runFeeds(context.Background(), d, st, feeds, parsedFor(3))
-	if got := contentsTo(d, "c1"); len(got) != 1 || got[0] != finalText("r/anime (new) and r/anime (top)") {
+	if got := contents(d, "c1"); len(got) != 1 || got[0] != finalText("r/anime (new) and r/anime (top)") {
 		t.Errorf("c1 messages = %q", got)
 	}
-	if got := contentsTo(d, "c2"); len(got) != 1 || got[0] != finalText("r/manga (hot)") {
+	if got := contents(d, "c2"); len(got) != 1 || got[0] != finalText("r/manga (hot)") {
 		t.Errorf("c2 messages = %q", got)
 	}
 }
@@ -83,7 +71,7 @@ func TestFinalMessageCutsALongListWithAndNMore(t *testing.T) {
 		feeds = append(feeds, finalFeed("c1", fmt.Sprintf("subreddit%03d", i), "new"))
 	}
 	runFeeds(context.Background(), d, st, feeds, nil)
-	got := contentsTo(d, "c1")
+	got := contents(d, "c1")
 	if len(got) != 1 {
 		t.Fatalf("messages = %d, want 1", len(got))
 	}
@@ -113,8 +101,8 @@ func TestFinalMessageIsNotSentTwiceEvenAfterARestart(t *testing.T) {
 	d2 := newFakeDiscord()
 	runFeeds(context.Background(), d2, st, feeds, parsedFor(3))
 	runFeeds(context.Background(), d2, st, feeds, parsedFor(3))
-	if len(contentsTo(d, "c1")) != 1 || d2.SendCalls != 0 {
-		t.Errorf("first run %d messages, later runs %d sends", len(contentsTo(d, "c1")), d2.SendCalls)
+	if len(contents(d, "c1")) != 1 || d2.SendCalls != 0 {
+		t.Errorf("first run %d messages, later runs %d sends", len(contents(d, "c1")), d2.SendCalls)
 	}
 }
 
@@ -133,14 +121,63 @@ func TestFinalMessageToAChannelTheBotCannotPostInIsSilentAndRetried(t *testing.T
 	d, st := newFakeDiscord(rejectWith(discord.MissingPermissionsCode)), newFakeSentState()
 	feeds := []guilds.FeedEntry{finalFeed("c1", "anime", "new")}
 	runFeeds(context.Background(), d, st, feeds, nil)
-	if got := contentsTo(d, "c1"); len(got) != 0 || len(st.FeedChecks) != 0 {
+	if got := contents(d, "c1"); len(got) != 0 || len(st.FeedChecks) != 0 {
 		t.Fatalf("delivered %q, recorded %d", got, len(st.FeedChecks))
 	}
 	if n := logs.count("ERROR") + logs.count("WARN"); n != 0 {
 		t.Errorf("warnings or errors logged: %s", logs.buf.String())
 	}
 	runFeeds(context.Background(), d, st, feeds, nil)
-	if got := contentsTo(d, "c1"); len(got) != 1 {
+	if got := contents(d, "c1"); len(got) != 1 {
+		t.Errorf("later run delivered %d messages, want 1", len(got))
+	}
+}
+
+func TestFinalMessageRejectedForAGoneChannelDeletesNothingAndIsNotRetried(t *testing.T) {
+	for name, code := range map[string]int{
+		"deleted channel":      discord.UnknownChannelCode,
+		"inaccessible channel": discord.MissingAccessCode,
+		"non-text channel":     discord.ChannelNotTextCode,
+	} {
+		t.Run(name, func(t *testing.T) {
+			setRedditNow(t, reddit.Cutoff)
+			logs := captureLogs(t)
+			d, st := newFakeDiscord(rejectWith(code)), newFakeSentState()
+			st.FeedChecks = []feed_checks.FeedCheck{{GUID: "t3_old_c1", GuildID: "g1", Feed: feed_checks.Feed{GuildID: "g1", ChannelID: "c1"}, Date: reddit.Cutoff}}
+			feeds := []guilds.FeedEntry{finalFeed("c1", "anime", "new")}
+			runFeeds(context.Background(), d, st, feeds, nil)
+			if len(st.FeedsPurged) != 0 {
+				t.Errorf("feeds removed: %v", st.FeedsPurged)
+			}
+			if len(st.FeedChecks) != 2 || st.FeedChecks[0].GUID != "t3_old_c1" || st.FeedChecks[1].GUID != finalMessageRecordKey("c1") {
+				t.Errorf("feed checks = %+v, want the old record kept and the final message record added", st.FeedChecks)
+			}
+			if n := logs.count("ERROR") + logs.count("WARN"); n != 0 {
+				t.Errorf("warnings or errors logged: %s", logs.buf.String())
+			}
+			sends := d.SendCalls
+			runFeeds(context.Background(), d, st, feeds, nil)
+			if d.SendCalls != sends {
+				t.Errorf("channel retried: %d sends after the first run's %d", d.SendCalls, sends)
+			}
+		})
+	}
+}
+
+func TestFinalMessageRejectedForAnotherReasonIsLoggedKeptAndRetried(t *testing.T) {
+	setRedditNow(t, reddit.Cutoff)
+	logs := captureLogs(t)
+	d, st := newFakeDiscord(rejectWith(99999)), newFakeSentState()
+	feeds := []guilds.FeedEntry{finalFeed("c1", "anime", "new")}
+	runFeeds(context.Background(), d, st, feeds, nil)
+	if len(st.FeedsPurged) != 0 || len(st.FeedChecks) != 0 {
+		t.Errorf("feeds removed %v, recorded %d, want nothing", st.FeedsPurged, len(st.FeedChecks))
+	}
+	if strings.Count(logs.buf.String(), `msg="feed send failed"`) != 1 {
+		t.Errorf("want one warning: %s", logs.buf.String())
+	}
+	runFeeds(context.Background(), d, st, feeds, nil)
+	if got := contents(d, "c1"); len(got) != 1 {
 		t.Errorf("later run delivered %d messages, want 1", len(got))
 	}
 }

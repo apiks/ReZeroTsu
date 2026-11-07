@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"testing"
 
 	"ReZeroTsu/internal/database/feed_checks"
@@ -227,11 +226,11 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 		name       string
 		items      int
 		script     []step
-		wantWrites []int // items per feed-check write, in order
+		wantWrites []int // records per feed-check write, in order; the first write also holds the day's warning record
 	}{
-		{name: "one chunk", items: 3, wantWrites: []int{3}},
-		{name: "two chunks", items: 11, wantWrites: []int{10, 1}},
-		{name: "undelivered chunk is not recorded", items: 11, script: []step{succeed(), rejectWith(99999)}, wantWrites: []int{10}},
+		{name: "one chunk", items: 3, wantWrites: []int{4}},
+		{name: "two chunks", items: 11, wantWrites: []int{11, 1}},
+		{name: "undelivered chunk is not recorded", items: 11, script: []step{succeed(), rejectWith(99999)}, wantWrites: []int{11}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,18 +244,14 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 				})
 			}
 			flushChannel(context.Background(), d, newTestSenders(d), st, "g1", "c1", items)
-			// The first message of the day also writes the channel's warning record.
-			writes := slices.Clone(st.FeedCheckWrites)
-			if len(writes) > 0 {
-				writes[0]--
-			}
-			if fmt.Sprint(writes) != fmt.Sprint(tc.wantWrites) {
-				t.Errorf("feed-check writes = %v, want %v", writes, tc.wantWrites)
+			if fmt.Sprint(st.FeedCheckWrites) != fmt.Sprint(tc.wantWrites) {
+				t.Errorf("feed-check writes = %v, want %v", st.FeedCheckWrites, tc.wantWrites)
 			}
 			want := 0
 			for _, n := range tc.wantWrites {
 				want += n
 			}
+			want-- // the warning record is not a post
 			if postChecks(st) != want {
 				t.Errorf("feed checks stored = %d, want %d", postChecks(st), want)
 			}

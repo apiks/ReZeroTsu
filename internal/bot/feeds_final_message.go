@@ -100,13 +100,26 @@ func sendFinalMessages(ctx context.Context, d RunOperations, senders *channelSen
 		case PostCancelled:
 			return
 		case PostRejected, PostMissing:
-			handleFeedSendFailure(ctx, d, st, guildID, ch, res)
+			handleFinalMessageFailure(ctx, d, st, guildID, ch, key, res)
 			continue
 		}
 		persistFinalMessage(ctx, d, st, guildID, ch, key)
 		if !waitFeedCtx(ctx, feedWebhookThrottle) {
 			return
 		}
+	}
+}
+
+// handleFinalMessageFailure deals with a rejected final message. Nothing is deleted at the cutoff, so a channel that
+// is gone, cannot be seen or is not a text channel is recorded as done without a send and is not retried. Missing
+// permissions stay silent and are retried; any other rejection is logged and retried.
+func handleFinalMessageFailure(ctx context.Context, d RunOperations, st SentState, guildID, channelID, key string, res PostResult) {
+	switch res.Terminal {
+	case discord.ChannelDeleted, discord.ChannelInaccessible, discord.ChannelNotText:
+		persistFinalMessage(ctx, d, st, guildID, channelID, key)
+	case discord.ChannelMissingPermissions:
+	default:
+		logger.For("feeds").Warn("feed send failed", "shard_id", d.ShardID(), "channel_id", channelID, "err", res.Err)
 	}
 }
 

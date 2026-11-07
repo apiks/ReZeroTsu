@@ -226,47 +226,6 @@ func Fetch(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error
 	return feed, nil
 }
 
-func FetchWithRetry(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error) {
-	if Retired() {
-		return nil, ErrRetired
-	}
-	if feed, ok := CachedFeed(subreddit, postType); ok {
-		return feed, nil
-	}
-	if err := cooldownErr(); err != nil {
-		return nil, err
-	}
-
-	fetchMu.Lock()
-	defer fetchMu.Unlock()
-
-	if feed, ok := CachedFeed(subreddit, postType); ok {
-		return feed, nil
-	}
-	if err := cooldownErr(); err != nil {
-		return nil, err
-	}
-
-	feed, err := Fetch(ctx, subreddit, postType)
-	if err == nil {
-		storeCache(subreddit, postType, feed)
-		return feed, nil
-	}
-	if IsPermanent(err) {
-		return nil, err
-	}
-	if errors.Is(err, ErrRateLimited) {
-		mu.RLock()
-		until := globalCooldownUntil
-		mu.RUnlock()
-		logger.For("reddit").Warn("RSS fetch rate limited; backing off", "subreddit", subreddit, "post_type", postType, "user_agent", httpclient.GetUserAgent(), "cooldown_until", until)
-		return nil, err
-	}
-
-	logger.For("reddit").Warn("RSS fetch failed", "subreddit", subreddit, "post_type", postType, "user_agent", httpclient.GetUserAgent(), "err", err)
-	return nil, err
-}
-
 // FetchFresh fetches from Reddit (no cache read), stores on success. For the global fetch cycle.
 func FetchFresh(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error) {
 	if Retired() {
