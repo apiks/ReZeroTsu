@@ -6,6 +6,12 @@
 
 Anime episode alerts, airing schedules and a few server tools, in one Discord bot. Airing data comes from [AnimeSchedule.net](https://animeschedule.net).
 
+<p align="center">
+	<a href="https://discord.com/oauth2/authorize?client_id=614495694769618944&scope=bot%20applications.commands&permissions=2252075497253952"><b>Add ZeroTsu to your server</b></a>
+	·
+	<a href="https://discord.gg/BDT8Twv">Support server</a>
+</p>
+
 ## What it does
 
 **Never miss an episode.** Subscribe to a show and get a DM the moment a new episode airs. Subbed, dubbed or raw, your call. Follow a show before it premieres and the bot tells you when it starts.
@@ -26,7 +32,7 @@ Everything is a slash command. `/help` lists them by category. Mod commands defa
 
 ## Support
 
-Questions, bugs, ideas: the [support server](https://discord.gg/BDT8Twv), or an issue here. To invite the bot, run `/invite` in any server that already has it.
+Questions, bugs, ideas: the [support server](https://discord.gg/BDT8Twv), or an issue here.
 
 If the bot saves you time, [support it on Patreon](https://patreon.com/animeschedule).
 
