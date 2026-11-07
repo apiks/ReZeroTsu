@@ -11,6 +11,7 @@ import (
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
 	"ReZeroTsu/internal/interaction"
+	"ReZeroTsu/internal/reddit"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -21,7 +22,9 @@ const (
 	// pickerPrefix starts the custom ID of the Remove picker: reddit-rm:<authorID>:<page>.
 	pickerPrefix = "reddit-rm:"
 
-	msgNoFeeds          = "There are no Reddit feeds. Add one with /reddit add."
+	msgNoFeeds          = "There are no Reddit feeds."
+	msgFeedsStop        = "These feeds stop on 13 November 2026, when Reddit shuts down the RSS feeds I read."
+	msgFeedsStopped     = "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."
 	msgOnlyOwnerRemoves = "Only the moderator who ran /reddit list can remove from it."
 	msgStalePicker      = "Could not read that choice. Run /reddit list again."
 )
@@ -80,10 +83,14 @@ func renderPage(feeds []guilds.FeedEntry, page int, authorID string) interaction
 	end := min(start+discord.MaxEmbedFields, n)
 
 	var components []discordgo.MessageComponent
-	desc := ""
+	// REMOVE the notice on 2026-11-27 with the rest of the Reddit retirement code.
+	desc := msgFeedsStop
+	if reddit.Retired() {
+		desc = msgFeedsStopped
+	}
 	if n > discord.MaxEmbedFields {
 		components = append(components, commands.PaginationComponents(pageKey, page, n, authorID)...)
-		desc = fmt.Sprintf("Page %d of %d. Showing %d-%d of %d.", page+1, totalPages, start+1, end, n)
+		desc += "\n" + fmt.Sprintf("Page %d of %d. Showing %d-%d of %d.", page+1, totalPages, start+1, end, n)
 	}
 	components = append(components, removePicker(feeds[start:end], start, page, authorID))
 	emb := commands.NewEmbedWithFields(nil, embedTitle, desc, feedFields(feeds[start:end], start+1), "Pick a feed below to remove it.")

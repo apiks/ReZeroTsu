@@ -17,8 +17,6 @@ import (
 // maxListedFeeds is how many feeds the "several feeds" refusal names before it says "and N more".
 const maxListedFeeds = 5
 
-func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
-
 func removeSubcommand() *commands.Subcommand {
 	return &commands.Subcommand{
 		Name: "remove",

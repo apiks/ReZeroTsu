@@ -201,6 +201,9 @@ func ValidateSubreddit(name string) error {
 }
 
 func Fetch(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error) {
+	if Retired() {
+		return nil, ErrRetired
+	}
 	if err := ValidateSubreddit(subreddit); err != nil {
 		return nil, err
 	}
@@ -224,6 +227,9 @@ func Fetch(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error
 }
 
 func FetchWithRetry(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error) {
+	if Retired() {
+		return nil, ErrRetired
+	}
 	if feed, ok := CachedFeed(subreddit, postType); ok {
 		return feed, nil
 	}
@@ -263,6 +269,9 @@ func FetchWithRetry(ctx context.Context, subreddit, postType string) (*gofeed.Fe
 
 // FetchFresh fetches from Reddit (no cache read), stores on success. For the global fetch cycle.
 func FetchFresh(ctx context.Context, subreddit, postType string) (*gofeed.Feed, error) {
+	if Retired() {
+		return nil, ErrRetired
+	}
 	if err := cooldownErr(); err != nil {
 		return nil, err
 	}

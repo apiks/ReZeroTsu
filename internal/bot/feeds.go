@@ -133,6 +133,11 @@ func RunRedditFetchLoop(ctx context.Context) {
 		if err := ctx.Err(); err != nil {
 			return
 		}
+		// REMOVE on 2026-11-27 with the rest of the Reddit retirement code.
+		if reddit.Retired() {
+			logger.For("feeds").Info("Reddit feeds retired")
+			return
+		}
 		if until := reddit.CooldownUntil(); !until.IsZero() && time.Now().Before(until) {
 			if !waitFeedCtx(ctx, time.Until(until)) {
 				return
@@ -149,6 +154,9 @@ func RunRedditFetchLoop(ctx context.Context) {
 		feedKeyStr := keys.subreddit + "/" + keys.postType
 		_, err := reddit.FetchFresh(ctx, keys.subreddit, keys.postType)
 		if err != nil {
+			if errors.Is(err, reddit.ErrRetired) {
+				continue
+			}
 			if reddit.IsPermanent(err) {
 				logger.For("feeds").Warn("fetchRedditRSS permanent failure", "key", feedKeyStr, "user_agent", httpclient.GetUserAgent(), "err", err)
 			} else if !reddit.IsGlobalCooldown(err) {
@@ -291,6 +299,10 @@ func removeFeedsForChannel(ctx context.Context, st SentState, guildID, channelID
 // looked up for exactly the candidate GUIDs, so the number of feeds in a guild cannot push live items out of
 // the dedupe set; GUIDs queued within this run are tracked so one item goes to a channel only once per run.
 func processGuildFeeds(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
+	// REMOVE on 2026-11-27 with the rest of the Reddit retirement code. From the cutoff no post is delivered.
+	if reddit.Retired() {
+		return
+	}
 	type candidate struct {
 		feed guilds.FeedEntry
 		item *gofeed.Item
