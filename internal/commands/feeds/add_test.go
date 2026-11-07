@@ -1,17 +1,31 @@
 package feeds
 
 import (
-	"context"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"ReZeroTsu/internal/database/guilds"
+	"ReZeroTsu/internal/reddit"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 type opts = []*discordgo.ApplicationCommandInteractionDataOption
+
+// setNow moves the Reddit cutoff clock for one test.
+func setNow(t *testing.T, now time.Time) {
+	t.Helper()
+	old := reddit.Now
+	reddit.Now = func() time.Time { return now }
+	t.Cleanup(func() { reddit.Now = old })
+}
+
+const (
+	beforeRefusal = "Reddit feeds can't be added any more. Reddit is shutting down the RSS feeds I read on 13 November 2026, and existing feeds stop that day."
+	afterRefusal  = "Reddit feeds were retired on 13 November 2026, when Reddit shut down the RSS feeds I read."
+)
 
 func TestAddSortIsFixedChoicesNotAutocompleted(t *testing.T) {
 	for _, o := range subcommand(t, "add").Options {
@@ -30,70 +44,50 @@ func TestAddSortIsFixedChoicesNotAutocompleted(t *testing.T) {
 	t.Fatal("add has no sort option")
 }
 
-func TestAddIdenticalFeedSavesNothingAndSaysSo(t *testing.T) {
-	st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Pin: true})
-	checkFeed = func(context.Context, string, string) error { t.Error("Reddit was asked"); return nil }
-	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime"), boolOpt("pin", true))
-	if got := text(lastReply(t, fake)); !strings.Contains(got, "That feed is already set up in <#c1>.") {
-		t.Errorf("reply = %q", got)
-	}
-	if st.addCalls != 0 || st.pinCalls != 0 {
-		t.Errorf("addCalls=%d pinCalls=%d", st.addCalls, st.pinCalls)
+func TestAddDescriptionSaysItIsRetired(t *testing.T) {
+	if got, want := subcommand(t, "add").Desc, "Retired: Reddit feeds can't be added any more."; got != want {
+		t.Errorf("description = %q, want %q", got, want)
 	}
 }
 
-func TestAddWithOnlyADifferentPinUpdatesThePinSetting(t *testing.T) {
-	cases := []struct {
-		name     string
-		had, pin bool
-		want     string
-	}{
-		{"turn on", false, true, "Updated r/anime in <#c1>: now pinning the latest post."},
-		{"turn off", true, false, "Updated r/anime in <#c1>: no longer pinning the latest post."},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob", Pin: tc.had})
-			checkFeed = func(context.Context, string, string) error { t.Error("Reddit was asked"); return nil }
-			fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("author", "bob"), boolOpt("pin", tc.pin))
-			if got := text(lastReply(t, fake)); !strings.Contains(got, tc.want) {
-				t.Errorf("reply = %q, want %q", got, tc.want)
-			}
-			if st.addCalls != 0 || st.pinCalls != 1 || len(st.feeds) != 1 || st.feeds[0].Pin != tc.pin {
-				t.Errorf("addCalls=%d pinCalls=%d feeds=%+v", st.addCalls, st.pinCalls, st.feeds)
-			}
-		})
-	}
-}
-
-func TestAddSameSubredditWithDifferentIdentityIsANewFeed(t *testing.T) {
-	st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"})
-	invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("author", "bob"))
-	if len(st.feeds) != 2 || st.addCalls != 1 {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestAddEchoesTheWholeFeed(t *testing.T) {
+func TestAddIsRefusedBeforeAnythingElseIsChecked(t *testing.T) {
 	cases := []struct {
 		name string
-		opts opts
+		now  time.Time
 		want string
 	}{
-		{"everything", opts{strOpt("sort", "new"), strOpt("author", "u/Bob"), strOpt("title", "Episode"), boolOpt("pin", true)},
-			`Added r/anime (new) to <#c1>: only posts by u/bob whose title starts with "episode", pinning the latest. New posts start appearing within a few minutes.`},
-		{"nothing", nil, "Added r/anime (hot) to <#c1>. New posts start appearing within a few minutes."},
-		{"author only", opts{strOpt("author", "bob")}, "Added r/anime (hot) to <#c1>: only posts by u/bob. New posts"},
-		{"title only", opts{strOpt("title", "ep")}, `Added r/anime (hot) to <#c1>: only posts whose title starts with "ep". New posts`},
-		{"pin only", opts{boolOpt("pin", true)}, "Added r/anime (hot) to <#c1>: pinning the latest. New posts"},
+		{"before the cutoff", reddit.Cutoff.Add(-time.Hour), beforeRefusal},
+		{"at the cutoff", reddit.Cutoff, afterRefusal},
+		{"after the cutoff", reddit.Cutoff.Add(30 * 24 * time.Hour), afterRefusal},
+	}
+	calls := []struct {
+		name string
+		opts opts
+	}{
+		{"valid feed", opts{chanOpt("c1"), strOpt("subreddit", "anime")}},
+		{"only a pin change", opts{chanOpt("c1"), strOpt("subreddit", "anime"), boolOpt("pin", true)}},
+		{"no options", nil},
+		{"bad subreddit", opts{chanOpt("c1"), strOpt("subreddit", "a b!")}},
+		{"bad sort", opts{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			useStore(t)
-			o := append(opts{chanOpt("c1"), strOpt("subreddit", "anime")}, tc.opts...)
-			if got := text(lastReply(t, invoke(t, "add", o...))); !strings.Contains(got, tc.want) {
-				t.Errorf("reply = %q, want %q", got, tc.want)
-			}
-		})
+		for _, call := range calls {
+			t.Run(tc.name+"/"+call.name, func(t *testing.T) {
+				setNow(t, tc.now)
+				st := useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"})
+				fake := invoke(t, "add", call.opts...)
+				if got := text(lastReply(t, fake)); !strings.Contains(got, tc.want) {
+					t.Errorf("reply = %q, want %q", got, tc.want)
+				}
+				if len(st.feeds) != 1 || st.feeds[0].Pin {
+					t.Errorf("feeds changed: %+v", st.feeds)
+				}
+				for _, c := range fake.Calls() {
+					if c.Op != "Defer" && c.Op != "EditReply" {
+						t.Errorf("unexpected interaction call %q (permissions or channel looked up?)", c.Op)
+					}
+				}
+			})
+		}
 	}
 }

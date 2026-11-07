@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"ReZeroTsu/internal/commands"
 	"ReZeroTsu/internal/database"
@@ -25,10 +25,7 @@ type fakeStore struct {
 	feeds      []guilds.FeedEntry
 	checksGone []string
 	failGet    error
-	failAdd    error
 	failRemove error
-	addCalls   int
-	pinCalls   int
 }
 
 func (f *fakeStore) RemoveExactFeed(_ context.Context, _ string, feed guilds.FeedEntry) (int64, error) {
@@ -47,40 +44,18 @@ func (f *fakeStore) GetFeeds(context.Context, string) ([]guilds.FeedEntry, error
 	return slices.Clone(f.feeds), nil
 }
 
-func (f *fakeStore) AddFeed(_ context.Context, _ string, feed guilds.FeedEntry) error {
-	f.addCalls++
-	if f.failAdd != nil {
-		return f.failAdd
-	}
-	if !slices.Contains(f.feeds, feed) {
-		f.feeds = append(f.feeds, feed)
-	}
-	return nil
-}
-
-func (f *fakeStore) SetFeedPin(_ context.Context, _ string, feed guilds.FeedEntry, pin bool) error {
-	f.pinCalls++
-	for i, g := range f.feeds {
-		if g.SameIdentity(feed) {
-			f.feeds[i].Pin = pin
-		}
-	}
-	return nil
-}
-
 func (f *fakeStore) DeleteChecks(_ context.Context, _, channelID, subreddit, postType, author, title string) error {
 	f.checksGone = append(f.checksGone, strings.Join([]string{channelID, subreddit, postType, author, title}, "|"))
 	return nil
 }
 
-// useStore installs the fake store and an availability check that records its calls and returns checkErr.
+// useStore installs the fake store.
 func useStore(t *testing.T, feeds ...guilds.FeedEntry) *fakeStore {
 	t.Helper()
 	st := &fakeStore{feeds: feeds}
-	oldStore, oldCheck := storeOf, checkFeed
+	oldStore := storeOf
 	storeOf = func(*database.Client) store { return st }
-	checkFeed = func(context.Context, string, string) error { return nil }
-	t.Cleanup(func() { storeOf, checkFeed = oldStore, oldCheck })
+	t.Cleanup(func() { storeOf = oldStore })
 	return st
 }
 
@@ -214,93 +189,6 @@ func TestAddKeepsEveryOption(t *testing.T) {
 	}
 }
 
-func TestAddSavesTheFeedWithNormalizedFiltersAndPin(t *testing.T) {
-	st := useStore(t)
-	var checked []string
-	checkFeed = func(_ context.Context, sub, pt string) error { checked = append(checked, sub+"/"+pt); return nil }
-	fake := invoke(t, "add", chanOpt("c1"), strOpt("subreddit", " /r/Anime "), strOpt("sort", "New"),
-		strOpt("author", "u/SomeOne"), strOpt("title", " Episode "), boolOpt("pin", true))
-	want := guilds.FeedEntry{Subreddit: "anime", PostType: "new", Author: "someone", Title: "episode", Pin: true, ChannelID: "c1"}
-	if !slices.Equal(st.feeds, []guilds.FeedEntry{want}) {
-		t.Errorf("feeds = %+v, want %+v", st.feeds, want)
-	}
-	if !slices.Equal(checked, []string{"anime/new"}) {
-		t.Errorf("availability checked %v", checked)
-	}
-	if got := text(lastReply(t, fake)); !strings.Contains(got, "<#c1>") || !strings.Contains(got, "r/anime") {
-		t.Errorf("reply = %q", got)
-	}
-}
-
-func TestAddDefaultsToHotWithNoFilters(t *testing.T) {
-	st := useStore(t)
-	invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime"))
-	if want := (guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}); !slices.Equal(st.feeds, []guilds.FeedEntry{want}) {
-		t.Errorf("feeds = %+v", st.feeds)
-	}
-}
-
-func TestAddRefusesBadInputBeforeAskingRedditOrSaving(t *testing.T) {
-	cases := []struct {
-		name string
-		opts []*discordgo.ApplicationCommandInteractionDataOption
-		want string
-	}{
-		{"no channel", []*discordgo.ApplicationCommandInteractionDataOption{strOpt("subreddit", "anime")}, "Pick a channel"},
-		{"no subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1")}, "Pick a channel"},
-		{"blank subreddit", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "r/")}, "valid subreddit"},
-		{"bad characters", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "a b!")}, "letters, numbers"},
-		{"bad sort", []*discordgo.ApplicationCommandInteractionDataOption{chanOpt("c1"), strOpt("subreddit", "anime"), strOpt("sort", "top")}, "hot, rising, new"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			st := useStore(t)
-			checkFeed = func(context.Context, string, string) error { t.Error("Reddit was asked"); return nil }
-			fake := invoke(t, "add", tc.opts...)
-			if got := text(lastReply(t, fake)); !strings.Contains(got, tc.want) {
-				t.Errorf("reply = %q, want %q", got, tc.want)
-			}
-			if len(st.feeds) != 0 {
-				t.Errorf("saved %+v", st.feeds)
-			}
-		})
-	}
-}
-
-func TestAddExplainsAnUnavailableSubredditInPlainLanguage(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"private or missing", fmt.Errorf("fetch: %w", reddit.ErrUnavailable), "private, banned or does not exist"},
-		{"rate limited", errors.New("reddit globally rate-limited until later"), "rate-limiting"},
-		{"other", errors.New("timeout"), "couldn't reach Reddit"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			st := useStore(t)
-			checkFeed = func(context.Context, string, string) error { return tc.err }
-			got := text(lastReply(t, invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime"))))
-			if !strings.Contains(got, tc.want) || !strings.Contains(got, "anime") && tc.name != "rate limited" || strings.Contains(got, tc.err.Error()) {
-				t.Errorf("reply = %q", got)
-			}
-			if len(st.feeds) != 0 {
-				t.Errorf("saved %+v", st.feeds)
-			}
-		})
-	}
-}
-
-func TestAddStoreFailureIsSomethingWentWrong(t *testing.T) {
-	st := useStore(t)
-	st.failAdd = errors.New("db down")
-	r := lastReply(t, invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime")))
-	if r.Content != interaction.SomethingWentWrong {
-		t.Errorf("reply = %+v", r)
-	}
-}
-
 func TestListShowsFeedsWithChannelMentionsAndAPickerPrivately(t *testing.T) {
 	useStore(t,
 		guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob", Title: "ep", Pin: true},
@@ -321,8 +209,56 @@ func TestListShowsFeedsWithChannelMentionsAndAPickerPrivately(t *testing.T) {
 func TestListWithNoFeedsSaysSoWithoutAPicker(t *testing.T) {
 	useStore(t)
 	r := lastReply(t, invoke(t, "list"))
-	if !strings.Contains(text(r), "no Reddit feeds") || len(r.Components) != 0 {
+	if !strings.Contains(text(r), "There are no Reddit feeds.") || strings.Contains(text(r), "/reddit add") || len(r.Components) != 0 {
 		t.Errorf("reply = %+v", r)
+	}
+}
+
+func TestListSaysWhenTheFeedsStopOrStopped(t *testing.T) {
+	cases := []struct {
+		name string
+		now  time.Time
+		want string
+	}{
+		{"before", reddit.Cutoff.Add(-time.Second), "These feeds stop on 13 November 2026, when Reddit shuts down the RSS feeds I read."},
+		{"at the cutoff", reddit.Cutoff, "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."},
+		{"after", reddit.Cutoff.Add(10 * 24 * time.Hour), "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setNow(t, tc.now)
+			useStore(t, manyFeeds(30)...)
+			first := lastReply(t, invoke(t, "list"))
+			if desc := first.Embeds[0].Description; !strings.HasPrefix(desc, tc.want) || !strings.Contains(desc, "Page 1 of 2") {
+				t.Errorf("first page description = %q", desc)
+			}
+			second := RenderFeedsPage(t.Context(), nil, nil, &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{GuildID: "g"}}, 1, 30, "user")
+			if desc := second.Response.Embeds[0].Description; !strings.HasPrefix(desc, tc.want) {
+				t.Errorf("second page description = %q", desc)
+			}
+			if picker, ok := pickerOf(first); !ok || len(picker.Options) != 25 {
+				t.Errorf("picker = %+v", picker)
+			}
+		})
+	}
+}
+
+func TestListNoticeShowsAboveASinglePageOfFeeds(t *testing.T) {
+	setNow(t, reddit.Cutoff.Add(-time.Hour))
+	useStore(t, guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"})
+	r := lastReply(t, invoke(t, "list"))
+	if desc := r.Embeds[0].Description; !strings.HasPrefix(desc, "These feeds stop on 13 November 2026") {
+		t.Errorf("description = %q", desc)
+	}
+}
+
+func TestRemoveStillWorksAfterTheCutoff(t *testing.T) {
+	setNow(t, reddit.Cutoff.Add(24*time.Hour))
+	a := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}
+	st := useStore(t, a)
+	invoke(t, "remove", strOpt("feed", "anime"))
+	if len(st.feeds) != 0 {
+		t.Errorf("feeds = %+v", st.feeds)
 	}
 }
 
@@ -437,13 +373,9 @@ func TestChoosingAnUnfilteredFeedKeepsItsFilteredSiblings(t *testing.T) {
 	plain := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1"}
 	sibling := guilds.FeedEntry{Subreddit: "anime", PostType: "hot", ChannelID: "c1", Author: "bob"}
 	st := useStore(t, plain, sibling)
-	st.failAdd = errors.New("AddFeed must not be called")
 	picker := firstPicker(t, "user")
 	if err := handleRemovePicker(pick("user", picker.CustomID, shortCode(plain)), nil); err != nil {
 		t.Fatal(err)
-	}
-	if st.addCalls != 0 {
-		t.Errorf("AddFeed called %d times", st.addCalls)
 	}
 	if !slices.Equal(st.feeds, []guilds.FeedEntry{sibling}) {
 		t.Errorf("feeds = %+v, want only the filtered sibling", st.feeds)
@@ -561,16 +493,6 @@ func TestPickerStoreFailuresAreSomethingWentWrong(t *testing.T) {
 	}
 	if got := ic.Port.(*interactiontest.Fake).Calls()[0].Response.Content; got != interaction.SomethingWentWrong {
 		t.Errorf("reply = %q", got)
-	}
-}
-
-func TestMissingPermissionsAreStillExplainedByTheHelper(t *testing.T) {
-	// Fail words a known Discord error by name; a store that surfaces one gets the sentence, not the raw error.
-	st := useStore(t)
-	st.failAdd = &discordgo.RESTError{Response: &http.Response{StatusCode: 403}}
-	r := lastReply(t, invoke(t, "add", chanOpt("c1"), strOpt("subreddit", "anime")))
-	if strings.Contains(r.Content, "403") {
-		t.Errorf("raw error shown: %q", r.Content)
 	}
 }
 

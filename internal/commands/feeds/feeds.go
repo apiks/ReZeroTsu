@@ -4,7 +4,6 @@ package feeds
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"ReZeroTsu/internal/commands"
@@ -12,7 +11,6 @@ import (
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/interaction"
 	"ReZeroTsu/internal/logger"
-	"ReZeroTsu/internal/reddit"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -31,18 +29,13 @@ const (
 	maxChoiceLength = 100
 )
 
-var postTypeChoices = []string{"hot", "rising", "new"}
-
 var feedChannelTypes = []discordgo.ChannelType{discordgo.ChannelTypeGuildText, discordgo.ChannelTypeGuildPublicThread, discordgo.ChannelTypeGuildPrivateThread}
 
 // store is the part of the data layer /reddit uses: the guild's feed list and the delivery records of a feed.
 type store interface {
 	GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEntry, error)
-	AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error
 	// RemoveExactFeed removes exactly the one entry, never its filtered siblings.
 	RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error)
-	// SetFeedPin changes only the auto-pin setting of the one feed with that identity.
-	SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error
 	// DeleteChecks forgets what was delivered for a feed (the feed check records).
 	DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error
 }
@@ -53,16 +46,8 @@ func (s dbStore) GetFeeds(ctx context.Context, guildID string) ([]guilds.FeedEnt
 	return s.db.Guilds().GetFeeds(ctx, guildID)
 }
 
-func (s dbStore) AddFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) error {
-	return s.db.Guilds().AddFeed(ctx, guildID, feed)
-}
-
 func (s dbStore) RemoveExactFeed(ctx context.Context, guildID string, feed guilds.FeedEntry) (int64, error) {
 	return s.db.Guilds().RemoveExactFeed(ctx, guildID, feed)
-}
-
-func (s dbStore) SetFeedPin(ctx context.Context, guildID string, feed guilds.FeedEntry, pin bool) error {
-	return s.db.Guilds().SetFeedPin(ctx, guildID, feed, pin)
 }
 
 func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit, postType, author, title string) error {
@@ -72,13 +57,6 @@ func (s dbStore) DeleteChecks(ctx context.Context, guildID, channelID, subreddit
 
 // storeOf picks the store of a database client; tests replace it.
 var storeOf = func(db *database.Client) store { return dbStore{db} }
-
-// checkFeed asks Reddit whether a subreddit's feed of that type can be read; tests replace it so they do not use
-// the network.
-var checkFeed = func(ctx context.Context, subreddit, postType string) error {
-	_, err := reddit.FetchWithRetry(ctx, subreddit, postType)
-	return err
-}
 
 func init() {
 	commands.Add(&commands.Command{
@@ -108,28 +86,9 @@ func normalizeSubreddit(s string) string {
 	return strings.ToLower(s)
 }
 
-func normalizeAuthor(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "/u/")
-	s = strings.TrimPrefix(s, "u/")
-	return s
-}
-
 func stringOption(ic *interaction.Context, name string) string {
 	if o := commands.ParseOption(ic.Command.Options, name); o != nil {
 		return o.StringValue()
-	}
-	return ""
-}
-
-// channelOption is the ID of the channel option, "" when it is missing.
-func channelOption(ic *interaction.Context) string {
-	o := commands.ParseOption(ic.Command.Options, optChannel)
-	if o == nil {
-		return ""
-	}
-	if ch := o.ChannelValue(nil); ch != nil {
-		return ch.ID
 	}
 	return ""
 }
@@ -160,14 +119,3 @@ func answer(ic *interaction.Context, text string) error {
 func logStoreFailure(ic *interaction.Context, what string, err error) {
 	logger.For("commands").Error(what, "guild_id", ic.GuildID, "err", err)
 }
-
-// sortOption reads the sort option of /reddit add. A missing or blank one is hot; an unknown one is not ok.
-func sortOption(ic *interaction.Context) (sort string, ok bool) {
-	raw := strings.ToLower(strings.TrimSpace(stringOption(ic, optSort)))
-	if raw == "" {
-		return "hot", true
-	}
-	return raw, slices.Contains(postTypeChoices, raw)
-}
-
-const msgInvalidSort = "Invalid sort. Use one of: hot, rising, new."
