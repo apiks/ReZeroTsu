@@ -150,8 +150,8 @@ func TestFinalMessageRecordLeavesPostRecordsAlone(t *testing.T) {
 	d, st := newFakeDiscord(), newFakeSentState()
 	feeds := []guilds.FeedEntry{entry("c1", false)}
 	runFeeds(context.Background(), d, st, feeds, parsedFor(3))
-	if len(st.FeedChecks) != 3 {
-		t.Fatalf("posts recorded = %d, want 3", len(st.FeedChecks))
+	if got := postChecks(st); got != 3 {
+		t.Fatalf("posts recorded = %d, want 3", got)
 	}
 	setRedditNow(t, reddit.Cutoff)
 	runFeeds(context.Background(), d, st, feeds, parsedFor(3))
@@ -159,7 +159,7 @@ func TestFinalMessageRecordLeavesPostRecordsAlone(t *testing.T) {
 	for _, fc := range st.FeedChecks {
 		seen[fc.GUID] = true
 	}
-	if len(st.FeedChecks) != 4 || len(seen) != 4 {
-		t.Errorf("records = %d (%d distinct), want 3 posts and 1 final message", len(st.FeedChecks), len(seen))
+	if len(st.FeedChecks) != 5 || len(seen) != 5 {
+		t.Errorf("records = %d (%d distinct), want 3 posts, 1 daily warning and 1 final message", len(st.FeedChecks), len(seen))
 	}
 }

@@ -170,7 +170,7 @@ func TestFeedWarningNotSentToAChannelWithoutPosts(t *testing.T) {
 func postChecks(st *fakeSentState) int {
 	n := 0
 	for _, fc := range st.FeedChecks {
-		if fc.GUID != feedWarningKey(time.Now(), fc.Feed.ChannelID) {
+		if !strings.HasPrefix(fc.GUID, "daily-warning:") {
 			n++
 		}
 	}
