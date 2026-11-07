@@ -23,8 +23,8 @@ func setNow(t *testing.T, now time.Time) {
 }
 
 const (
-	beforeRefusal = "Reddit feeds can't be added any more. Reddit is shutting down the RSS feeds I read on 13 November 2026, and existing feeds stop that day."
-	afterRefusal  = "Reddit feeds were retired on 13 November 2026, when Reddit shut down the RSS feeds I read."
+	beforeRefusal = "Reddit feeds can't be added any more. Reddit shuts down its RSS feeds on 13 November 2026, and existing feeds stop that day."
+	afterRefusal  = "Reddit feeds were retired on 13 November 2026, when Reddit shut down its RSS feeds."
 )
 
 func TestAddSortIsFixedChoicesNotAutocompleted(t *testing.T) {

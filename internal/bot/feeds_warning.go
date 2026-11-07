@@ -13,7 +13,7 @@ import (
 // REMOVE on 2026-11-27 with the rest of the Reddit retirement code.
 
 // dailyFeedWarning is the content of the first message a channel gets on a UTC day before the cutoff.
-const dailyFeedWarning = "**This Reddit feed stops on 13 November 2026.** Reddit is shutting down the RSS feeds I read, so all my Reddit feeds end that day. Nothing is needed from you."
+const dailyFeedWarning = "**This Reddit feed stops on 13 November 2026**, when Reddit shuts down its RSS feeds."
 
 // feedWarningKey is the key of the feed check that records a channel's warning for the UTC day of now. Its
 // prefix is no Reddit item key, so it cannot clash with a post's record.

@@ -23,8 +23,8 @@ const (
 	pickerPrefix = "reddit-rm:"
 
 	msgNoFeeds          = "There are no Reddit feeds."
-	msgFeedsStop        = "These feeds stop on 13 November 2026, when Reddit shuts down the RSS feeds I read."
-	msgFeedsStopped     = "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."
+	msgFeedsStop        = "These feeds stop on 13 November 2026, when Reddit shuts down its RSS feeds."
+	msgFeedsStopped     = "These feeds stopped on 13 November 2026, when Reddit shut down its RSS feeds."
 	msgOnlyOwnerRemoves = "Only the moderator who ran /reddit list can remove from it."
 	msgStalePicker      = "Could not read that choice. Run /reddit list again."
 )
