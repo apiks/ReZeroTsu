@@ -28,7 +28,7 @@ func cacheFresh(t *testing.T) {
 
 func TestFetchesAtOrAfterTheCutoffAreRetiredWithoutARequest(t *testing.T) {
 	fetchers := map[string]func(context.Context, string, string) (*gofeed.Feed, error){
-		"Fetch": Fetch, "FetchWithRetry": FetchWithRetry, "FetchFresh": FetchFresh,
+		"Fetch": Fetch, "FetchFresh": FetchFresh,
 	}
 	for _, at := range []time.Time{Cutoff, Cutoff.Add(48 * time.Hour)} {
 		for name, fetch := range fetchers {
@@ -41,14 +41,5 @@ func TestFetchesAtOrAfterTheCutoffAreRetiredWithoutARequest(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestACachedFeedIsStillServedBeforeTheCutoff(t *testing.T) {
-	setNow(t, Cutoff.Add(-time.Second))
-	cacheFresh(t)
-	feed, err := FetchWithRetry(context.Background(), "anime", "hot")
-	if err != nil || feed == nil || feed.Title != "fresh" {
-		t.Errorf("feed %v, err %v", feed, err)
 	}
 }

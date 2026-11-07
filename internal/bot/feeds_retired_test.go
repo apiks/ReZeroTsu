@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestFeedsDeliverNothingFromTheCutoffEvenWithCachedItems(t *testing.T) {
 		d, st := newFakeDiscord(), newFakeSentState()
 		runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false), entry("c2", true)}, parsedFor(3))
 		for _, ch := range []string{"c1", "c2"} {
-			if got := contentsTo(d, ch); len(got) != 1 || got[0] == "<embeds>" {
+			if got := contents(d, ch); len(got) != 1 || got[0] == "" {
 				t.Errorf("at %v: %s got %q, want only the final message", at, ch, got)
 			}
 		}
@@ -38,6 +39,15 @@ func TestFeedsDeliverUnchangedJustBeforeTheCutoff(t *testing.T) {
 	runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false)}, parsedFor(3))
 	if got := len(embedAuthorURLs(d, "c1")); got != 3 {
 		t.Errorf("delivered %d items, want 3", got)
+	}
+}
+
+func TestRedditFetchLoopLogsTheRetirementOnceWhenItEnds(t *testing.T) {
+	setRedditNow(t, reddit.Cutoff)
+	logs := captureLogs(t)
+	RunRedditFetchLoop(context.Background())
+	if n := strings.Count(logs.buf.String(), "Reddit feeds retired"); n != 1 {
+		t.Errorf("retirement logged %d times, want 1: %s", n, logs.buf.String())
 	}
 }
 

@@ -129,7 +129,9 @@ func TestFeedWarningWrittenWithThePostsInOneWrite(t *testing.T) {
 	}
 }
 
-func TestFeedWarningRecordCannotClashAndIsSwept(t *testing.T) {
+// The feed check sweep (feed_checks.DeleteOlderThan) runs on the Mongo repository, which the fakes do not cover, so
+// this test checks what the sweep and the channel removal rely on: the record's date, guild and channel.
+func TestFeedWarningRecordCannotClashAndCarriesWhatSweepAndRemovalNeed(t *testing.T) {
 	setRedditNow(t, warningDay)
 	d, st := newFakeDiscord(), newFakeSentState()
 	runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false)}, parsedFor(1))
