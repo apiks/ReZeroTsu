@@ -299,8 +299,10 @@ func removeFeedsForChannel(ctx context.Context, st SentState, guildID, channelID
 // looked up for exactly the candidate GUIDs, so the number of feeds in a guild cannot push live items out of
 // the dedupe set; GUIDs queued within this run are tracked so one item goes to a channel only once per run.
 func processGuildFeeds(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
-	// REMOVE on 2026-11-27 with the rest of the Reddit retirement code. From the cutoff no post is delivered.
+	// REMOVE on 2026-11-27 with the rest of the Reddit retirement code. From the cutoff no post is delivered;
+	// each channel gets its final message instead.
 	if reddit.Retired() {
+		sendFinalMessages(ctx, d, senders, st, guildID, feeds)
 		return
 	}
 	type candidate struct {

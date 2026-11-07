@@ -21,8 +21,13 @@ func TestFeedsDeliverNothingFromTheCutoffEvenWithCachedItems(t *testing.T) {
 		setRedditNow(t, at)
 		d, st := newFakeDiscord(), newFakeSentState()
 		runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", false), entry("c2", true)}, parsedFor(3))
-		if d.SendCalls != 0 || len(st.FeedChecks) != 0 {
-			t.Errorf("at %v: sends %d, recorded %d", at, d.SendCalls, len(st.FeedChecks))
+		for _, ch := range []string{"c1", "c2"} {
+			if got := contentsTo(d, ch); len(got) != 1 || got[0] == "<embeds>" {
+				t.Errorf("at %v: %s got %q, want only the final message", at, ch, got)
+			}
+		}
+		if len(st.FeedChecks) != 2 {
+			t.Errorf("at %v: recorded %d, want 2 final message records", at, len(st.FeedChecks))
 		}
 	}
 }
