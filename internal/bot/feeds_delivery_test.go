@@ -105,7 +105,7 @@ func TestFeedsUnknownOutcome(t *testing.T) {
 			d.RecentErr = tc.recentErr
 			feeds := []guilds.FeedEntry{entry("c1", false)}
 			runFeeds(context.Background(), d, st, feeds, parsedFor(2))
-			if saved := len(st.FeedChecks) == 2; saved != tc.wantSavedAll {
+			if saved := postChecks(st) == 2; saved != tc.wantSavedAll {
 				t.Fatalf("feed checks saved = %d, wantSavedAll=%v", len(st.FeedChecks), tc.wantSavedAll)
 			}
 			before := d.SendCalls
@@ -140,7 +140,7 @@ func TestFeedsShutdownMidFlush(t *testing.T) {
 	if got := len(embedAuthorURLs(d, "c1")); got != 10 {
 		t.Fatalf("delivered %d before shutdown, want 10", got)
 	}
-	if got := len(st.FeedChecks); got != 10 {
+	if got := postChecks(st.fakeSentState); got != 10 {
 		t.Fatalf("recorded %d delivered items, want 10", got)
 	}
 	runFeeds(context.Background(), d, st, feeds, parsedFor(items))
@@ -226,11 +226,11 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 		name       string
 		items      int
 		script     []step
-		wantWrites []int // items per feed-check write, in order
+		wantWrites []int // records per feed-check write, in order; the first write also holds the day's warning record
 	}{
-		{name: "one chunk", items: 3, wantWrites: []int{3}},
-		{name: "two chunks", items: 11, wantWrites: []int{10, 1}},
-		{name: "undelivered chunk is not recorded", items: 11, script: []step{succeed(), rejectWith(99999)}, wantWrites: []int{10}},
+		{name: "one chunk", items: 3, wantWrites: []int{4}},
+		{name: "two chunks", items: 11, wantWrites: []int{11, 1}},
+		{name: "undelivered chunk is not recorded", items: 11, script: []step{succeed(), rejectWith(99999)}, wantWrites: []int{11}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -251,8 +251,9 @@ func TestFeedsChunkRecordedWithOneWrite(t *testing.T) {
 			for _, n := range tc.wantWrites {
 				want += n
 			}
-			if len(st.FeedChecks) != want {
-				t.Errorf("feed checks stored = %d, want %d", len(st.FeedChecks), want)
+			want-- // the warning record is not a post
+			if postChecks(st) != want {
+				t.Errorf("feed checks stored = %d, want %d", postChecks(st), want)
 			}
 		})
 	}

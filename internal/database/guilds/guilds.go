@@ -462,45 +462,6 @@ func (r *Repo) GetFeeds(ctx context.Context, guildID string) ([]FeedEntry, error
 	return out, nil
 }
 
-// AddFeed adds a Reddit feed; idempotent (same feed not duplicated).
-func (r *Repo) AddFeed(ctx context.Context, guildID string, feed FeedEntry) error {
-	if err := r.EnsureGuild(ctx, guildID); err != nil {
-		return fmt.Errorf("AddFeed: %w", err)
-	}
-	filter := bson.M{"_id": guildID}
-	update := bson.M{"$addToSet": bson.M{"feeds": feed}}
-	_, err := r.coll.UpdateOne(ctx, filter, update)
-	if err != nil {
-		return fmt.Errorf("AddFeed: %w", err)
-	}
-	return nil
-}
-
-// SetFeedPin sets the auto-pin setting of exactly one feed, identified by channel, subreddit, sort, author and
-// title (an empty author or title matches a missing field), in one update.
-func (r *Repo) SetFeedPin(ctx context.Context, guildID string, feed FeedEntry, pin bool) error {
-	match := bson.M{
-		"subreddit":  feed.Subreddit,
-		"channel_id": feed.ChannelID,
-		"post_type":  feed.PostType,
-		"author":     nil,
-		"title":      nil,
-	}
-	if feed.Author != "" {
-		match["author"] = feed.Author
-	}
-	if feed.Title != "" {
-		match["title"] = feed.Title
-	}
-	_, err := r.coll.UpdateOne(ctx,
-		bson.M{"_id": guildID, "feeds": bson.M{"$elemMatch": match}},
-		bson.M{"$set": bson.M{"feeds.$.pin": pin}})
-	if err != nil {
-		return fmt.Errorf("SetFeedPin: %w", err)
-	}
-	return nil
-}
-
 // RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and sort match, and author and
 // title match their value, or a missing field when empty (nil matches an omitted omitempty field). An empty author
 // or title never widens the match to its filtered siblings.

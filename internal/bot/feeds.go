@@ -133,6 +133,11 @@ func RunRedditFetchLoop(ctx context.Context) {
 		if err := ctx.Err(); err != nil {
 			return
 		}
+		// REMOVE on 2026-11-27 with the rest of the Reddit retirement code.
+		if reddit.Retired() {
+			logger.For("feeds").Info("Reddit feeds retired")
+			return
+		}
 		if until := reddit.CooldownUntil(); !until.IsZero() && time.Now().Before(until) {
 			if !waitFeedCtx(ctx, time.Until(until)) {
 				return
@@ -149,6 +154,9 @@ func RunRedditFetchLoop(ctx context.Context) {
 		feedKeyStr := keys.subreddit + "/" + keys.postType
 		_, err := reddit.FetchFresh(ctx, keys.subreddit, keys.postType)
 		if err != nil {
+			if errors.Is(err, reddit.ErrRetired) {
+				continue
+			}
 			if reddit.IsPermanent(err) {
 				logger.For("feeds").Warn("fetchRedditRSS permanent failure", "key", feedKeyStr, "user_agent", httpclient.GetUserAgent(), "err", err)
 			} else if !reddit.IsGlobalCooldown(err) {
@@ -291,6 +299,12 @@ func removeFeedsForChannel(ctx context.Context, st SentState, guildID, channelID
 // looked up for exactly the candidate GUIDs, so the number of feeds in a guild cannot push live items out of
 // the dedupe set; GUIDs queued within this run are tracked so one item goes to a channel only once per run.
 func processGuildFeeds(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feeds []guilds.FeedEntry, parsed map[string]*gofeed.Feed) {
+	// REMOVE on 2026-11-27 with the rest of the Reddit retirement code. From the cutoff no post is delivered;
+	// each channel gets its final message instead.
+	if reddit.Retired() {
+		sendFinalMessages(ctx, d, senders, st, guildID, feeds)
+		return
+	}
 	type candidate struct {
 		feed guilds.FeedEntry
 		item *gofeed.Item
@@ -413,9 +427,11 @@ func flushChannelBatches(ctx context.Context, d RunOperations, senders *channelS
 
 // persistFeedChunk records the items of a delivered chunk in one write. The write is detached from shutdown so
 // that a delivered item is never re-sent on the next run.
-func persistFeedChunk(ctx context.Context, d RunOperations, st SentState, guildID string, chunk []sendItem) {
+// extra are records of the message itself, such as the daily warning, written with the posts.
+func persistFeedChunk(ctx context.Context, d RunOperations, st SentState, guildID string, chunk []sendItem, extra ...feed_checks.FeedCheck) {
 	now := time.Now()
-	fcs := make([]feed_checks.FeedCheck, 0, len(chunk))
+	fcs := make([]feed_checks.FeedCheck, 0, len(chunk)+len(extra))
+	fcs = append(fcs, extra...)
 	for _, it := range chunk {
 		fcs = append(fcs, feed_checks.FeedCheck{
 			GUID: it.compositeGUID,
@@ -454,8 +470,9 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 		for _, it := range items[i:end] {
 			embeds = append(embeds, it.embed)
 		}
+		content, warned := pendingFeedWarning(ctx, st, guildID, channelID)
 		// After a rejected webhook the sender sends later chunks through the bot account.
-		res := sender.post(ctx, OutgoingMessage{Embeds: embeds})
+		res := sender.post(ctx, OutgoingMessage{Content: content, Embeds: embeds})
 		switch res.Outcome {
 		case PostCancelled:
 			return
@@ -463,7 +480,7 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 			handleFeedSendFailure(ctx, d, st, guildID, channelID, res)
 			return
 		}
-		persistFeedChunk(ctx, d, st, guildID, items[i:end])
+		persistFeedChunk(ctx, d, st, guildID, items[i:end], warned...)
 		if !waitFeedCtx(ctx, feedWebhookThrottle) {
 			return
 		}
@@ -473,7 +490,8 @@ func flushChannel(ctx context.Context, d RunOperations, senders *channelSenderFa
 
 // sendOneAndPin sends one message through the bot account (a message ID is needed to pin), records it, then pins it.
 func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderFactory, st SentState, guildID string, feed guilds.FeedEntry, compositeGUID string, emb *discordgo.MessageEmbed) {
-	res := senders.open(guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Embeds: []*discordgo.MessageEmbed{emb}})
+	content, warned := pendingFeedWarning(ctx, st, guildID, feed.ChannelID)
+	res := senders.open(guildID, feed.ChannelID, feedPinPolicy()).post(ctx, OutgoingMessage{Content: content, Embeds: []*discordgo.MessageEmbed{emb}})
 	msgID := res.MessageID
 	switch res.Outcome {
 	case PostCancelled:
@@ -482,7 +500,7 @@ func sendOneAndPin(ctx context.Context, d RunOperations, senders *channelSenderF
 		handleFeedSendFailure(ctx, d, st, guildID, feed.ChannelID, res)
 		return
 	}
-	persistFeedChunk(ctx, d, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}})
+	persistFeedChunk(ctx, d, st, guildID, []sendItem{{feed: feed, compositeGUID: compositeGUID}}, warned...)
 	if msgID != "" {
 		d.PinReplacing(feed.ChannelID, msgID, feed.Subreddit)
 	}
