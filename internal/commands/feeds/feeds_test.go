@@ -220,9 +220,9 @@ func TestListSaysWhenTheFeedsStopOrStopped(t *testing.T) {
 		now  time.Time
 		want string
 	}{
-		{"before", reddit.Cutoff.Add(-time.Second), "These feeds stop on 13 November 2026, when Reddit shuts down the RSS feeds I read."},
-		{"at the cutoff", reddit.Cutoff, "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."},
-		{"after", reddit.Cutoff.Add(10 * 24 * time.Hour), "These feeds stopped on 13 November 2026, when Reddit shut down the RSS feeds I read."},
+		{"before", reddit.Cutoff.Add(-time.Second), "These feeds stop on 13 November 2026, when Reddit shuts down its RSS feeds."},
+		{"at the cutoff", reddit.Cutoff, "These feeds stopped on 13 November 2026, when Reddit shut down its RSS feeds."},
+		{"after", reddit.Cutoff.Add(10 * 24 * time.Hour), "These feeds stopped on 13 November 2026, when Reddit shut down its RSS feeds."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

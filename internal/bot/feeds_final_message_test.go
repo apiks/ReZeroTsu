@@ -20,7 +20,7 @@ func finalFeed(channel, subreddit, sort string) guilds.FeedEntry {
 }
 
 func finalText(feeds string) string {
-	return "**Reddit feeds have stopped.** Reddit shut down the RSS feeds I read on 13 November 2026, so " + feeds + " won't post here any more. Nothing is needed from you."
+	return "**Reddit feeds have stopped.** Reddit shut down its RSS feeds on 13 November 2026, so " + feeds + " won't post here any more."
 }
 
 func TestFinalMessageNamesTheChannelsFeedsOnceEach(t *testing.T) {
@@ -75,7 +75,7 @@ func TestFinalMessageCutsALongListWithAndNMore(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("messages = %d, want 1", len(got))
 	}
-	m := regexp.MustCompile(`^\*\*Reddit feeds have stopped\.\*\* Reddit shut down the RSS feeds I read on 13 November 2026, so r/subreddit000 \(new\), .* and (\d+) more won't post here any more\. Nothing is needed from you\.$`).FindStringSubmatch(got[0])
+	m := regexp.MustCompile(`^\*\*Reddit feeds have stopped\.\*\* Reddit shut down its RSS feeds on 13 November 2026, so r/subreddit000 \(new\), .* and (\d+) more won't post here any more\.$`).FindStringSubmatch(got[0])
 	if m == nil {
 		t.Fatalf("no \"and N more\" ending in %q", got[0])
 	}

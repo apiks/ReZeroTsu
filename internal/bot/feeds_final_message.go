@@ -16,8 +16,8 @@ import (
 // REMOVE on 2026-11-27 with the rest of the Reddit retirement code.
 
 const (
-	finalMessageLead = "**Reddit feeds have stopped.** Reddit shut down the RSS feeds I read on 13 November 2026, so "
-	finalMessageTail = " won't post here any more. Nothing is needed from you."
+	finalMessageLead = "**Reddit feeds have stopped.** Reddit shut down its RSS feeds on 13 November 2026, so "
+	finalMessageTail = " won't post here any more."
 )
 
 // finalMessageRecordKey is the feed check key that says a channel got its final message. A post's key is its item

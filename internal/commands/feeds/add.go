@@ -10,8 +10,8 @@ import (
 
 // REMOVE on 2026-11-27 with the rest of the Reddit retirement code.
 const (
-	msgAddRefusedBeforeCutoff = "Reddit feeds can't be added any more. Reddit is shutting down the RSS feeds I read on 13 November 2026, and existing feeds stop that day."
-	msgAddRefusedAfterCutoff  = "Reddit feeds were retired on 13 November 2026, when Reddit shut down the RSS feeds I read."
+	msgAddRefusedBeforeCutoff = "Reddit feeds can't be added any more. Reddit shuts down its RSS feeds on 13 November 2026, and existing feeds stop that day."
+	msgAddRefusedAfterCutoff  = "Reddit feeds were retired on 13 November 2026, when Reddit shut down its RSS feeds."
 )
 
 // addSubcommand keeps every option of the retired /reddit add, so the command's shape does not change.

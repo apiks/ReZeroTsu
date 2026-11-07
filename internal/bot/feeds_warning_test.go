@@ -10,7 +10,7 @@ import (
 	"ReZeroTsu/internal/database/guilds"
 )
 
-const wantFeedWarning = "**This Reddit feed stops on 13 November 2026.** Reddit is shutting down the RSS feeds I read, so all my Reddit feeds end that day. Nothing is needed from you."
+const wantFeedWarning = "**This Reddit feed stops on 13 November 2026**, when Reddit shuts down its RSS feeds."
 
 var warningDay = time.Date(2026, time.November, 7, 9, 0, 0, 0, time.UTC)
 
