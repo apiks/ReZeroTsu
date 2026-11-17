@@ -121,23 +121,6 @@ func raffleToMongo(r *Raffle) RaffleMongo {
 	return m
 }
 
-// FeedEntry is one Reddit feed in a guild's feeds array.
-type FeedEntry struct {
-	Subreddit string `bson:"subreddit,omitempty"`
-	Title     string `bson:"title,omitempty"`
-	Author    string `bson:"author,omitempty"`
-	Pin       bool   `bson:"pin,omitempty"`
-	PostType  string `bson:"post_type,omitempty"`
-	ChannelID string `bson:"channel_id,omitempty"`
-}
-
-// SameIdentity reports whether two entries are the same Reddit feed: channel, subreddit, sort, author and title.
-// Auto-pin is a setting of the feed, not part of its identity.
-func (f FeedEntry) SameIdentity(g FeedEntry) bool {
-	return f.ChannelID == g.ChannelID && f.Subreddit == g.Subreddit && f.PostType == g.PostType &&
-		f.Author == g.Author && f.Title == g.Title
-}
-
 type GuildSettings struct {
 	BotLogID  *ChannelRef `bson:"bot_log_id,omitempty"`
 	VoiceChas []VoiceCha  `bson:"voice_chas,omitempty"`
@@ -157,7 +140,6 @@ type Guild struct {
 	GuildSettings *GuildSettings  `bson:"guild_settings,omitempty"`
 	ReactJoinMap  []ReactJoinWrap `bson:"react_join_map,omitempty"`
 	Raffles       []RaffleMongo   `bson:"raffles,omitempty"`
-	Feeds         []FeedEntry     `bson:"feeds,omitempty"`
 }
 
 // DefaultGuildSettings returns the default guild_settings.
@@ -334,7 +316,6 @@ func (r *Repo) EnsureGuild(ctx context.Context, guildID string) error {
 			"autoposts":      []Autopost{},
 			"react_join_map": []ReactJoinWrap{},
 			"raffles":        []RaffleMongo{},
-			"feeds":          []FeedEntry{},
 		},
 	}
 	_, err := r.coll.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
@@ -446,66 +427,6 @@ func (r *Repo) DeleteRaffle(ctx context.Context, guildID, name string) error {
 		return fmt.Errorf("DeleteRaffle: %w", err)
 	}
 	return nil
-}
-
-// GetFeeds returns all Reddit feeds for the guild, or empty slice if none.
-func (r *Repo) GetFeeds(ctx context.Context, guildID string) ([]FeedEntry, error) {
-	g, err := r.GetGuild(ctx, guildID)
-	if err != nil {
-		return nil, fmt.Errorf("GetFeeds: %w", err)
-	}
-	if g == nil || len(g.Feeds) == 0 {
-		return []FeedEntry{}, nil
-	}
-	out := make([]FeedEntry, len(g.Feeds))
-	copy(out, g.Feeds)
-	return out, nil
-}
-
-// RemoveExactFeed pulls exactly one entry in one update: channel, subreddit and sort match, and author and
-// title match their value, or a missing field when empty (nil matches an omitted omitempty field). An empty author
-// or title never widens the match to its filtered siblings.
-func (r *Repo) RemoveExactFeed(ctx context.Context, guildID string, feed FeedEntry) (int64, error) {
-	pull := bson.M{
-		"subreddit":  feed.Subreddit,
-		"channel_id": feed.ChannelID,
-		"post_type":  feed.PostType,
-		"author":     nil,
-		"title":      nil,
-	}
-	if feed.Author != "" {
-		pull["author"] = feed.Author
-	}
-	if feed.Title != "" {
-		pull["title"] = feed.Title
-	}
-	res, err := r.coll.UpdateOne(ctx, bson.M{"_id": guildID}, bson.M{"$pull": bson.M{"feeds": pull}})
-	if err != nil {
-		return 0, fmt.Errorf("RemoveExactFeed: %w", err)
-	}
-	return res.ModifiedCount, nil
-}
-
-// RemoveFeedsByChannel removes all feeds for the channel.
-func (r *Repo) RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
-	filter := bson.M{"_id": guildID}
-	update := bson.M{"$pull": bson.M{"feeds": bson.M{"channel_id": channelID}}}
-	res, err := r.coll.UpdateOne(ctx, filter, update)
-	if err != nil {
-		return 0, fmt.Errorf("RemoveFeedsByChannel: %w", err)
-	}
-	return res.ModifiedCount, nil
-}
-
-// RemoveFeedsBySubredditAndPostType removes all Reddit feeds for the subreddit and sort (stored as post_type).
-func (r *Repo) RemoveFeedsBySubredditAndPostType(ctx context.Context, guildID, subreddit, postType string) (int64, error) {
-	filter := bson.M{"_id": guildID}
-	update := bson.M{"$pull": bson.M{"feeds": bson.M{"subreddit": subreddit, "post_type": postType}}}
-	res, err := r.coll.UpdateOne(ctx, filter, update)
-	if err != nil {
-		return 0, fmt.Errorf("RemoveFeedsBySubredditAndPostType: %w", err)
-	}
-	return res.ModifiedCount, nil
 }
 
 // GetAutopostByType returns the autopost for post_type (e.g. "dailyschedule"), or nil if not found.
@@ -623,7 +544,6 @@ func (r *Repo) EnsureIndexes(ctx context.Context) error {
 		{Keys: bson.M{"autoposts.post_type": 1}, Options: options.Index()},
 		{Keys: bson.M{"react_join_map.channel_id": 1}, Options: options.Index()},
 		{Keys: bson.M{"raffles.name": 1}, Options: options.Index()},
-		{Keys: bson.M{"feeds.subreddit": 1}, Options: options.Index()},
 	}
 	_, err := r.coll.Indexes().CreateMany(ctx, indexModels)
 	if err != nil {

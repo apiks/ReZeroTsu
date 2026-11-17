@@ -12,7 +12,6 @@ const (
 	PriorityReminders = 1
 	PrioritySchedule  = 2
 	PriorityAnimeSubs = 3
-	PriorityFeeds     = 4
 )
 
 const (

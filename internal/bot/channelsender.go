@@ -23,7 +23,7 @@ import (
 //     bot-account error, and the sender stops using a rejected webhook for the rest of a run;
 //   - an Unknown outcome is verified by reading recent channel messages; what a failed verification means is the
 //     policy's presumeOnVerifyFailure: new-episodes posts and DMs treat it as delivered, since a duplicate role
-//     ping or DM is worse than a miss, while feeds and the daily schedule treat it as not delivered and post again.
+//     ping or DM is worse than a miss, while the daily schedule treats it as not delivered and posts again.
 
 // sendPolicy is how a channel sender matches and treats its messages.
 type sendPolicy struct {
@@ -53,18 +53,6 @@ func episodeDMPolicy() sendPolicy {
 // reminderPolicy is the policy for reminder DMs: bot account only, presume delivered, reminders priority.
 func reminderPolicy() sendPolicy {
 	return sendPolicy{match: matchRecentMessage, presumeOnVerifyFailure: true, label: "send", botAccountOnly: true, priority: PriorityReminders}
-}
-
-// feedPolicy is the policy for feed posts: webhook or bot account, a failed verification means not delivered,
-// feeds priority.
-func feedPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send", priority: PriorityFeeds}
-}
-
-// feedPinPolicy is the policy for a pinned feed item: bot account only (a message ID is needed to pin), a failed
-// verification means not delivered, feeds priority.
-func feedPinPolicy() sendPolicy {
-	return sendPolicy{match: feedMessageInRecent, label: "feed send", botAccountOnly: true, priority: PriorityFeeds}
 }
 
 // schedulePolicy is the policy for the daily schedule posted at now: webhook or bot account, matching the
@@ -122,8 +110,6 @@ type PostResult struct {
 	// Err is the error that ended an undelivered post (the rejection, the unknown error verified missing, or the
 	// context error), kept for logging.
 	Err error
-	// MessageID is the delivered message's ID when known (bot-account sends and matched messages).
-	MessageID string
 }
 
 // sendOutcome is a PostResult plus what only the channel sender needs.
@@ -244,13 +230,13 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 		return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: err}}
 	}
 	webhook := c.webhook
-	id, err := c.d.Send(ctx, c.channelID, webhook, msg)
+	err := c.d.Send(ctx, c.channelID, webhook, msg)
 	if sendNotAttempted(err) {
 		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}}
 	}
 	switch discord.ClassifySend(err) {
 	case discord.Sent:
-		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered}}
 	case discord.Unknown:
 		return c.verify(ctx, webhook, msg, err)
 	}
@@ -267,12 +253,12 @@ func (c *channelSender) deliver(ctx context.Context, msg OutgoingMessage) sendOu
 		if cerr := ctx.Err(); cerr != nil {
 			return sendOutcome{PostResult: PostResult{Outcome: PostCancelled, Err: cerr}, webhookRejected: true}
 		}
-		id, err = c.d.Send(ctx, c.channelID, nil, msg)
+		err = c.d.Send(ctx, c.channelID, nil, msg)
 		if sendNotAttempted(err) {
 			return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: err}, webhookRejected: true}
 		}
 		if outcome := discord.ClassifySend(err); outcome != discord.Rejected {
-			res := sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
+			res := sendOutcome{PostResult: PostResult{Outcome: PostDelivered}}
 			if outcome == discord.Unknown {
 				res = c.verify(ctx, nil, msg, err)
 			}
@@ -309,8 +295,8 @@ func (c *channelSender) verify(ctx context.Context, webhook *WebhookTarget, msg 
 			"channel_id", c.channelID, "send_err", sendErr, "err", err)
 		return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 	}
-	if id, ok := c.policy.match(recent, c.d.BotUserID(), webhook, msg); ok {
-		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered, MessageID: id}}
+	if c.policy.match(recent, c.d.BotUserID(), webhook, msg) {
+		return sendOutcome{PostResult: PostResult{Outcome: PostDelivered}}
 	}
 	return sendOutcome{PostResult: PostResult{Outcome: PostMissing, Err: sendErr}}
 }
@@ -323,11 +309,10 @@ func (c *channelSender) logUnrecognisedRejection(err error) {
 	}
 }
 
-// recentMatcher finds the message that an Unknown post produced among the channel's recent messages and
-// returns its ID when known.
-type recentMatcher func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (id string, ok bool)
+// recentMatcher reports whether the channel's recent messages hold the message an Unknown post produced.
+type recentMatcher func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) bool
 
 // matchRecentMessage is the default matcher: embed URL and description (content for embed-less messages).
-func matchRecentMessage(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {
-	return "", messageInRecent(recent, botUserID, webhook, msg)
+func matchRecentMessage(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) bool {
+	return messageInRecent(recent, botUserID, webhook, msg)
 }

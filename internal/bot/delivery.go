@@ -6,7 +6,6 @@ import (
 
 	"ReZeroTsu/internal/database"
 	"ReZeroTsu/internal/database/anime_subs"
-	"ReZeroTsu/internal/database/feed_checks"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/database/reminders"
 
@@ -45,8 +44,6 @@ type RunOperations interface {
 	CanSend(channelID string) bool
 	// GuildRole reports whether the role still exists in the guild, or that the state cannot tell.
 	GuildRole(guildID, roleID string) rolePresence
-	// PinReplacing pins messageID, first unpinning the bot's older pins for the same subreddit.
-	PinReplacing(channelID, messageID, subreddit string)
 	// ShardID is used for log attribution only.
 	ShardID() int
 }
@@ -54,8 +51,7 @@ type RunOperations interface {
 // RawDiscord is the raw Discord surface handed only to the channel sender factory; delivery runs never hold it.
 type RawDiscord interface {
 	// Send posts msg to channelID through webhook, or through the bot account when webhook is nil.
-	// It returns the new message ID when Discord reports one (webhook sends do not).
-	Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (messageID string, err error)
+	Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) error
 	// RecentMessages returns up to limit most recent messages in channelID, newest first.
 	RecentMessages(ctx context.Context, channelID string, limit int) ([]ChannelMessage, error)
 	// BotUserID is the bot's own user ID, used to recognise its messages when verifying an Unknown send.
@@ -94,11 +90,6 @@ type SentState interface {
 	SetAutopost(ctx context.Context, guildID, postType string, ap *guilds.Autopost) error
 	GetGuildSettings(ctx context.Context, guildID string) (*guilds.GuildSettings, error)
 
-	// SaveFeedChecks upserts the feed checks by (guild, GUID) in one round trip.
-	SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error
-	RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error)
-	DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error)
-
 	// --- ticket #11: reminders delivered once ---
 
 	// ListDueReminders returns the reminders documents holding at least one reminder due at or before asOf.
@@ -124,11 +115,6 @@ type SentState interface {
 	// SetUserShowRoute records route on one show of a user's document that has none, in a single-statement
 	// update (matched by show name).
 	SetUserShowRoute(ctx context.Context, id, showName, route string) error
-
-	// --- ticket #10 (feeds) ---
-
-	// ExistingFeedGUIDs returns the subset of guids that already have a feed check for the guild.
-	ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error)
 }
 
 // --- production wiring: discordgo ---
@@ -143,19 +129,13 @@ func newDiscordgoPort(s *discordgo.Session) *discordgoPort {
 
 // Send deliberately does not pass ctx to the REST call itself (ctx only gates the send limiters): aborting an
 // in-flight send would turn a message that Discord may still post into an Unknown outcome.
-func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
+func (p *discordgoPort) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) error {
 	if webhook != nil {
 		w := &discordgo.Webhook{ID: webhook.ID, Token: webhook.Token}
-		return "", SendBatchToChannel(ctx, p.s, w, webhook.ThreadID, channelID, msg.Content, msg.Embeds, true)
+		return SendBatchToChannel(ctx, p.s, w, webhook.ThreadID, channelID, msg.Content, msg.Embeds, true)
 	}
-	m, err := p.s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Content: msg.Content, Embeds: msg.Embeds}, noLibraryRetry)
-	if err != nil {
-		return "", err
-	}
-	if m == nil {
-		return "", nil
-	}
-	return m.ID, nil
+	_, err := p.s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Content: msg.Content, Embeds: msg.Embeds}, noLibraryRetry)
+	return err
 }
 
 func (p *discordgoPort) OpenDM(ctx context.Context, userID string) (string, error) {
@@ -211,10 +191,6 @@ func (p *discordgoPort) GuildRole(guildID, roleID string) rolePresence {
 	return guildRolePresence(g, roleID)
 }
 
-func (p *discordgoPort) PinReplacing(channelID, messageID, subreddit string) {
-	handleFeedPinning(p.s, channelID, messageID, subreddit)
-}
-
 func (p *discordgoPort) ShardID() int { return p.s.ShardID }
 
 func (p *discordgoPort) BotUserID() string {
@@ -264,18 +240,6 @@ func (m *mongoSentState) GetGuildSettings(ctx context.Context, guildID string) (
 	return m.db.Guilds().GetGuildSettings(ctx, guildID)
 }
 
-func (m *mongoSentState) SaveFeedChecks(ctx context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
-	return m.db.FeedChecks().SaveMany(ctx, guildID, fcs)
-}
-
-func (m *mongoSentState) RemoveFeedsByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
-	return m.db.Guilds().RemoveFeedsByChannel(ctx, guildID, channelID)
-}
-
-func (m *mongoSentState) DeleteFeedChecksByChannel(ctx context.Context, guildID, channelID string) (int64, error) {
-	return m.db.FeedChecks().DeleteByChannelID(ctx, guildID, channelID)
-}
-
 func (m *mongoSentState) ListDueReminders(ctx context.Context, asOf time.Time) ([]*reminders.RemindMeSlice, error) {
 	return m.db.Reminders().ListDue(ctx, asOf)
 }
@@ -298,16 +262,4 @@ func (m *mongoSentState) MarkUserShowNotified(ctx context.Context, id, showName 
 
 func (m *mongoSentState) SetUserShowRoute(ctx context.Context, id, showName, route string) error {
 	return m.db.AnimeSubs().SetShowRoute(ctx, id, showName, route)
-}
-
-func (m *mongoSentState) ExistingFeedGUIDs(ctx context.Context, guildID string, guids []string) (map[string]struct{}, error) {
-	found, err := m.db.FeedChecks().ExistingGUIDs(ctx, guildID, guids)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]struct{}, len(found))
-	for _, g := range found {
-		out[g] = struct{}{}
-	}
-	return out, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/discord"
 )
 
@@ -51,36 +50,5 @@ func TestNonTerminalRejectionKeepsWebhookNewEpisodes(t *testing.T) {
 	h.run(context.Background())
 	if h.d.ResolveCalls != 1 {
 		t.Errorf("resolve calls = %d, want 1 (cached webhook kept)", h.d.ResolveCalls)
-	}
-}
-
-func TestTerminalRejectionResolvesWebhookAgainFeeds(t *testing.T) {
-	for _, tc := range terminalReasonCodes {
-		t.Run(tc.name, func(t *testing.T) {
-			d, st := newFakeDiscord(rejectWith(tc.code), rejectWith(tc.code)), newFakeSentState()
-			d.Webhook = testWebhook
-			senders := newTestSenders(d)
-			feeds := []guilds.FeedEntry{entry("c1", false)}
-			processGuildFeeds(context.Background(), d, senders, st, "g1", feeds, parsedFor(1))
-			if d.ResolveCalls != 1 {
-				t.Fatalf("resolve calls after run 1 = %d, want 1", d.ResolveCalls)
-			}
-			processGuildFeeds(context.Background(), d, senders, st, "g1", feeds, parsedFor(1))
-			if d.ResolveCalls != 2 {
-				t.Errorf("resolve calls after run 2 = %d, want 2 (re-resolved)", d.ResolveCalls)
-			}
-		})
-	}
-}
-
-func TestNonTerminalRejectionKeepsWebhookFeeds(t *testing.T) {
-	d, st := newFakeDiscord(rejectWith(99999)), newFakeSentState()
-	d.Webhook = testWebhook
-	senders := newTestSenders(d)
-	feeds := []guilds.FeedEntry{entry("c1", false)}
-	processGuildFeeds(context.Background(), d, senders, st, "g1", feeds, parsedFor(1))
-	processGuildFeeds(context.Background(), d, senders, st, "g1", feeds, parsedFor(1))
-	if d.ResolveCalls != 1 {
-		t.Errorf("resolve calls = %d, want 1 (cached webhook kept)", d.ResolveCalls)
 	}
 }

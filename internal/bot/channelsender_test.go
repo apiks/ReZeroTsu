@@ -18,10 +18,10 @@ type cancelDuringSend struct {
 	cancel context.CancelFunc
 }
 
-func (c cancelDuringSend) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
-	id, err := c.fakeDiscord.Send(ctx, channelID, webhook, msg)
+func (c cancelDuringSend) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) error {
+	err := c.fakeDiscord.Send(ctx, channelID, webhook, msg)
 	c.cancel()
-	return id, err
+	return err
 }
 
 func TestChannelSenderPostOutcome(t *testing.T) {
@@ -32,14 +32,13 @@ func TestChannelSenderPostOutcome(t *testing.T) {
 		recentErr    error
 		wantOutcome  PostOutcome
 		wantTerminal discord.ChannelTerminalReason
-		wantID       string
 		wantErr      bool
 	}{
-		{name: "confirmed send is delivered", policy: newEpisodesPolicy(), wantOutcome: PostDelivered, wantID: "msg-1"},
+		{name: "confirmed send is delivered", policy: newEpisodesPolicy(), wantOutcome: PostDelivered},
 		{name: "unknown outcome verified as landed is delivered", policy: newEpisodesPolicy(), script: []step{timeoutAfterDelivery()}, wantOutcome: PostDelivered, wantErr: false},
 		{name: "unknown outcome verified as not landed is missing", policy: newEpisodesPolicy(), script: []step{timeoutWithoutDelivery()}, wantOutcome: PostMissing, wantErr: true},
 		{name: "failed verification under a presuming policy is presumed", policy: newEpisodesPolicy(), script: []step{timeoutAfterDelivery()}, recentErr: errors.New("boom"), wantOutcome: PostPresumed},
-		{name: "failed verification under a non-presuming policy is missing", policy: feedPolicy(), script: []step{timeoutAfterDelivery()}, recentErr: errors.New("boom"), wantOutcome: PostMissing, wantErr: true},
+		{name: "failed verification under a non-presuming policy is missing", policy: schedulePolicy("Schedule", time.Now()), script: []step{timeoutAfterDelivery()}, recentErr: errors.New("boom"), wantOutcome: PostMissing, wantErr: true},
 		{name: "deleted channel is rejected with its reason", policy: newEpisodesPolicy(), script: []step{rejectWith(discordgo.ErrCodeUnknownChannel)}, wantOutcome: PostRejected, wantTerminal: discord.ChannelDeleted, wantErr: true},
 		{name: "missing permissions is rejected with its reason", policy: newEpisodesPolicy(), script: []step{rejectWith(discordgo.ErrCodeMissingPermissions)}, wantOutcome: PostRejected, wantTerminal: discord.ChannelMissingPermissions, wantErr: true},
 		{name: "unrecognised rejection has no terminal reason", policy: newEpisodesPolicy(), script: []step{rejectWith(discordgo.ErrCodeInvalidFormBody)}, wantOutcome: PostRejected, wantTerminal: discord.ChannelNotTerminal, wantErr: true},
@@ -54,9 +53,6 @@ func TestChannelSenderPostOutcome(t *testing.T) {
 			}
 			if res.Terminal != tc.wantTerminal {
 				t.Errorf("terminal = %v, want %v", res.Terminal, tc.wantTerminal)
-			}
-			if tc.wantID != "" && res.MessageID != tc.wantID {
-				t.Errorf("message ID = %q, want %q", res.MessageID, tc.wantID)
 			}
 			if (res.Err != nil) != tc.wantErr {
 				t.Errorf("err = %v, want error: %v", res.Err, tc.wantErr)
@@ -84,8 +80,8 @@ func TestChannelSenderPostUndeliveredDuringShutdownIsCancelled(t *testing.T) {
 	}{
 		{"request never made", newEpisodesPolicy(), blockUntilCancelled()},
 		{"rejected as channel-terminal", newEpisodesPolicy(), rejectWith(discordgo.ErrCodeUnknownChannel)},
-		{"rejected with an unrecognised code", feedPolicy(), rejectWith(discordgo.ErrCodeInvalidFormBody)},
-		{"unknown outcome verified as not landed", feedPolicy(), timeoutWithoutDelivery()},
+		{"rejected with an unrecognised code", schedulePolicy("Schedule", time.Now()), rejectWith(discordgo.ErrCodeInvalidFormBody)},
+		{"unknown outcome verified as not landed", schedulePolicy("Schedule", time.Now()), timeoutWithoutDelivery()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,8 +121,6 @@ func TestChannelSenderPostWaitsAtItsPolicysPriority(t *testing.T) {
 		{"new-episodes", newEpisodesPolicy(), PriorityAnimeSubs},
 		{"episode DM", episodeDMPolicy(), PriorityAnimeSubs},
 		{"reminder", reminderPolicy(), PriorityReminders},
-		{"feed", feedPolicy(), PriorityFeeds},
-		{"feed pin", feedPinPolicy(), PriorityFeeds},
 		{"daily schedule", schedulePolicy("Schedule", now), PrioritySchedule},
 	}
 	for _, tc := range tests {
@@ -205,7 +199,6 @@ func TestChannelSenderPostShutdownDuringSuccessfulTokenWaitMakesNoSend(t *testin
 	}{
 		{"new-episodes", newEpisodesPolicy()},
 		{"reminder", reminderPolicy()},
-		{"feed", feedPolicy()},
 		{"daily schedule", schedulePolicy("Schedule", now)},
 	}
 	for _, tc := range tests {
@@ -235,7 +228,7 @@ func TestChannelSenderPostAfterShutdownDoesNotWaitForAToken(t *testing.T) {
 	cancel()
 	d := newFakeDiscord()
 	senders, _, lim := newTestSendersWithLimiter(d, &recordingLimiter{})
-	res := senders.open("g1", "c1", feedPolicy()).post(ctx, OutgoingMessage{Content: "hello"})
+	res := senders.open("g1", "c1", newEpisodesPolicy()).post(ctx, OutgoingMessage{Content: "hello"})
 	if res.Outcome != PostCancelled {
 		t.Fatalf("outcome = %v, want cancelled", res.Outcome)
 	}

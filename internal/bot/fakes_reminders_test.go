@@ -145,10 +145,10 @@ type hookDiscord struct {
 	afterSend func()
 }
 
-func (h *hookDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
-	id, err := h.fakeDiscord.Send(ctx, channelID, webhook, msg)
+func (h *hookDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) error {
+	err := h.fakeDiscord.Send(ctx, channelID, webhook, msg)
 	if h.afterSend != nil {
 		h.afterSend()
 	}
-	return id, err
+	return err
 }

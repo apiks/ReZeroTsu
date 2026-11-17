@@ -16,7 +16,6 @@ import (
 	_ "ReZeroTsu/internal/commands/about"
 	_ "ReZeroTsu/internal/commands/animesubs"
 	_ "ReZeroTsu/internal/commands/avatar"
-	_ "ReZeroTsu/internal/commands/feeds"
 	_ "ReZeroTsu/internal/commands/help"
 	_ "ReZeroTsu/internal/commands/invite"
 	_ "ReZeroTsu/internal/commands/joke"
@@ -125,7 +124,6 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 	var startRemindersOnce sync.Once
 	var startScheduleLoopOnce sync.Once
 	var startAnimeSubCleanupOnce sync.Once
-	var startRedditFetchLoopOnce sync.Once
 	var startTopGGOnce sync.Once
 	var registerSlashCommandsOnce sync.Once
 	var readyCount int32
@@ -165,12 +163,8 @@ func onReady(ctx context.Context, db *database.Client, cfg *config.Config, mgr *
 		})
 		httpclient.SetUserAgent(config.UserAgent(cfg))
 		getShardCount := func() int { return mgr.ShardCount }
-		startRedditFetchLoopOnce.Do(func() {
-			go RunRedditFetchLoop(ctx)
-		})
 		onceVal, _ := shardLoopsOnce.LoadOrStore(s.ShardID, &sync.Once{})
 		onceVal.(*sync.Once).Do(func() {
-			go RunFeedLoop(ctx, db, s, ops, senders, 0)
 			if cfg.AnimeScheduleAPIKey != "" {
 				animeschedule.SetAPIKey(cfg.AnimeScheduleAPIKey)
 				animeschedule.UpdateAnimeSchedule(ctx, cfg.AnimeScheduleAPIKey)
@@ -243,14 +237,11 @@ func onGuildDelete(cache *webhookCache) func(*discordgo.Session, *discordgo.Guil
 	}
 }
 
-// inferRateLimitSource returns a short label for 429 source from call stack (e.g. animesubs, feeds).
+// inferRateLimitSource returns a short label for 429 source from call stack (e.g. animesubs, schedule).
 func inferRateLimitSource() string {
 	stack := string(debug.Stack())
 	if strings.Contains(stack, "animesubs.go") {
 		return "animesubs"
-	}
-	if strings.Contains(stack, "feeds.go") {
-		return "feeds"
 	}
 	if strings.Contains(stack, "schedule.go") {
 		return "schedule"

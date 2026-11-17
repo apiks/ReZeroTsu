@@ -1,13 +1,13 @@
 # ReZeroTsu
 
-A Discord bot that posts anime episode notifications, daily schedules, Reddit feeds and reminders to servers and users, each at most once.
+A Discord bot that posts anime episode notifications, daily schedules and reminders to servers and users, each at most once.
 
 ## Language
 
 ### Delivery
 
 **Delivery run**:
-One periodic pass of a notification job (new episodes, episode DMs, daily schedule, feeds, reminders) over its targets.
+One periodic pass of a notification job (new episodes, episode DMs, daily schedule, reminders) over its targets.
 _Avoid_: loop, job tick, check
 
 **Send rules**:
@@ -73,16 +73,6 @@ _Avoid_: daily post, schedule feed
 **New-episodes autopost**:
 A server's standing order to post every newly aired episode to one channel, optionally pinging a role. It is never called a subscription.
 _Avoid_: episode feed, server subscription
-
-### Reddit
-
-**Reddit feed**:
-A server's standing order to post new posts from one subreddit, in one sort, to one channel, optionally narrowed to one author or a title prefix. Its channel, subreddit, sort, author and title identify it; auto-pin is a setting of the feed, not part of its identity.
-_Avoid_: subreddit feed, reddit subscription, post type feed
-
-**Sort**:
-Which of a subreddit's listings a Reddit feed follows: hot, rising or new.
-_Avoid_: post type, feed type
 
 ### Raffles
 
