@@ -13,7 +13,7 @@ import (
 
 // modCommands are the commands ADR-0001 puts behind Manage Server; every other registered command is for everyone.
 var modCommands = map[string]bool{
-	"settings": true, "voicerole": true, "raffle": true, "reddit": true, "reactrole": true, "say": true, "prune": true,
+	"settings": true, "voicerole": true, "raffle": true, "reactrole": true, "say": true, "prune": true,
 	"Add reaction role": true, "Remove reaction roles": true, "Edit message": true,
 }
 
@@ -148,7 +148,7 @@ func TestMergedCommandsAreRegisteredAndTheOldNamesAreGone(t *testing.T) {
 	for _, d := range commands.Definitions() {
 		registered[d.Name] = true
 	}
-	for _, name := range []string{"settings", "voicerole", "reddit"} {
+	for _, name := range []string{"settings", "voicerole"} {
 		if !registered[name] {
 			t.Errorf("/%s is not registered", name)
 		}
@@ -156,7 +156,7 @@ func TestMergedCommandsAreRegisteredAndTheOldNamesAreGone(t *testing.T) {
 	for _, name := range []string{
 		"bot-log", "donghua", "ping-message", "new-episodes", "daily-schedule",
 		"add-voice", "remove-voice", "voice-roles",
-		"add-reddit-feed", "remove-reddit-feed", "reddit-feeds",
+		"add-reddit-feed", "remove-reddit-feed", "reddit-feeds", "reddit",
 	} {
 		if registered[name] {
 			t.Errorf("old command /%s is still registered", name)

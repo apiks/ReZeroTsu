@@ -2,6 +2,30 @@
 
 Newest first. Each release lists the steps the bot owner does around the deploy, then what changed.
 
+## Reddit feeds removed
+
+Reddit shut down its RSS feeds on 13 November 2026, and the final message of spec #137 has gone out, so the retired feature is removed.
+
+### Release steps
+
+1. Deploy. Registration bulk-overwrites the commands, so `/reddit` disappears from Discord.
+2. After deploy, drop the stored feeds from MongoDB (the bot no longer reads or writes them):
+
+   ```js
+   use zerotsu
+   db.guilds.updateMany({ feeds: { $exists: true } }, { $unset: { feeds: "" } })
+   db.guilds.dropIndex("feeds.subreddit_1")
+   db.feed_checks.drop()
+   ```
+
+### What changed
+
+- `/reddit` (`add`, `list`, `remove`) is gone, with its Remove picker. On a `/reddit list` opened before the deploy, the page buttons and the Remove picker reply privately "Reddit feeds were removed, since Reddit shut down its RSS feeds."
+- The invite link no longer asks for Pin Messages, which only feed auto-pin used. Servers that already granted it keep it.
+- The bot no longer runs a feed delivery run or a Reddit fetch loop, and sends no feed posts, warnings or final messages.
+- New guilds no longer get an empty `feeds` array, and the bot no longer creates the `feeds.subreddit` index or the `feed_checks` collection's indexes.
+- `/help` no longer has a Reddit category, and `/about` no longer lists Reddit feeds.
+
 ## Reddit feeds retire (spec #137)
 
 - Cutoff, `/reddit add` and `/reddit list` (#138): Reddit shuts down its RSS feeds on 13 November 2026, so Reddit feeds retire that day at 00:00 UTC. Until then feeds keep posting as before. From then on the bot never asks Reddit for anything and delivers no posts, and it logs "Reddit feeds retired" once instead of a failure per feed. Nothing is deleted or unpinned: stored feeds stay, and `/reddit remove` and the Remove picker still work. `/reddit add` keeps its options but its description reads "Retired: Reddit feeds can't be added any more.", and every call, including one that only changes pin, is refused first with "Reddit feeds can't be added any more. Reddit shuts down its RSS feeds on 13 November 2026, and existing feeds stop that day." (after the cutoff: "Reddit feeds were retired on 13 November 2026, when Reddit shut down its RSS feeds."). It checks no subreddit and no permissions, and saves nothing. `/reddit list` shows "These feeds stop on 13 November 2026, when Reddit shuts down its RSS feeds." above the feeds ("These feeds stopped on 13 November 2026, when Reddit shut down its RSS feeds." from the cutoff), and with no feeds says "There are no Reddit feeds.". The README no longer describes Reddit feeds.

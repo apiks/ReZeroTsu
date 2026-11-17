@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"ReZeroTsu/internal/database/anime_subs"
-	"ReZeroTsu/internal/database/feed_checks"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/database/reminders"
 
@@ -132,8 +131,6 @@ type fakeDiscord struct {
 	// RolePresence overrides Roles for the listed role IDs (e.g. roleUnknown).
 	RolePresence map[string]rolePresence
 
-	Pinned []string // "channel:message"
-
 	// ResolveCalls counts ResolveWebhook calls: the only record of webhook resolution.
 	ResolveCalls int
 }
@@ -142,7 +139,7 @@ func newFakeDiscord(script ...step) *fakeDiscord {
 	return &fakeDiscord{script: script, Roles: map[string]bool{}, NoSendPerms: map[string]bool{}, WebhookUnusable: map[string]bool{}}
 }
 
-func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) (string, error) {
+func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *WebhookTarget, msg OutgoingMessage) error {
 	f.mu.Lock()
 	f.SendCalls++
 	if webhook != nil {
@@ -153,34 +150,33 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 		st = f.script[0]
 		f.script = f.script[1:]
 	}
-	deliver := func() string {
+	deliver := func() {
 		f.Delivered = append(f.Delivered, delivered{ChannelID: channelID, Webhook: webhook, Msg: msg})
-		return fmt.Sprintf("msg-%d", len(f.Delivered))
 	}
 	switch st.kind {
 	case stepSucceed:
-		id := deliver()
+		deliver()
 		f.mu.Unlock()
-		return id, nil
+		return nil
 	case stepTimeoutDelivered:
 		deliver()
 		f.mu.Unlock()
-		return "", context.DeadlineExceeded
+		return context.DeadlineExceeded
 	case stepTimeoutUndelivered:
 		f.mu.Unlock()
-		return "", context.DeadlineExceeded
+		return context.DeadlineExceeded
 	case stepServerError, stepServerErrorDelivered:
 		if st.kind == stepServerErrorDelivered {
 			deliver()
 		}
 		f.mu.Unlock()
-		return "", &discordgo.RESTError{
+		return &discordgo.RESTError{
 			Response: &http.Response{StatusCode: http.StatusInternalServerError},
 			Message:  &discordgo.APIErrorMessage{Message: "server error"},
 		}
 	case stepReject:
 		f.mu.Unlock()
-		return "", &discordgo.RESTError{
+		return &discordgo.RESTError{
 			Response: &http.Response{StatusCode: rejectStatus(st.code)},
 			Message:  &discordgo.APIErrorMessage{Code: st.code, Message: "rejected"},
 		}
@@ -193,12 +189,12 @@ func (f *fakeDiscord) Send(ctx context.Context, channelID string, webhook *Webho
 		f.mu.Lock()
 		deliver()
 		f.mu.Unlock()
-		return "", context.DeadlineExceeded
+		return context.DeadlineExceeded
 	default: // stepBlock: waiting for a send limiter, the request is never made
 		f.mu.Unlock()
 		f.blocked()
 		<-ctx.Done()
-		return "", notAttempted(ctx.Err())
+		return notAttempted(ctx.Err())
 	}
 }
 
@@ -274,12 +270,6 @@ func (f *fakeDiscord) GuildRole(_, roleID string) rolePresence {
 	return roleAbsent
 }
 
-func (f *fakeDiscord) PinReplacing(channelID, messageID, _ string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.Pinned = append(f.Pinned, channelID+":"+messageID)
-}
-
 func (f *fakeDiscord) ShardID() int { return 0 }
 
 const fakeBotUserID = "bot-user"
@@ -301,16 +291,11 @@ func (f *fakeDiscord) deliveredTo(channelID string) []delivered {
 
 // fakeSentState is an in-memory SentState.
 type fakeSentState struct {
-	mu          sync.Mutex
-	AnimeSubs   map[string]*anime_subs.AnimeSubs
-	Autoposts   map[string]*guilds.Autopost // key guildID+"/"+postType
-	Settings    map[string]*guilds.GuildSettings
-	FeedChecks  []feed_checks.FeedCheck
-	Reminders   map[string]*reminders.RemindMeSlice
-	FeedsPurged []string // "guild:channel"
-
-	// FeedCheckWrites is the number of feed checks in each SaveFeedChecks call, in order.
-	FeedCheckWrites []int
+	mu        sync.Mutex
+	AnimeSubs map[string]*anime_subs.AnimeSubs
+	Autoposts map[string]*guilds.Autopost // key guildID+"/"+postType
+	Settings  map[string]*guilds.GuildSettings
+	Reminders map[string]*reminders.RemindMeSlice
 
 	// MarkFailingCalls counts MarkRemindersFailing calls.
 	MarkFailingCalls int
@@ -429,47 +414,6 @@ func (f *fakeSentState) GetGuildSettings(_ context.Context, guildID string) (*gu
 		return s, nil
 	}
 	return guilds.DefaultGuildSettings(), nil
-}
-
-func (f *fakeSentState) SaveFeedChecks(_ context.Context, guildID string, fcs []feed_checks.FeedCheck) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.FeedCheckWrites = append(f.FeedCheckWrites, len(fcs))
-next:
-	for _, fc := range fcs {
-		fc.GuildID = guildID
-		for i := range f.FeedChecks {
-			if f.FeedChecks[i].GuildID == guildID && f.FeedChecks[i].GUID == fc.GUID {
-				f.FeedChecks[i] = fc
-				continue next
-			}
-		}
-		f.FeedChecks = append(f.FeedChecks, fc)
-	}
-	return nil
-}
-
-func (f *fakeSentState) RemoveFeedsByChannel(_ context.Context, guildID, channelID string) (int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.FeedsPurged = append(f.FeedsPurged, guildID+":"+channelID)
-	return 1, nil
-}
-
-func (f *fakeSentState) DeleteFeedChecksByChannel(_ context.Context, guildID, channelID string) (int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var kept []feed_checks.FeedCheck
-	var n int64
-	for _, fc := range f.FeedChecks {
-		if fc.GuildID == guildID && fc.Feed.ChannelID == channelID {
-			n++
-			continue
-		}
-		kept = append(kept, fc)
-	}
-	f.FeedChecks = kept
-	return n, nil
 }
 
 var (

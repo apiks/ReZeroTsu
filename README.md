@@ -7,7 +7,7 @@
 Anime episode alerts, airing schedules and a few server tools, in one Discord bot. Airing data comes from [AnimeSchedule.net](https://animeschedule.net).
 
 <p align="center">
-	<a href="https://discord.com/oauth2/authorize?client_id=614495694769618944&scope=bot%20applications.commands&permissions=2252075497253952"><b>Add ZeroTsu to your server</b></a>
+	<a href="https://discord.com/oauth2/authorize?client_id=614495694769618944&scope=bot%20applications.commands&permissions=275683568704"><b>Add ZeroTsu to your server</b></a>
 	·
 	<a href="https://discord.gg/BDT8Twv">Support server</a>
 </p>

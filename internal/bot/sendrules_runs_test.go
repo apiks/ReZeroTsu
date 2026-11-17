@@ -8,7 +8,6 @@ import (
 
 	"ReZeroTsu/internal/animeschedule"
 	"ReZeroTsu/internal/database/anime_subs"
-	"ReZeroTsu/internal/database/guilds"
 )
 
 // Send-rule scenarios, driven through the per-target delivery functions (the channel sender has no test file of
@@ -55,15 +54,6 @@ func TestSendRulesNotAttemptedSendIsNotDelivered(t *testing.T) {
 			check(t, h.fd)
 			if h.lastPosted() != "" {
 				t.Error("an unsent schedule was recorded as posted")
-			}
-		})
-		t.Run("feeds, no-presume policy", func(t *testing.T) {
-			d, st := newFakeDiscord(blockUntilCancelled()), newFakeSentState()
-			d.Webhook, d.RecentErr = wh, errors.New("read failed")
-			runFeeds(cancelOnBlock(d), d, st, []guilds.FeedEntry{entry("c1", false)}, parsedFor(1))
-			check(t, d)
-			if len(st.FeedChecks) != 0 {
-				t.Error("an unsent feed item was recorded")
 			}
 		})
 	}
@@ -164,7 +154,7 @@ func TestGuildNewEpisodesClientTimeoutIsVerified(t *testing.T) {
 	}
 }
 
-// DMs, reminders and pinned feed items post through the bot account and never look up a webhook.
+// DMs and reminders post through the bot account and never look up a webhook.
 func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 	assertBotOnly := func(t *testing.T, d *fakeDiscord, wantDelivered int) {
 		t.Helper()
@@ -192,14 +182,5 @@ func TestBotAccountOnlyPostsNeverLookUpWebhook(t *testing.T) {
 		d.Webhook = testWebhook
 		_ = runSlice(t, context.Background(), d, st, "u1")
 		assertBotOnly(t, d, 1)
-	})
-	t.Run("pinned feed item", func(t *testing.T) {
-		d, st := newFakeDiscord(), newFakeSentState()
-		d.Webhook = testWebhook
-		runFeeds(context.Background(), d, st, []guilds.FeedEntry{entry("c1", true)}, parsedFor(1))
-		assertBotOnly(t, d, 1)
-		if len(d.Pinned) != 1 {
-			t.Errorf("pinned = %v, want one", d.Pinned)
-		}
 	})
 }

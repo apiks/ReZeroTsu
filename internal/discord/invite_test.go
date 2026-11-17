@@ -16,8 +16,7 @@ func TestDefaultInvitePermissionsAreExactlyTheBotsNeeds(t *testing.T) {
 		discordgo.PermissionUseExternalEmojis |
 		discordgo.PermissionManageRoles |
 		discordgo.PermissionManageWebhooks |
-		discordgo.PermissionSendMessagesInThreads |
-		PermissionPinMessages)
+		discordgo.PermissionSendMessagesInThreads)
 	if DefaultInvitePermissions != want {
 		t.Errorf("invite permissions = %b, want exactly %b", int64(DefaultInvitePermissions), want)
 	}

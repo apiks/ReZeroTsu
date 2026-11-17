@@ -7,9 +7,8 @@
 set -e
 cd "$(git rev-parse --show-toplevel)"
 
-# Known leftovers (decide whether to delete, then drop the line):
-#   removeFeedsForSubredditAndPostType  predates this check
-known='removeFeedsForSubredditAndPostType'
+# Known leftovers, as an extended regex of function names (decide whether to delete, then drop the name):
+known=''
 
 if ! out=$(go run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./... 2>&1); then
   echo "deadcode could not run:"
@@ -17,7 +16,10 @@ if ! out=$(go run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./... 2>&1); the
   exit 1
 fi
 
-found=$(printf '%s\n' "$out" | grep -v -E "$known" || true)
+found=$out
+if [ -n "$known" ]; then
+  found=$(printf '%s\n' "$out" | grep -v -E "$known" || true)
+fi
 if [ -n "$found" ]; then
   echo "unreachable functions (delete them, or list them in scripts/deadcode.sh with a reason):"
   echo "$found"

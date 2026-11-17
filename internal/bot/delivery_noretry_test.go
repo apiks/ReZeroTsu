@@ -45,7 +45,7 @@ func TestDeliverySendsAreNeverRetriedByTheLibrary(t *testing.T) {
 				case "webhook thread":
 					target = &WebhookTarget{ID: "w", Token: "t", ThreadID: "th"}
 				}
-				if _, err := p.Send(t.Context(), "c1", target, OutgoingMessage{Content: "hi"}); err == nil {
+				if err := p.Send(t.Context(), "c1", target, OutgoingMessage{Content: "hi"}); err == nil {
 					t.Fatal("want the failure surfaced")
 				}
 				if got := tr.n.Load(); got != 1 {

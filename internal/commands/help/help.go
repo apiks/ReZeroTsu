@@ -15,13 +15,12 @@ import (
 
 // Category order and display names for help. A category is a command's Module.
 var (
-	moduleOrder = []string{"general", "schedule", "misc", "channel", "reddit", "reacts", "raffles", "settings"}
+	moduleOrder = []string{"general", "schedule", "misc", "channel", "reacts", "raffles", "settings"}
 	moduleNames = map[string]string{
 		"general":  "General",
 		"misc":     "Misc",
 		"schedule": "Anime",
 		"channel":  "Channel",
-		"reddit":   "Reddit",
 		"reacts":   "Reacts",
 		"raffles":  "Raffles",
 		"settings": "Settings",

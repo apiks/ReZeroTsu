@@ -33,7 +33,7 @@ func scheduleMessagesToday(recent []ChannelMessage, title string, now time.Time)
 // the bot (or the webhook used) carrying that title, posted today (an unknown timestamp is accepted), whose
 // embeds match by URL and description.
 func scheduleMatcher(title string, now time.Time) recentMatcher {
-	return func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) (string, bool) {
+	return func(recent []ChannelMessage, botUserID string, webhook *WebhookTarget, msg OutgoingMessage) bool {
 		return matchRecentMessage(scheduleMessagesToday(recent, title, now), botUserID, webhook, msg)
 	}
 }

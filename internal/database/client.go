@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"ReZeroTsu/internal/database/anime_subs"
-	"ReZeroTsu/internal/database/feed_checks"
 	"ReZeroTsu/internal/database/guilds"
 	"ReZeroTsu/internal/database/reminders"
 
@@ -18,10 +17,9 @@ const dbName = "zerotsu"
 
 // Collection names
 const (
-	colAnimeSubs  = "anime_subs"
-	colFeedChecks = "feed_checks"
-	colGuilds     = "guilds"
-	colReminders  = "reminders"
+	colAnimeSubs = "anime_subs"
+	colGuilds    = "guilds"
+	colReminders = "reminders"
 )
 
 // Client wraps MongoDB and exposes collection repos.
@@ -65,10 +63,6 @@ func (c *Client) AnimeSubs() *anime_subs.Repo {
 	return anime_subs.NewRepo(c.db.Collection(colAnimeSubs))
 }
 
-func (c *Client) FeedChecks() *feed_checks.Repo {
-	return feed_checks.NewRepo(c.db.Collection(colFeedChecks))
-}
-
 func (c *Client) Reminders() *reminders.Repo {
 	return reminders.NewRepo(c.db.Collection(colReminders))
 }
@@ -80,9 +74,6 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 	}
 	if err := c.AnimeSubs().EnsureIndexes(ctx); err != nil {
 		return fmt.Errorf("EnsureIndexes anime_subs: %w", err)
-	}
-	if err := c.FeedChecks().EnsureIndexes(ctx); err != nil {
-		return fmt.Errorf("EnsureIndexes feed_checks: %w", err)
 	}
 	if err := c.Reminders().EnsureIndexes(ctx); err != nil {
 		return fmt.Errorf("EnsureIndexes reminders: %w", err)

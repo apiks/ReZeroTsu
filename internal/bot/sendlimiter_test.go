@@ -16,7 +16,7 @@ func drainedSendLimiter(t *testing.T) *SendLimiter {
 	l := NewSendLimiter()
 	t.Cleanup(l.Stop)
 	for i := 0; i < sendLimiterCap; i++ {
-		if err := l.Acquire(context.Background(), PriorityFeeds); err != nil {
+		if err := l.Acquire(context.Background(), PriorityAnimeSubs); err != nil {
 			t.Fatalf("draining token %d: %v", i, err)
 		}
 	}
@@ -57,7 +57,7 @@ func TestSendLimiterServesHigherPriorityBeforeEarlierLowerPriority(t *testing.T)
 
 	served := make(chan int, 3)
 	// Queue the lowest priority first, so arrival order is the opposite of priority order.
-	for i, priority := range []int{PriorityFeeds, PriorityAnimeSubs, PriorityReminders} {
+	for i, priority := range []int{PriorityAnimeSubs, PrioritySchedule, PriorityReminders} {
 		go func() {
 			if err := l.Acquire(context.Background(), priority); err == nil {
 				served <- priority
@@ -68,7 +68,7 @@ func TestSendLimiterServesHigherPriorityBeforeEarlierLowerPriority(t *testing.T)
 
 	l.Start()
 
-	for _, want := range []int{PriorityReminders, PriorityAnimeSubs, PriorityFeeds} {
+	for _, want := range []int{PriorityReminders, PrioritySchedule, PriorityAnimeSubs} {
 		if got := receiveWithin(t, served, "a waiter to be served"); got != want {
 			t.Fatalf("served priority %d, want %d", got, want)
 		}
@@ -82,7 +82,7 @@ func TestSendLimiterStopReleasesEveryWaiterWithCancellation(t *testing.T) {
 	const waiting = 3
 	results := make(chan error, waiting)
 	for i := 0; i < waiting; i++ {
-		go func() { results <- l.Acquire(context.Background(), PriorityFeeds) }()
+		go func() { results <- l.Acquire(context.Background(), PriorityAnimeSubs) }()
 	}
 	waitUntilQueued(t, l, waiting)
 
@@ -113,7 +113,7 @@ func TestSendLimiterAcquireWithTokensReturnsImmediately(t *testing.T) {
 	l.Start()
 	t.Cleanup(l.Stop)
 
-	if err := l.Acquire(context.Background(), PriorityFeeds); err != nil {
+	if err := l.Acquire(context.Background(), PriorityAnimeSubs); err != nil {
 		t.Fatalf("Acquire with a full bucket: %v", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestSendLimiterEndedContextReturnsItsErrorAndLeavesTokenForOthers(t *testin
 	waitUntilQueued(t, l, 1)
 
 	other := make(chan error, 1)
-	go func() { other <- l.Acquire(context.Background(), PriorityFeeds) }()
+	go func() { other <- l.Acquire(context.Background(), PriorityAnimeSubs) }()
 	waitUntilQueued(t, l, 2)
 
 	cancel()
@@ -149,7 +149,7 @@ func TestSendLimiterDeadlineWhileWaitingReturnsDeadlineError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 
-	if err := l.Acquire(ctx, PriorityFeeds); !errors.Is(err, context.DeadlineExceeded) {
+	if err := l.Acquire(ctx, PriorityAnimeSubs); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Acquire got %v, want context.DeadlineExceeded", err)
 	}
 }

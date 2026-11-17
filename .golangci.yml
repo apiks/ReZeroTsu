@@ -13,11 +13,9 @@ linters:
       - path: _test\.go
         linters:
           - unparam
-      # Dead code that predates this config; decide whether to delete, then drop these two rules.
+      # Dead code that predates this config; decide whether to delete, then drop this rule.
       - path: internal/animeschedule/animeschedule\.go
         text: lastFetchErr
-      - path: internal/bot/feeds\.go
-        text: removeFeedsForSubredditAndPostType
 
 formatters:
   enable:

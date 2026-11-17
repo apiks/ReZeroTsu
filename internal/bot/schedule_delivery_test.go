@@ -314,7 +314,7 @@ func TestScheduleMatcher(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, got := scheduleMatcher("T", now)([]ChannelMessage{tc.msg}, fakeBotUserID, tc.webhook, msg)
+			got := scheduleMatcher("T", now)([]ChannelMessage{tc.msg}, fakeBotUserID, tc.webhook, msg)
 			if got != tc.want {
 				t.Errorf("match = %v, want %v", got, tc.want)
 			}

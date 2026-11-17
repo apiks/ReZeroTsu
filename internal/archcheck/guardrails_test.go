@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -327,7 +326,7 @@ func TestGlossaryAvoidPhrasesAreNotUsedInCommentsOrStrings(t *testing.T) {
 }
 
 func TestGlossaryAvoidPhrasesAreNotUsedInNamesOrFileNames(t *testing.T) {
-	for _, v := range scanTreeWithTests(t, "..", checkAvoidNames(avoidNamePhrases(t))) {
+	for _, v := range scanTreeWithTests(t, "..", checkAvoidNames(avoidPhrases(t))) {
 		t.Error(v)
 	}
 }
@@ -430,21 +429,20 @@ func f(title string, fields []int) {
 	_ = title[:n]
 }
 `
-	const phrasing = "package feeds\n\n" +
-		"// The post type of a feed.\n" +
+	const phrasing = "package schedule\n\n" +
+		"// The air type of a show.\n" +
 		"// The upstream ONA (Chinese) label. archcheck:allow\n" +
-		"const note = \"Invalid post type\"\n" +
+		"const note = \"Invalid air type\"\n" +
 		"const quoted = \"ONA (Chinese)\" // archcheck:allow\n" +
-		"const stored = \"post_type\"\n" +
-		"const fine = \"sort\"\n"
+		"const stored = \"air_type\"\n" +
+		"const fine = \"track\"\n"
 	const naming = "package bot\n\n" +
 		"type Entry struct {\n" +
 		"\tAirType string\n" +
-		"\tpostTypeFeed int // archcheck:allow\n" +
+		"\tairTypeLabel int // archcheck:allow\n" +
 		"}\n\n" +
 		"func trackFilter(episodeFeeds []string) { _ = ONAChinese }\n\n" +
 		"func fine(sortOrder int) {}\n"
-	const storing = "package bot\n\nfunc get(postType string) { _ = postTypeNewEpisodes }\n"
 	parse := func(src string) (*token.FileSet, *ast.File) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
@@ -460,11 +458,11 @@ func f(title string, fields []int) {
 		file  string
 		want  int
 	}{
-		{"direct sends are flagged", violating, checkDirectSends, "feeds.go", 2},
+		{"direct sends are flagged", violating, checkDirectSends, "schedule.go", 2},
 		{"the raw Discord adapter may send", violating, checkDirectSends, "delivery.go", 0},
-		{"EqualFold and show-name ToLower are flagged", violating, checkShowNameMatching, "feeds.go", 3},
-		{"unrelated lowercasing and channel sender posts are fine", clean, checkShowNameMatching, "feeds.go", 0},
-		{"channel sender posts are not direct sends", clean, checkDirectSends, "feeds.go", 0},
+		{"EqualFold and show-name ToLower are flagged", violating, checkShowNameMatching, "schedule.go", 3},
+		{"unrelated lowercasing and channel sender posts are fine", clean, checkShowNameMatching, "schedule.go", 0},
+		{"channel sender posts are not direct sends", clean, checkDirectSends, "schedule.go", 0},
 		{"session responses are flagged", responding, checkInteractionResponses, "commands/roll/rollnew.go", 3},
 		{"the port adapter may respond", responding, checkInteractionResponses, "interaction/discordgo.go", 0},
 		{"command helpers may not respond", responding, checkInteractionResponses, "commands/helpers.go", 3},
@@ -477,8 +475,7 @@ func f(title string, fields []int) {
 		{"multi-word Avoid terms are flagged in comments and strings, not where allowed or stored names", phrasing, checkAvoidPhrases(avoidPhrases(t)), "x.go", 2},
 		{"unrelated code has no Avoid phrase", clean, checkAvoidPhrases(avoidPhrases(t)), "x.go", 0},
 		{"multi-word Avoid terms are flagged in names, not where allowed", naming, checkAvoidNames(avoidPhrases(t)), "x.go", 3},
-		{"the stored autopost post type is not an Avoid term in names", storing, checkAvoidNames(avoidNamePhrases(t)), "x.go", 0},
-		{"a file name with an Avoid term is flagged", clean, checkAvoidNames(avoidPhrases(t)), "post_type_test.go", 1},
+		{"a file name with an Avoid term is flagged", clean, checkAvoidNames(avoidPhrases(t)), "air_type_test.go", 1},
 		{"unrelated names have no Avoid phrase", clean, checkAvoidNames(avoidPhrases(t)), "x.go", 0},
 		{"text sliced at a Discord length limit is flagged, a count limit is not", slicing, checkLimitSlices, "x.go", 2},
 		{"unrelated slices are fine", clean, checkLimitSlices, "x.go", 0},
@@ -510,27 +507,10 @@ func allowedLines(fset *token.FileSet, file *ast.File) map[int]bool {
 	return allowed
 }
 
-// avoidPhrases returns a matcher for the multi-word `_Avoid_` terms in GLOSSARY.md ("post type", "ONA (Chinese)",
+// avoidPhrases returns a matcher for the multi-word `_Avoid_` terms in GLOSSARY.md ("air type", "ONA (Chinese)",
 // "episode feed"). The glossary stays the single source: add a term there and this check follows. A space in a term
 // also matches a hyphen, and a trailing "s" is allowed. Single words stay in avoidTerms and CODING_STANDARDS.md.
 func avoidPhrases(t *testing.T) *regexp.Regexp {
-	t.Helper()
-	return avoidPhrasesExcept(t)
-}
-
-// storedNameTerms are Avoid terms that identifiers may still spell because the stored field they name is a
-// different concept from the one the glossary retires: an autopost's `post_type` (new-episodes or daily-schedule)
-// is not a Reddit feed's sort. The comment and string checks keep flagging them.
-var storedNameTerms = []string{"post type"}
-
-// avoidNamePhrases is avoidPhrases without the terms in storedNameTerms, for the check on identifiers.
-func avoidNamePhrases(t *testing.T) *regexp.Regexp {
-	t.Helper()
-	return avoidPhrasesExcept(t, storedNameTerms...)
-}
-
-// avoidPhrasesExcept is avoidPhrases without the listed terms.
-func avoidPhrasesExcept(t *testing.T, skip ...string) *regexp.Regexp {
 	t.Helper()
 	raw, err := os.ReadFile("../../GLOSSARY.md")
 	if err != nil {
@@ -544,7 +524,7 @@ func avoidPhrasesExcept(t *testing.T, skip ...string) *regexp.Regexp {
 		}
 		for _, term := range strings.Split(rest, ",") {
 			term = strings.TrimSpace(term)
-			if strings.Contains(term, " ") && !slices.Contains(skip, term) {
+			if strings.Contains(term, " ") {
 				alts = append(alts, strings.ReplaceAll(regexp.QuoteMeta(term), " ", "[ -]"))
 			}
 		}
